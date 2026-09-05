@@ -34,14 +34,59 @@ namespace DcTestDriver
         bool _loginIssued = false;
         bool _initialized = false;
 
-        // Auto-provisioning state. _provisionTried latches per conf name so a
-        // refusal (bad name, forbidden account) is reported once instead of
-        // being retried by every command; _awaitingFlush holds the login back
-        // until the character we just created is actually readable from the DB.
-        bool _provisionTried = false;
+        // How a provisioning attempt ended, so Ensure() can tell "wait, this
+        // fixes itself" from "this will never work".
+        enum class Provision
+        {
+            Created,  // the character now exists (its DB write may be in flight)
+            Retry,    // transient: a queued write has not landed yet
+            Refused,  // standing condition: retrying cannot help
+        };
+
+        // Why provisioning is not being attempted again right now.
+        enum class ProvisionLatch
+        {
+            None,     // nothing has failed yet
+            Stuck,    // transient failures used up the burst budget; a later
+                      // burst may still succeed
+            Refused,  // standing condition; only a conf change clears it
+        };
+
+        // Auto-provisioning state. A refusal that retrying cannot fix (bad
+        // name, forbidden account, auto-provisioning off) latches so it is
+        // reported once instead of being re-attempted by every command. A
+        // TRANSIENT failure does not latch: it is retried on a cooldown, in a
+        // bounded burst whose budget refills once the caller goes quiet.
+        // _awaitingFlush holds the login back until the character we just
+        // created is actually readable from the DB.
+        ProvisionLatch _provisionLatch = ProvisionLatch::None;
         std::string _provisionRefusal;  // replayed, so the retry keeps the real reason
+        uint32 _provisionAttempts = 0;
+        uint32 _provisionProbedAt = 0;      // getMSTime() of the last attempt
+        bool _accountCreateIssued = false;  // the account INSERT is queued; never re-issue it
+        std::string _provisionAccount;      // account the state above belongs to
         bool _awaitingFlush = false;
         uint32 _flushProbedAt = 0;  // getMSTime() of the last "is it there yet" probe
+
+        // A transient provisioning failure resolves in the time a queued INSERT
+        // takes to commit, so probe on this cadence rather than once per
+        // command. The burst is capped so a genuinely stuck database reports a
+        // real problem instead of an eternal "please wait", and the cap refills
+        // after a quiet period so a slow write never becomes "broken until you
+        // restart the worldserver".
+        constexpr uint32 PROVISION_RETRY_MS = 500;
+        constexpr uint32 PROVISION_MAX_ATTEMPTS = 20;
+        constexpr uint32 PROVISION_BURST_RESET_MS = 60000;
+
+        void ResetProvisionState()
+        {
+            _provisionLatch = ProvisionLatch::None;
+            _provisionRefusal.clear();
+            _provisionAttempts = 0;
+            _provisionProbedAt = 0;
+            _accountCreateIssued = false;
+            _awaitingFlush = false;
+        }
 
         std::string ConfName()
         {
@@ -66,15 +111,24 @@ namespace DcTestDriver
             std::string const name = ConfName();
             if (name.empty())
                 return ObjectGuid::Empty;
+
+            // A re-pointed account gets its own provisioning attempt too: a
+            // latched refusal and the "the INSERT is already queued" flag both
+            // describe the OLD account and must not outlive it.
+            std::string const account = ConfAccount();
+            if (account != _provisionAccount)
+            {
+                _provisionAccount = account;
+                ResetProvisionState();
+            }
+
             if (_guid && name == _resolvedName)
                 return _guid;
             if (name != _resolvedName)
             {
-                // A renamed driver is a different character — the new name
+                // A renamed driver is a different character: the new name
                 // gets its own provisioning attempt.
-                _provisionTried = false;
-                _provisionRefusal.clear();
-                _awaitingFlush = false;
+                ResetProvisionState();
             }
             _guid = sCharacterCache->GetCharacterGuidByName(name);
             _resolvedName = name;
@@ -123,16 +177,16 @@ namespace DcTestDriver
         // appearance — nothing about a parked GM stand-in depends on either,
         // and it is a valid race/class pair on every realm.
         //
-        // True when the character now exists (its DB write may still be in
-        // flight — see _awaitingFlush).
-        bool TryProvision(std::string const& name, std::string* why)
+        // Provision::Created when the character now exists (its DB write may
+        // still be in flight — see _awaitingFlush).
+        Provision TryProvision(std::string const& name, std::string* why)
         {
             std::string const account = ConfAccount();
             if (account.empty())
             {
                 // Explicitly opted out of auto-provisioning.
                 *why = ManualSetup(name);
-                return false;
+                return Provision::Refused;
             }
 
             // Refuse a name the lookup could never find again. Player::Create
@@ -147,32 +201,47 @@ namespace DcTestDriver
                        "' is not a usable character name" +
                        (normalized != name ? " (did you mean '" + normalized + "'?)" : "") +
                        " — the driver could not be created";
-                return false;
+                return Provision::Refused;
             }
 
             uint32 accountId = AccountMgr::GetId(account);
             if (!accountId)
             {
-                AccountOpResult const res =
-                    sAccountMgr->CreateAccount(account, RandomPassword());
-                if (res != AOR_OK)
+                // AccountMgr::CreateAccount issues its INSERT through
+                // LoginDatabase.Execute, an ASYNCHRONOUS write on a worker
+                // connection, while AccountMgr::GetId is a synchronous Query
+                // on a different connection from the same pool. Nothing orders
+                // the two, so the read-back legitimately misses a row that is
+                // already on its way. Issue the INSERT exactly once and then
+                // WAIT for it. Re-issuing it would queue a duplicate that the
+                // unique index on account.username rejects, and treating the
+                // miss as a standing refusal is what turned a sub-second race
+                // into "the harness is broken until you restart the server".
+                if (!_accountCreateIssued)
                 {
-                    *why = "could not create the test driver account '" + account +
-                           "' (error " + std::to_string(static_cast<uint32>(res)) +
-                           ") — " + ManualSetup(name);
-                    return false;
+                    AccountOpResult const res =
+                        sAccountMgr->CreateAccount(account, RandomPassword());
+                    // AOR_NAME_ALREADY_EXIST means the row is there (or in
+                    // flight) and only our read is behind, so it is a wait,
+                    // not a failure.
+                    if (res != AOR_OK && res != AOR_NAME_ALREADY_EXIST)
+                    {
+                        *why = "could not create the test driver account '" + account +
+                               "' (error " + std::to_string(static_cast<uint32>(res)) +
+                               ") — " + ManualSetup(name);
+                        return Provision::Refused;
+                    }
+                    _accountCreateIssued = true;
+                    LOG_INFO("playerbots.dungeonclear",
+                             "TESTDRIVER created account '{}' for the test driver "
+                             "(password randomised and not recorded; use `account set "
+                             "password` if you need it), waiting for the row to land",
+                             account);
                 }
-                accountId = AccountMgr::GetId(account);
-                if (!accountId)
-                {
-                    *why = "created the test driver account '" + account +
-                           "' but cannot read it back — " + ManualSetup(name);
-                    return false;
-                }
-                LOG_INFO("playerbots.dungeonclear",
-                         "TESTDRIVER created account '{}' ({}) for the test driver "
-                         "(password randomised and not recorded; use `account set "
-                         "password` if you need it)", account, accountId);
+
+                *why = "test driver account '" + account +
+                       "' was just created and its row has not landed yet";
+                return Provision::Retry;
             }
 
             // The rotation logs its own accounts' characters in and out on its
@@ -185,7 +254,7 @@ namespace DcTestDriver
                        "' is one of AiPlayerbot.RandomBotAccounts — the bot rotation "
                        "would log the driver out mid-run. Point "
                        "DungeonClear.TestRun.DriverAccount at a plain account";
-                return false;
+                return Provision::Refused;
             }
 
             // SEC_PLAYER: the driver elevates its own session at init
@@ -208,7 +277,7 @@ namespace DcTestDriver
                 delete session;
                 *why = "could not create the test driver character '" + name +
                        "' on account '" + account + "' — " + ManualSetup(name);
-                return false;
+                return Provision::Refused;
             }
 
             player->setCinematic(2);          // skip the intro movie on login
@@ -232,7 +301,7 @@ namespace DcTestDriver
                      "TESTDRIVER created character '{}' ({}) on account '{}' ({}) — "
                      "waiting for the character save to land", name, guid.ToString(),
                      account, accountId);
-            return true;
+            return Provision::Created;
         }
 
         Player* FindOnline()
@@ -266,25 +335,69 @@ namespace DcTestDriver
                 return Readiness::Unavailable;
             }
 
-            // One attempt per conf name: a refusal is a standing condition, and
-            // retrying it on every command would just repeat the message.
-            if (_provisionTried)
+            // A burst of transient failures is bounded, but the budget refills:
+            // an attempt made long after the last one starts over, so a write
+            // that was slow once never becomes a permanent refusal.
+            if (_provisionLatch != ProvisionLatch::Refused && _provisionAttempts &&
+                GetMSTimeDiffToNow(_provisionProbedAt) >= PROVISION_BURST_RESET_MS)
+            {
+                _provisionAttempts = 0;
+                if (_provisionLatch == ProvisionLatch::Stuck)
+                    _provisionLatch = ProvisionLatch::None;
+            }
+
+            // A refusal is a standing condition, and retrying it on every
+            // command would just repeat the message.
+            if (_provisionLatch != ProvisionLatch::None)
             {
                 if (why)
                     *why = _provisionRefusal.empty() ? ManualSetup(name)
                                                      : _provisionRefusal;
                 return Readiness::Unavailable;
             }
-            _provisionTried = true;
+
+            // Between attempts, report the pending state instead of asking the
+            // login database again once per command.
+            if (_provisionAttempts &&
+                GetMSTimeDiffToNow(_provisionProbedAt) < PROVISION_RETRY_MS)
+            {
+                if (why)
+                    *why = _provisionRefusal;
+                return Readiness::PendingLogin;
+            }
+
+            _provisionProbedAt = getMSTime();
+            ++_provisionAttempts;
 
             std::string provisionWhy;
-            if (!TryProvision(name, &provisionWhy))
+            Provision const outcome = TryProvision(name, &provisionWhy);
+            if (outcome == Provision::Refused)
             {
                 LOG_WARN("playerbots.dungeonclear", "TESTDRIVER {}", provisionWhy);
+                _provisionLatch = ProvisionLatch::Refused;
                 _provisionRefusal = provisionWhy;
                 if (why)
                     *why = provisionWhy;
                 return Readiness::Unavailable;
+            }
+            if (outcome == Provision::Retry)
+            {
+                _provisionRefusal = provisionWhy;
+                if (_provisionAttempts >= PROVISION_MAX_ATTEMPTS)
+                {
+                    // Not a race any more. Say so, and stop probing until the
+                    // caller has been quiet long enough to refill the budget.
+                    LOG_WARN("playerbots.dungeonclear",
+                             "TESTDRIVER gave up provisioning after {} attempts: {}",
+                             _provisionAttempts, provisionWhy);
+                    _provisionLatch = ProvisionLatch::Stuck;
+                    if (why)
+                        *why = provisionWhy;
+                    return Readiness::Unavailable;
+                }
+                if (why)
+                    *why = provisionWhy;
+                return Readiness::PendingLogin;
             }
 
             // Resolve again so _guid picks up the cache entry we just added.
@@ -377,16 +490,43 @@ namespace DcTestDriver
             return;
 
         Player* driver = FindOnline();
-        PlayerbotAI* ai = driver ? GET_PLAYERBOT_AI(driver) : nullptr;
-        if (!driver || !ai)
+        if (!driver || !GET_PLAYERBOT_AI(driver))
             return;  // still loading — poll again next tick
 
         // One-time setup, in dependency order:
         // 1. Its own PlayerbotMgr, so GET_PLAYERBOT_MGR(driver) resolves for
         //    AddPlayerBot / LogoutPlayerBot (the AI map and mgr map are
         //    separate registries — both can exist for one guid).
+        //
+        //    NOTHING MAY HOLD A PlayerbotAI* ACROSS THIS CALL.
+        //    PlayerbotsMgr::AddPlayerbotData(p, false) constructs the manager
+        //    and then immediately runs PlayerbotMgr::OnPlayerLogin(p), which on
+        //    a realm with AiPlayerbot.SelfBotLevel > 2 issues the `self`
+        //    command for us. `self` is a TOGGLE, and on a character that
+        //    already has a PlayerbotAI (which the driver does, installed by the
+        //    login's own PlayerbotHolder::OnBotLogin) it takes the "off" half:
+        //    `delete GET_PLAYERBOT_AI(master)`. ~PlayerbotAI deletes its three
+        //    Engines and unregisters itself, so a PlayerbotAI* read before this
+        //    line dangles after it, and ResetStrategies()'s unchecked
+        //    `engines[i]->removeAllStrategies()` then calls through freed
+        //    memory. That was a SIGSEGV on the driver's first tick in world,
+        //    every single login, on any realm configured that way.
         if (!GET_PLAYERBOT_MGR(driver))
             sPlayerbotsMgr.AddPlayerbotData(driver, false);
+
+        // 1b. Only now resolve the AI, and put one back if the `self` toggle
+        //     above removed it. Everything below drives the driver through its
+        //     AI, and so does every `.dc` command the harness issues, so a
+        //     driver without one is not a driver.
+        PlayerbotAI* ai = GET_PLAYERBOT_AI(driver);
+        if (!ai)
+        {
+            sPlayerbotsMgr.AddPlayerbotData(driver, true);
+            ai = GET_PLAYERBOT_AI(driver);
+            if (!ai)
+                return;  // unreachable while playerbots is enabled, and the
+                         // gate above already required that
+        }
 
         // 2. Self-mastered: the stock real-player-master gate resolves the
         //    master via IsSelfBot(master) (master == bot; pre-PR-2592 this was
