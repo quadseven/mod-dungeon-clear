@@ -194,7 +194,25 @@ void DcFollowerLifecycle::ReapOrphanedFollows()
         // AI gone but the player is still in world (a self-bot toggled out of bot
         // mode). Cancel the leftover continuous follow so movement control reverts
         // to the human; a real player has no AI to self-heal it otherwise.
-        if (player->GetMotionMaster() &&
+        //
+        // ONLY WHILE STILL IN A DUNGEON, which is the entire scope this repair was
+        // written for: the generator we are cancelling is one follow-tank installed
+        // during a clear, and a clear only happens in a dungeon. Outside one there
+        // is nothing of ours left to cancel (a map change rebuilds the movement
+        // stack anyway), so the write buys nothing.
+        //
+        // What it costs is the reason for the gate. This sweep runs on the GLOBAL
+        // playerbot tick and its whole purpose is to act on a player that still
+        // exists but has lost its PlayerbotAI, which is precisely the state a
+        // character is in the instant a real client takes it back from an altbot.
+        // On a realm where characters are streamed from live clients that happens
+        // mid-run, routinely, and the character lands wherever it logged out. So
+        // this branch was reaching out from the world tick and writing the
+        // MotionMaster of a Player that had just been rebuilt somewhere else,
+        // possibly on a map owned by another MapUpdater thread. Dropping the mark
+        // is all that state needs.
+        Map* const map = player->GetMap();
+        if (map && map->IsDungeon() && player->GetMotionMaster() &&
             player->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
         {
             if (player->isMoving())

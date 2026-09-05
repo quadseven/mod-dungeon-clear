@@ -6,6 +6,7 @@
 #ifndef _DC_PARTY_STATE_H
 #define _DC_PARTY_STATE_H
 
+#include <cstdint>
 #include <string>
 
 class AiObjectContext;
@@ -180,6 +181,29 @@ public:
     // tank hold its advance after a pull until the whole party has finished
     // looting; the caller bounds the wait with a commit-timeout.
     static bool IsAnyPartyMemberLooting(Player* bot);
+
+    // Who is actually IN this run, versus who is merely still in the group.
+    //
+    // The between-pulls gate only counts members sharing the leader's Map (see
+    // DcSameInstance.h), which is what makes a member who left the instance stop
+    // holding the tank. That is the right readiness answer and the wrong roster
+    // answer: continuing is only correct while what is left can still clear the
+    // dungeon. This is the one walk that reports both sides so the give-up rung
+    // (DcPartyWaitDecision) can tell "four people, fine" from "no healer, stop".
+    //
+    // `roster*` counts the group as it stands now, on any map. A member who left
+    // the GROUP entirely is not counted anywhere and is invisible to this: the
+    // test harness catches that separately, and a human disbanding the party is
+    // not a failure the clear engine gets to have an opinion about.
+    struct PartyPresence
+    {
+        std::uint32_t presentAlive = 0;  // living members on the leader's own Map, leader included
+        std::uint32_t rosterAlive  = 0;  // living members of the group, any map
+        bool presentHasHealer = false;
+        bool rosterHasHealer  = false;
+        std::string absentNames;       // comma-joined, capped; "" when nobody is absent
+    };
+    static PartyPresence GetPartyPresence(Player* bot);
 
     // Builds a short, human-readable account of who the tank is waiting on to
     // become pull-ready, using the SAME thresholds IsPartyReady is called with

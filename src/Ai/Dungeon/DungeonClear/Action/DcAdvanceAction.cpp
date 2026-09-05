@@ -47,6 +47,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -689,8 +690,15 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     if (IsBetweenPullsReady(bot, context))
     {
         appr.partyNotReadyTicks = 0;
+        appr.partyNotReadySinceMs = 0;
         return Step::Continue;
     }
+
+    // Arm the wall clock on the first not-ready tick of THIS wait. Ticks below
+    // debounce the yield; this is what bounds it (see the field comment).
+    uint32 const nowMs = getMSTime();
+    if (appr.partyNotReadySinceMs == 0)
+        appr.partyNotReadySinceMs = nowMs ? nowMs : 1;
 
     // Debounce. Halting means StopBot(Hold), which cancels the escort spline, so
     // a single-tick trip (a follower momentarily at PartyMaxSpread while the tank
@@ -734,8 +742,73 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     LOG_DEBUG("playerbots.dungeonclear",
               "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
               bot->GetName(), appr.partyNotReadyTicks,
-              why.empty() ? " (resting)" : (" — waiting on " + why));
+              why.empty() ? " (resting)" : (" - " + why));
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+
+    // GIVE UP RATHER THAN SPIN.
+    //
+    // Everything above this line holds the tank; nothing above it can ever stop
+    // holding the tank. The wait is released only by the party becoming ready, so
+    // when it cannot the run does not fail, it FREEZES: 293 consecutive
+    // "waiting on <name> (out of range)" ticks against members whose POV clients
+    // had taken them out of the instance, and no verdict at either end.
+    //
+    // Two ways out, both owned by the pure kernel (DcPartyWaitDecision):
+    //
+    //   * the party is no longer viable (lost its healer, or is down to one), in
+    //     which case stopping now is better than walking a doomed party into the
+    //     next pack, and
+    //   * the ceiling, which catches every other shape of unsatisfiable wait.
+    //
+    // Note what is NOT here: a party that merely SHRANK keeps going. Members are
+    // already excluded from the readiness gate the moment they leave this Map
+    // (DcSameInstance), so four members simply finish the dungeon, which is the
+    // right answer on a realm where a client reconnect is routine.
+    //
+    // DisableDungeonClear is the same funnel `dc off`, the wipe bailout and the
+    // rez-recovery timeout use, so the addon, the status panel and the test
+    // harness all learn about this the way they learn about every other ending.
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(bot);
+    DcPartyWaitDecision::Inputs waitIn;
+    waitIn.waitedMs = getMSTimeDiff(appr.partyNotReadySinceMs, nowMs);
+    waitIn.timeoutMs = DcSettings::GetUInt(bot, "PartyWaitTimeoutSecs") * 1000;
+    waitIn.presentAlive = presence.presentAlive;
+    waitIn.presentHasHealer = presence.presentHasHealer;
+    waitIn.rosterAlive = presence.rosterAlive;
+    waitIn.rosterHasHealer = presence.rosterHasHealer;
+
+    DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
+    if (verdict.outcome == DcPartyWaitDecision::Outcome::EndRun)
+    {
+        std::string reason;
+        switch (verdict.reason)
+        {
+            case DcPartyWaitDecision::Reason::LostHealer:
+                reason = "Dungeon clear stopped: the party's healer is no longer in the "
+                         "instance (" + presence.absentNames + " left the run).";
+                break;
+            case DcPartyWaitDecision::Reason::TooFewMembers:
+                reason = "Dungeon clear stopped: too few members left in the instance to "
+                         "continue (" + presence.absentNames + " left the run).";
+                break;
+            case DcPartyWaitDecision::Reason::Timeout:
+            default:
+                reason = "Dungeon clear stopped: the party never became ready after " +
+                         std::to_string(waitIn.waitedMs / 1000) + "s" +
+                         (why.empty() ? "." : (" (" + why + ")."));
+                break;
+        }
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] between-pulls wait gave up after {} ticks / {}ms: {} "
+                 "(present {} of {} alive, healer here={})",
+                 bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, reason,
+                 presence.presentAlive, presence.rosterAlive,
+                 presence.presentHasHealer ? 1 : 0);
+        DcActionShared::DisableDungeonClear(botAI, reason);
+        appr.partyNotReadyTicks = 0;
+        appr.partyNotReadySinceMs = 0;
+    }
+
     return Step::ReturnFalse;
 }
 
