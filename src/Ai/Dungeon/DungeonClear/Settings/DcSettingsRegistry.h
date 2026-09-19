@@ -151,6 +151,20 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "StrandedRecovery",              DcType::Bool,   1,   0,    1,  true  },
     { "StrandedRecoveryNoProgressSecs", DcType::UInt,  60,  60, 3600,  true  },
 
+    // Ceiling on the between-pulls wait. The tank yields while the party is
+    // behind, hurt or drinking, and that yield had no end: past the debounce it
+    // logged and halted every tick, and only the party could release it. When the
+    // party CANNOT become ready the run froze instead of failing (a member pulled
+    // out of the instance by its owner's client logging in: 293 identical
+    // "waiting on <name> (out of range)" ticks and no verdict at either end).
+    // After this many seconds of one uninterrupted wait the run stops and says
+    // why. Long by design, for the same reason as the stranded clock: a real rest
+    // or a slow catch-up must never reach it. 0 disables the ceiling, which
+    // restores the old spin-forever behaviour and is only sensible if you would
+    // rather intervene by hand than have a run end itself.
+    // See Util/DcPartyWaitDecision.h.
+    { "PartyWaitTimeoutSecs",          DcType::UInt, 180,   0, 3600,  true  },
+
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
     // or `dc pause`), so the party can prepare instead of the tank rushing in

@@ -60,6 +60,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSameInstance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTankForm.h"
@@ -1144,8 +1145,8 @@ namespace
             Player* member = ref->GetSource();
             if (!member || member == leader)
                 continue;
-            if (member->GetMapId() != leader->GetMapId())
-                continue;
+            if (!DcSameInstance(member, leader))
+                continue;   // speed is a packet write; never across a map boundary
             apply(member);
         }
     }

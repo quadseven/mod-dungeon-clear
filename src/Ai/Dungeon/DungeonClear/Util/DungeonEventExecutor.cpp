@@ -22,6 +22,7 @@
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSameInstance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -173,8 +174,8 @@ namespace
                 continue;
             if (!member->IsInWorld() || !member->IsAlive())
                 continue;
-            if (member->GetMapId() != leader->GetMapId())
-                continue;
+            if (!DcSameInstance(member, leader))
+                continue;   // another copy of this dungeon, another update thread
             if (!GET_PLAYERBOT_AI(member))  // only relocate bots, never a human
                 continue;
             if (member->GetExactDist(lx, ly, lz) <= DC_JUMP_STRANDED_DIST)
@@ -289,7 +290,7 @@ namespace
                 Player* member = ref->GetSource();
                 if (!member || member == leader)
                     continue;
-                if (member->GetMapId() != leader->GetMapId())
+                if (!DcSameInstance(member, leader))
                     continue;
                 if (!GET_PLAYERBOT_AI(member))  // never touch a human's combat
                     continue;

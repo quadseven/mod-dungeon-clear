@@ -308,6 +308,31 @@ DungeonClear.StrandedRecovery = 1
 DungeonClear.StrandedRecoveryNoProgressSecs = 60
 
 #
+#    DungeonClear.PartyWaitTimeoutSecs
+#        Ceiling on the between-pulls wait, in seconds. The tank holds while the
+#        party is behind, hurt or drinking; this is how long one uninterrupted
+#        hold may last before the run stops and reports why. Without it the hold
+#        has no end at all, because only the party can release it: a member who
+#        leaves the instance mid-run (their own client logging in and taking the
+#        character back) can never satisfy the gate, and the run freezes rather
+#        than failing.
+#
+#        Note this is a BACKSTOP, not the usual answer. A member who leaves the
+#        instance stops counting toward the gate immediately, so the party simply
+#        carries on short-handed; the run only ends early if what is left cannot
+#        clear the dungeon (no healer, or fewer than two members).
+#
+#        Long by design, like StrandedRecoveryNoProgressSecs: a legitimate rest or
+#        a slow catch-up must never reach it. The clock restarts every time the
+#        party does become ready.
+#            0 = no ceiling (a wait can hold the run forever, as it used to)
+#
+#        Default: 180 (3 minutes)
+#
+
+DungeonClear.PartyWaitTimeoutSecs = 180
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

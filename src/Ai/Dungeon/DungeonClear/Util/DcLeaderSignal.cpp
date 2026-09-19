@@ -64,6 +64,7 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSameInstance.h"
 
 namespace
 {
@@ -471,7 +472,10 @@ Player* DcLeaderSignal::FindRunOwner(Player* bot)
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
-        if (!member || member->GetMapId() != bot->GetMapId())
+        // Same Map OBJECT, exactly as FindLeaderTank does: a run owner resolved in
+        // another copy of this dungeon is a pointer other rungs then WRITE through
+        // (DcRezRecovery resets its pull FSM). Same hazard as #20.
+        if (!DcSameInstance(member, bot))
             continue;
         if (owns(member))
             return member;
@@ -510,7 +514,7 @@ Player* DcLeaderSignal::FindTerminalDriver(Player* bot)
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
-        if (!member || member->GetMapId() != owner->GetMapId())
+        if (!DcSameInstance(member, owner))
             continue;
         if (!GET_PLAYERBOT_AI(member))
             continue;  // a real player has no AI to run the rung

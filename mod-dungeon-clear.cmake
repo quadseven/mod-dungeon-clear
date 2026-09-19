@@ -52,6 +52,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestSmartRest.cpp"
             "${MOD_PATH}/t/TestPostCombatRez.cpp"
             "${MOD_PATH}/t/TestStrandedRecovery.cpp"
+            "${MOD_PATH}/t/TestPartyWaitDecision.cpp"
             "${MOD_PATH}/t/TestFightInPlace.cpp"
             "${MOD_PATH}/t/TestBossPullback.cpp"
             "${MOD_PATH}/t/TestScriptedPull.cpp"

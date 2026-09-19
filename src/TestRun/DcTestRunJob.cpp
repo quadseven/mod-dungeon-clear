@@ -44,6 +44,7 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSameInstance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "TestRun/DcDiagSnapshot.h"
 #include "TestRun/DcTestComp.h"
@@ -1669,11 +1670,41 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
     {
         for (Slot const& slot : _slots)
         {
-            if (!slot.guid || ObjectAccessor::FindConnectedPlayer(slot.guid))
+            if (!slot.guid)
+                continue;
+            Player* const member = ObjectAccessor::FindConnectedPlayer(slot.guid);
+            if (!member)
+            {
+                Finish(DcTestRun::Verdict::FailAborted,
+                       "roster member " + slot.rosterName +
+                           " left the run (owner logged in, or the character was logged out)");
+                return;
+            }
+
+            // STILL CONNECTED IS NOT STILL IN THE RUN, and the difference is the
+            // whole of this bug. The secure-login hook logs the altbot out and the
+            // human's client then loads the SAME character from its own saved
+            // position, which is wherever they last stood: outside the dungeon, or
+            // in a fresh copy of it. FindConnectedPlayer answers yes throughout, so
+            // this guard passed and the run carried on holding the tank against a
+            // member it could never reach.
+            //
+            // Same Map OBJECT (DcSameInstance), not map id: a second copy of the
+            // same dungeon shares the id, and that copy is exactly where a
+            // re-logged-in member lands if they logged out inside one.
+            //
+            // Mid-teleport is not gone: DC's own scripted events hop the party
+            // across the map, and the tank block above already skips a sample taken
+            // inside that window for the leader. Skip the member's own window too
+            // rather than read a position it has already left.
+            if (!tank || !member->IsInWorld() || member->IsBeingTeleported())
+                continue;
+            if (DcSameInstance(member, tank))
                 continue;
             Finish(DcTestRun::Verdict::FailAborted,
                    "roster member " + slot.rosterName +
-                       " left the run (owner logged in, or the character was logged out)");
+                       " is no longer in the run's instance (its owner's client took the "
+                       "character back, or it was moved out)");
             return;
         }
     }

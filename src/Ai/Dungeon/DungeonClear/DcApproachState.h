@@ -83,6 +83,14 @@ struct DcApproachState
     // recoveryProgressWatch comment above, one rung higher up.
     uint32 nudgeAttempts       = 0;
     uint32 partyNotReadyTicks  = 0;  // consecutive between-pulls not-ready ticks (yield debounce)
+    // When the CURRENT uninterrupted between-pulls wait began (getMSTime; 0 = not
+    // waiting). Ticks debounce the yield; only wall time can bound it, because the
+    // think interval is not constant (the react-delay fast path moves it by an
+    // order of magnitude) and a tick budget would mean a different real timeout on
+    // every run. Cleared in lockstep with partyNotReadyTicks so a wait that is
+    // released and later resumes starts a fresh window rather than inheriting a
+    // stale one. See DcPartyWaitDecision.
+    uint32 partyNotReadySinceMs = 0;
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
@@ -246,6 +254,7 @@ struct DcApproachState
         resnapAttempts      = 0;
         nudgeAttempts       = 0;
         partyNotReadyTicks  = 0;
+        partyNotReadySinceMs = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
         skirtOrbitTarget.Clear();
