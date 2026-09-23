@@ -225,6 +225,17 @@ bool DcOnAction::Execute(Event event)
         DcRefuse(botAI, bot, "Not authorized to enable dungeon clear");
         return false;
     }
+    // NOBODY TO LEAD IS A REFUSAL, NOT A QUIET SUCCESS. The non-leader branch
+    // below returns true, and with no elected leader EVERY member takes it, so
+    // `dc on` sent to a whole party used to report success on all of them
+    // while nothing was enabled anywhere. The `.dc` command and the addon
+    // already say this in these words when they find no leader; this is the
+    // same answer on the chat and DoSpecificAction path.
+    if (!DcLeaderSignal::FindLeaderTank(bot))
+    {
+        DcRefuse(botAI, bot, "No tank bot found in your group.");
+        return false;
+    }
     // Party chat fans `dc on` out to every bot the master owns, so non-leader
     // bots land here too — non-tanks AND, in a raid, non-leader (off-)tanks.
     // They don't lead the clear, but they must follow the leader while it runs.
@@ -327,6 +338,10 @@ bool DcOnAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     std::string const target = next.has_value() ? next->name : "the next boss";
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] dungeon clear enabled on map {} with {} boss(es) known - heading to {}{}",
+             bot->GetName(), bot->GetMapId(), bosses.size(), target,
+             PlayerbotAI::IsTank(bot) ? "" : " (no tank in the party, so the group leader leads)");
     DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear enabled. Heading to " + target + ".");
 
     // Trigger instant status addon message update
@@ -378,6 +393,14 @@ bool DcSkipAction::Execute(Event event)
     if (!IsAuthorized(bot, event))
     {
         DcRefuse(botAI, bot, "Not authorized to skip");
+        return false;
+    }
+    // Same as DcOnAction: with no leader, every member would take the quiet
+    // non-leader return below and the skip would "succeed" having skipped
+    // nothing.
+    if (!DcLeaderSignal::FindLeaderTank(bot))
+    {
+        DcRefuse(botAI, bot, "No tank bot found in your group.");
         return false;
     }
     // Only the leader owns the run state. Non-leaders reached via the party-chat

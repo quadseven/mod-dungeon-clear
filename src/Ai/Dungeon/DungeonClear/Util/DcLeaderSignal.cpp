@@ -8,6 +8,7 @@
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
+#include "DcTanklessLead.h"
 #include "DcZoneLine.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
@@ -158,7 +159,15 @@ namespace
             return nullptr;
         if (leader->GetGroup() != group)
             return nullptr;
-        if (!PlayerbotAI::IsTank(leader) || !GET_PLAYERBOT_AI(leader))
+        if (!GET_PLAYERBOT_AI(leader))
+            return nullptr;
+        // A tankless party's group leader (DcTanklessLead.h) is by definition
+        // not a tank, so it validates on still being the party's leader
+        // instead. A tank arriving in the meantime is picked up at the next
+        // re-scan, within the TTL, which is the lag this memo already accepts
+        // for a newly eligible tank.
+        if (!PlayerbotAI::IsTank(leader) &&
+            (group->isRaidGroup() || group->GetLeaderGUID() != leader->GetGUID()))
             return nullptr;
         return leader;
     }
@@ -381,6 +390,9 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
 
     Player* leader = nullptr;
     uint32 bestGearScore = 0;
+    // Any tank at all on this map, a person included. Only consulted when no
+    // tank BOT won, to decide whether the tankless rule may apply.
+    bool anyTankOnMap = false;
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
@@ -391,6 +403,7 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
             continue;
         if (!PlayerbotAI::IsTank(member))
             continue;
+        anyTankOnMap = true;
         // Only bot tanks can drive — a real-player tank has no PlayerbotAI to
         // run the clear, so it can never be the leader.
         PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
@@ -422,6 +435,20 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
             leader = member;
             bestGearScore = gearScore;
         }
+    }
+
+    // NO TANK BOT WON: a party with no tank at all is driven by its own group
+    // leader, when that leader is a bot that can. See DcTanklessLead.h for the
+    // measured failure and for what this deliberately leaves alone.
+    if (!leader)
+    {
+        Player* groupLeader = ObjectAccessor::FindPlayer(group->GetLeaderGUID());
+        if (DcTanklessLead::GroupLeaderDrives(
+                isRaid, anyTankOnMap,
+                groupLeader && GET_PLAYERBOT_AI(groupLeader),
+                groupLeader && groupLeader->IsAlive(),
+                groupLeader && groupLeader->GetMap() == reference->GetMap()))
+            leader = groupLeader;
     }
 
     {
