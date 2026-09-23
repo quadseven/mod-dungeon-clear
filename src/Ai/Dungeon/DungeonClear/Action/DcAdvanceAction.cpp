@@ -36,6 +36,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/BossPullbackRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLogThrottle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
@@ -762,6 +763,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     if (IsBetweenPullsReady(bot, context))
     {
         appr.partyNotReadyTicks = 0;
+        // The wait is over, so the next one's first line goes out at once.
+        appr.lastYieldLogMs = 0;
+        appr.lastYieldLogged.clear();
         return Step::Continue;
     }
 
@@ -804,10 +808,19 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     std::string const why = DcPartyState::DescribePartyNotReady(
         bot, rest.minHp, rest.minMp,
         gate.maxSpread, gate.anchor, gate.maxTankGap);
-    LOG_DEBUG("playerbots.dungeonclear",
-              "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
-              bot->GetName(), appr.partyNotReadyTicks,
-              why.empty() ? " (resting)" : (" — waiting on " + why));
+    // ON CHANGE, OR ONCE PER INTERVAL, NOT EVERY TICK. See DcLogThrottle.h.
+    std::string const reason = why.empty() ? " (resting)" : (" - waiting on " + why);
+    uint32 const nowMs = getMSTime();
+    if (DcLogThrottle::ShouldLog(appr.lastYieldLogMs == 0, reason != appr.lastYieldLogged,
+                                 getMSTimeDiff(appr.lastYieldLogMs, nowMs),
+                                 DC_PARTY_YIELD_LOG_INTERVAL_MS))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
+                  bot->GetName(), appr.partyNotReadyTicks, reason);
+        appr.lastYieldLogged = reason;
+        appr.lastYieldLogMs = nowMs != 0 ? nowMs : 1u;
+    }
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
     return Step::ReturnFalse;
 }

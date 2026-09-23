@@ -44,6 +44,26 @@ namespace DcTanklessLead
         return !isRaid && !anyTankOnMap && groupLeaderIsBot && groupLeaderAlive &&
                groupLeaderOnMap;
     }
+
+    // WHY NOBODY WAS ELECTED, in the words `dc on` / `dc skip` refuse with.
+    //
+    // One case deserves its own sentence because the generic one sends the
+    // reader the wrong way. A member that logged in at a saved position inside
+    // an instance lands in the copy its own bind names, not its party's, so a
+    // party can stand on "the same dungeon" in two copies. Measured on a dev
+    // realm: the group leader in one copy, the other four in another. The
+    // leader was elected in its copy and drove; the four were refused with "No
+    // tank bot found in your group.", which reads as the tankless problem this
+    // header was written for, when the real answer is that their leader is not
+    // in their instance at all. Nothing here can fix that from inside - it takes
+    // leaving the instance and re-entering through the door, which lands a
+    // grouped character in its group leader's bind.
+    constexpr char const* NoLeaderReason(bool groupLeaderOnSameMapId, bool groupLeaderOnSameMap)
+    {
+        return (groupLeaderOnSameMapId && !groupLeaderOnSameMap)
+                   ? "The group leader is in another copy of this dungeon."
+                   : "No tank bot found in your group.";
+    }
 }
 
 #endif  // _DC_TANKLESS_LEAD_H

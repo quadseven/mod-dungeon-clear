@@ -52,3 +52,19 @@ TEST(DcTanklessLead, RaidsAreNotCovered)
 static_assert(GroupLeaderDrives(false, false, true, true, true), "tankless party, bot leader");
 static_assert(!GroupLeaderDrives(false, true, true, true, true), "a human tank blocks it");
 static_assert(!GroupLeaderDrives(true, false, true, true, true), "raids excluded");
+
+// The refusal text. (groupLeaderOnSameMapId, groupLeaderOnSameMap)
+using DcTanklessLead::NoLeaderReason;
+
+TEST(DcTanklessLead, LeaderInAnotherCopyIsSaidAsSuch)
+{
+    // The measured split: same dungeon id, different instance copy.
+    EXPECT_STREQ(NoLeaderReason(true, false),
+                 "The group leader is in another copy of this dungeon.");
+}
+
+TEST(DcTanklessLead, OtherwiseItIsTheNoTankRefusal)
+{
+    EXPECT_STREQ(NoLeaderReason(false, false), "No tank bot found in your group.");
+    EXPECT_STREQ(NoLeaderReason(true, true), "No tank bot found in your group.");
+}

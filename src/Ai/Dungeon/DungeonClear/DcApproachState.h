@@ -12,6 +12,7 @@
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
 #include <limits>
+#include <string>
 
 // All transient per-approach state for one boss-approach run, owned as a single
 // value (DungeonClearApproachStateValue, "dungeon clear approach state") so the
@@ -84,6 +85,11 @@ struct DcApproachState
     // recoveryProgressWatch comment above, one rung higher up.
     uint32 nudgeAttempts       = 0;
     uint32 partyNotReadyTicks  = 0;  // consecutive between-pulls not-ready ticks (yield debounce)
+    // The last "advance yielding" reason written to the log, and when (getMSTime,
+    // 0 = never). The line is throttled to changes plus one reminder per
+    // DC_PARTY_YIELD_LOG_INTERVAL_MS; see DcLogThrottle.h.
+    std::string lastYieldLogged;
+    uint32 lastYieldLogMs      = 0;
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled

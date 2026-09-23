@@ -449,6 +449,11 @@ constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 // unbounded travel if the ready/not-ready flicker repeats. See the note there.
 constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
 
+// How often an UNCHANGED "advance yielding" reason is repeated in the log. A
+// changed reason is logged at once; see DcLogThrottle.h for why the line is
+// throttled at all.
+constexpr uint32 DC_PARTY_YIELD_LOG_INTERVAL_MS = 30000;
+
 // Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
 // the cached route and forces a rebuild. Resnap only proves the bot's position
 // can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot
