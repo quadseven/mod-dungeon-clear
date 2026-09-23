@@ -17,6 +17,7 @@
 #include "Group.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "ObjectGuid.h"
 #include "Player.h"
 #include "InstanceScript.h"
@@ -28,6 +29,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTanklessLead.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -78,6 +80,20 @@ namespace
         // of — the whole point of a test run is a pure-bot group.
         return owner->GetSession() &&
                owner->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
+    }
+
+    // The refusal text for "nobody is elected". See DcTanklessLead::NoLeaderReason.
+    // Reads the leader's map id and Map pointer only - the same two reads the
+    // election itself makes of every member - and never writes to it.
+    std::string NoLeaderReason(Player* bot)
+    {
+        Player* groupLeader = nullptr;
+        if (Group* group = bot ? bot->GetGroup() : nullptr)
+            groupLeader = ObjectAccessor::FindPlayer(group->GetLeaderGUID());
+        bool const sameId = groupLeader && groupLeader != bot &&
+                            groupLeader->GetMapId() == bot->GetMapId();
+        return DcTanklessLead::NoLeaderReason(sameId,
+                                              sameId && groupLeader->GetMap() == bot->GetMap());
     }
 
     bool AnyPartyMemberDead(Player* bot)
@@ -233,7 +249,7 @@ bool DcOnAction::Execute(Event event)
     // same answer on the chat and DoSpecificAction path.
     if (!DcLeaderSignal::FindLeaderTank(bot))
     {
-        DcRefuse(botAI, bot, "No tank bot found in your group.");
+        DcRefuse(botAI, bot, NoLeaderReason(bot));
         return false;
     }
     // Party chat fans `dc on` out to every bot the master owns, so non-leader
@@ -400,7 +416,7 @@ bool DcSkipAction::Execute(Event event)
     // nothing.
     if (!DcLeaderSignal::FindLeaderTank(bot))
     {
-        DcRefuse(botAI, bot, "No tank bot found in your group.");
+        DcRefuse(botAI, bot, NoLeaderReason(bot));
         return false;
     }
     // Only the leader owns the run state. Non-leaders reached via the party-chat

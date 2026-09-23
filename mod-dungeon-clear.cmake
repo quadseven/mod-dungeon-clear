@@ -98,6 +98,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestBlackwingLairSuppressionRouteProbe.cpp"
             "${MOD_PATH}/t/TestStrategyGate.cpp"
             "${MOD_PATH}/t/TestTanklessLead.cpp"
+            "${MOD_PATH}/t/TestLogThrottle.cpp"
             "${MOD_PATH}/t/TestModuleEnable.cpp"
             "${MOD_PATH}/t/TestRelevanceLadder.cpp"
             "${MOD_PATH}/t/TestSettingsRegistry.cpp"
