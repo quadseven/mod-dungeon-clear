@@ -264,6 +264,12 @@ namespace DcActionShared
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         Player* bot = botAI->GetBot();
+        // SAID IN THE SERVER LOG, not only on the addon channel. The reason used
+        // to reach nobody but a real client in the group (SendAddonMessage), so
+        // a coordinator driving a bot-only party, or anyone reading the log
+        // after the fact, could not learn why a run ended.
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] dungeon clear disabled: {}",
+                 bot ? bot->GetName() : "<unknown>", reason);
         // One reset clears the whole run-level state — enabled flag, the pause
         // cluster (paused / reason / auto-paused door), the selected-boss override,
         // and the two leader-fight latches (leader-combat-since / party-engaged) —
@@ -356,6 +362,12 @@ namespace DcActionShared
         if (lastSaid != reason)
         {
             lastSaid = reason;
+            // Once per change of reason, the same debounce the addon line
+            // uses. The stall reason is the one answer to "why is the run not
+            // moving", and until this line it existed only in the leader's
+            // value context and in an addon packet to real clients.
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] stalled: {}",
+                     botAI->GetBot() ? botAI->GetBot()->GetName() : "<unknown>", reason);
             DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
             botAI->DoSpecificAction("dc status", Event(), true);
         }

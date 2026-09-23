@@ -34,8 +34,11 @@ public:
     //     GUID-tiebroken — the most survivable tank to hold raid-wide threat.
     // Either way every member computes the same result (GetFirstMember walks the
     // whole raid, not just a sub-group), so they all agree on whom to follow.
-    // Returns nullptr when no tank bot is present on the map. `reference` may be
-    // any group member: the issuing player, a follower, or a tank itself.
+    // A PARTY with no tank at all on the map (human or bot) is driven by its
+    // group leader instead, when that leader is an alive bot on the same Map;
+    // see DcTanklessLead.h. Returns nullptr when neither rule elects anyone.
+    // `reference` may be any group member: the issuing player, a follower, or a
+    // tank itself.
     static Player* FindLeaderTank(Player* reference);
 
     // True when `bot` is the elected dungeon-clear leader for its group (see
