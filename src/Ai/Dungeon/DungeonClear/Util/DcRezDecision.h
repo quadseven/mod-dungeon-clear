@@ -74,8 +74,9 @@ namespace DcRezDecision
         // literal everyone-dead test; a raid passes ~90 because one hiding
         // survivor must not hold the verdict open at 25-40 members.
         std::uint32_t wipeFractionPct = 100;
-        // Raid runs: a wipe verdict asks for the ENTRANCE REGROUP (revive the
-        // raid at the instance entrance and continue) instead of the disable.
+        // Raid runs the `.dc test` harness owns: a wipe verdict asks for the
+        // ENTRANCE REGROUP (revive the raid at the instance entrance and
+        // continue) instead of the disable. See RegroupOnRaidWipe.
         bool          regroupOnWipe = false;
 
         // --- the NoRezzer floor (see the branch below) ------------------------
@@ -211,6 +212,23 @@ namespace DcRezDecision
 
     // The verdict. Empty roster / no deaths -> None. See the header comment
     // for the election and timeout rules.
+    // May a raid wipe be answered with the ENTRANCE REGROUP?
+    //
+    // The regroup (DcRezRecovery::RegroupAtEntrance) revives every bot at full
+    // health with no resurrection sickness and teleports the raid to the
+    // instance entrance. That is the `.dc test` harness's way of retrying a
+    // boss in minutes, and it is right there: the harness already provisions
+    // gear, builds the raid and teleports the tank in as a GM would. In a live
+    // run it is a shortcut no player has, and it breaks a classic ruleset the
+    // moment a raid wipes. So it is the harness's alone: a live raid wipe takes
+    // the ordinary Disable with Reason::Wipe, the corpses stay where they fell
+    // (StayDeadAction), and whatever owns the raid runs it back, releases and
+    // all, the way players do. Dungeons never regroup either way.
+    inline bool RegroupOnRaidWipe(bool raidMap, bool harnessOwnsRun)
+    {
+        return raidMap && harnessOwnsRun;
+    }
+
     inline Result Decide(Inputs const& in, std::vector<Member> const& members)
     {
         Result r;

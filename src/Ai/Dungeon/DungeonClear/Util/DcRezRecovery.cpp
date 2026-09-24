@@ -16,6 +16,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "TestRun/DcTestDungeonRegistry.h"
+#include "TestRun/DcTestRunManager.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 #include <algorithm>
@@ -308,13 +309,16 @@ namespace
         in.nowMs = now;
         in.pendingSinceMs = run.rezPendingSinceMs;
         in.timeoutMs = DcSettings::GetUInt(bot, "PostCombatRezTimeoutSecs") * 1000;
-        // Raid wipe semantics: fraction verdict + entrance regroup (the run
-        // continues; DungeonClearDisableOnDeathAction routes Regroup to
-        // RegroupAtEntrance instead of the disable funnel).
+        // Raid wipe semantics: the fraction verdict always, and the entrance
+        // regroup (revive + teleport; DungeonClearDisableOnDeathAction routes
+        // Regroup to RegroupAtEntrance) only for a run the `.dc test` harness
+        // owns. A live raid's wipe is the ordinary disable, and its owner runs
+        // it back. See DcRezDecision::RegroupOnRaidWipe.
         if (bot->GetMap() && bot->GetMap()->IsRaid())
         {
             in.wipeFractionPct = DcSettings::GetUInt(bot, "RaidWipeFractionPct");
-            in.regroupOnWipe = true;
+            in.regroupOnWipe = DcRezDecision::RegroupOnRaidWipe(
+                true, DcTestRunManager::Instance().IsReserved(bot->GetGUID()));
         }
         // Raid corpse piles get more clock: even in parallel, waves of raises
         // (each adding rezzers back) and the drinking between them take real

@@ -2310,18 +2310,28 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
                                          : DcRezRecovery::Plan{};
     std::string const& deadName = plan.deadName;
 
-    // RAID WIPE -> entrance regroup, not a disable: revive the raid at the
-    // instance entrance and keep the run going. Falls through to the classic
-    // disable only when no entrance is known for the map.
+    // RAID WIPE IN A `.dc test` RUN -> entrance regroup, not a disable: revive
+    // the raid at the instance entrance and keep the run going. Falls through
+    // to the classic disable only when no entrance is known for the map. A
+    // live raid never gets here with Regroup (DcRezDecision::RegroupOnRaidWipe).
     if (plan.verdict.outcome == DcRezDecision::Outcome::Regroup &&
         DcRezRecovery::RegroupAtEntrance(bot))
         return true;
 
+    bool const raidMap = bot && bot->GetMap() && bot->GetMap()->IsRaid();
     std::string reason;
     switch (plan.verdict.reason)
     {
         case DcRezDecision::Reason::Wipe:
-            reason = "The party wiped \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.";
+            // A LIVE RAID WIPE says so in its own words, and in the server log
+            // through DisableDungeonClear: the corpses are left where they fell
+            // and nothing here revives or moves anyone, so whatever drives the
+            // raid knows to release it and run it back.
+            reason = raidMap
+                         ? "The raid wiped - dungeon clear disabled. Nobody is revived or "
+                           "moved outside a test run; release, run back and type 'dc on' "
+                           "to resume."
+                         : "The party wiped \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.";
             break;
         case DcRezDecision::Reason::NoRezzer:
             reason = deadName + " died and no one left alive can resurrect \xe2\x80\x94 dungeon clear "
