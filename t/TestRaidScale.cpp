@@ -162,6 +162,37 @@ TEST(DcRaidRezTest, DungeonDefaultKeepsLiteralWipeSemantics)
     EXPECT_EQ(r.reason, DcRezDecision::Reason::Recovering);
 }
 
+// --- Who may regroup a raid wipe (quadseven/mod-overseer#640) -------------
+
+TEST(DcRaidRezTest, OnlyTheTestHarnessRegroupsARaidWipe)
+{
+    EXPECT_TRUE(DcRezDecision::RegroupOnRaidWipe(/*raidMap*/ true, /*harness*/ true));
+    EXPECT_FALSE(DcRezDecision::RegroupOnRaidWipe(true, false));
+    EXPECT_FALSE(DcRezDecision::RegroupOnRaidWipe(false, true));
+    EXPECT_FALSE(DcRezDecision::RegroupOnRaidWipe(false, false));
+}
+
+TEST(DcRaidRezTest, ALiveRaidWipeDisablesInsteadOfReviving)
+{
+    // 36 of 40 dead and nobody fighting: the raid wiped. A live raid (not the
+    // harness's) gets the ordinary disable, never the revive-and-teleport.
+    std::vector<DcRezDecision::Member> members;
+    for (int i = 0; i < 36; ++i)
+        members.push_back(Mk(true, false, false, false));
+    for (int i = 0; i < 4; ++i)
+        members.push_back(Mk(false, true, true, false));
+    DcRezDecision::Inputs in;
+    in.nowMs = 1000;
+    in.wipeFractionPct = 90;
+    in.regroupOnWipe = DcRezDecision::RegroupOnRaidWipe(true, false);
+    auto const r = DcRezDecision::Decide(in, members);
+    EXPECT_EQ(r.outcome, DcRezDecision::Outcome::Disable);
+    EXPECT_EQ(r.reason, DcRezDecision::Reason::Wipe);
+
+    in.regroupOnWipe = DcRezDecision::RegroupOnRaidWipe(true, true);
+    EXPECT_EQ(DcRezDecision::Decide(in, members).outcome, DcRezDecision::Outcome::Regroup);
+}
+
 // --- Formation geometry ----------------------------------------------------
 
 TEST(DcFormationTest, RingRadiusFloorsAndGrows)
