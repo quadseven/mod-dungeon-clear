@@ -285,6 +285,16 @@ namespace DungeonClearMath
                                      std::vector<std::size_t>* countedOut = nullptr,
                                      std::uint32_t* weightThirdsOut = nullptr);
 
+    // Scales the party's Leeroy ceiling (in thirds of an elite) down for a fragile
+    // party. `healthPerLevel` is the party's mean max health divided by its mean
+    // level; a party at or above kSturdyHealthPerLevel keeps the full ceiling, and
+    // one below it loses ceiling in proportion, down to a third of it. The result
+    // never drops under 3 thirds (one elite, or three normals, is always a
+    // face-pull), and a zero or negative reading (no data) keeps the full ceiling.
+    constexpr float kSturdyHealthPerLevel = 40.0f;
+    std::uint32_t FragilityScaledCeilingThirds(std::uint32_t ceilingThirds,
+                                               float healthPerLevel);
+
     // Pull CC-assist grace gate (pure). Decides whether a CC-impaired drag-back
     // should be ABORTED so the party drops passive and piles in to help the tank.
     // `impaired` is the caller's verdict that the leader tank is currently under a

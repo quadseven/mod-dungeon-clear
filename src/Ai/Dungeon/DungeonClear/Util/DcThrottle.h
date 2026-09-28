@@ -61,6 +61,7 @@ enum class DcThrottle : uint8
     HosTribunalLog,      // the Halls of Stone Tribunal garrison line
     HosWaveLog,          // the Halls of Stone wave telemetry line
     RezRefusalLog,       // RezRefusalDiag — why a party rez was refused
+    RezManaWaitLog,      // DungeonClearRezPartyAction — waiting on mana to afford the rez
     UpHarpoonLog,        // the Utgarde Pinnacle harpoon driver's telemetry line
     UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
 

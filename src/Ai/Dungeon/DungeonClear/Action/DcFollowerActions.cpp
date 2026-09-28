@@ -2125,6 +2125,28 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     // A false return (out of mana, LOS lost on the settle) yields the tick so the
     // lower rungs — drink/eat at 26.5 — run; the recovery timeout backstops a rezzer
     // that never affords the cast.
+    // Below the rez's mana cost, CastSpell would stand the bot up (cancelling the
+    // drink) and fail on the cost every tick, so the healer never regained the
+    // mana. Yield the tick untouched so the drink rung below can run; the recovery
+    // timeout still backstops a rezzer that never gets there.
+    {
+        uint32 const spellId =
+            botAI->GetAiObjectContext()->GetValue<uint32>("spell id", rezAction)->Get();
+        SpellInfo const* const info = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
+        if (info && info->PowerType == POWER_MANA)
+        {
+            int32 const cost = info->CalcPowerCost(bot, info->GetSchoolMask());
+            if (cost > 0 && bot->GetPower(POWER_MANA) < static_cast<uint32>(cost))
+            {
+                if (!DcRun::Of(botAI).Throttled(DcThrottle::RezManaWaitLog, 3000))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] rez party: '{}' on {} waiting on mana ({}/{})",
+                             bot->GetName(), rezAction, target->GetName(),
+                             bot->GetPower(POWER_MANA), cost);
+                return false;
+            }
+        }
+    }
     DcMovement::StopBot(bot, DcMovement::Stop::Soft);
     // The one prerequisite the stock action carried that a direct cast would
     // otherwise drop: a druid's feral forms are CAN_ONLY_CAST_SHAPESHIFT_SPELLS, so
