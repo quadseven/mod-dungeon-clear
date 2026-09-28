@@ -2776,3 +2776,28 @@ TEST(DungeonClearMathTest, LootRollRungCountsRollsRatherThanTrustingTheDigest)
     EXPECT_TRUE(DungeonClearMath::LootRollRungMayFire(1, 0, 5, sig, ticks));
     EXPECT_EQ(ticks, 1u);
 }
+
+TEST(DungeonClearMathTest, FragilityCeilingKeepsSturdyParty)
+{
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, 40.0f), 15u);
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, 90.0f), 15u);
+}
+
+TEST(DungeonClearMathTest, FragilityCeilingNoDataKeepsCeiling)
+{
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, 0.0f), 15u);
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, -1.0f), 15u);
+}
+
+TEST(DungeonClearMathTest, FragilityCeilingShrinksForThinParty)
+{
+    // 22 hp/level against 40 is 0.55: 15 thirds becomes 8, so a 9-third pack peels.
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, 22.0f), 8u);
+}
+
+TEST(DungeonClearMathTest, FragilityCeilingFloorsAtOneThirdAndThreeThirds)
+{
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(15, 1.0f), 5u);
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(6, 1.0f), 3u);
+    EXPECT_EQ(DungeonClearMath::FragilityScaledCeilingThirds(3, 1.0f), 3u);
+}
