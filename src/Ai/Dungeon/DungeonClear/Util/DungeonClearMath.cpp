@@ -677,3 +677,18 @@ std::vector<Position> DungeonClearMath::StandoffCandidates(Position const& targe
     }
     return out;
 }
+
+std::uint32_t DungeonClearMath::FragilityScaledCeilingThirds(std::uint32_t ceilingThirds,
+                                                             float healthPerLevel)
+{
+    if (healthPerLevel <= 0.0f || ceilingThirds <= 3)
+        return ceilingThirds;
+    float scale = healthPerLevel / kSturdyHealthPerLevel;
+    if (scale >= 1.0f)
+        return ceilingThirds;
+    if (scale < 1.0f / 3.0f)
+        scale = 1.0f / 3.0f;
+    std::uint32_t const scaled =
+        static_cast<std::uint32_t>(static_cast<float>(ceilingThirds) * scale + 0.5f);
+    return scaled < 3 ? 3 : scaled;
+}

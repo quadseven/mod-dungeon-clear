@@ -522,7 +522,32 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // full unit, a normal a third. The ceiling (MaxLeeroyMobs, set in elites) is
     // scaled to the same thirds unit, so a room of weak normal trash no longer
     // forces a cautious Advanced pull while an elite pack still does.
-    uint32 const ceilingThirds = maxLeeroy * 3;
+    // A party of thin bodies (a level-16 tank at 350 health) cannot hold the
+    // pack a sturdy one can, so the ceiling shrinks with health per level.
+    float healthPerLevel = 0.0f;
+    {
+        uint32 hp = 0, lv = 0;
+        if (Group* group = bot->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                    continue;
+                hp += m->GetMaxHealth();
+                lv += m->GetLevel();
+            }
+        }
+        else
+        {
+            hp = bot->GetMaxHealth();
+            lv = bot->GetLevel();
+        }
+        if (lv)
+            healthPerLevel = static_cast<float>(hp) / static_cast<float>(lv);
+    }
+    uint32 const ceilingThirds =
+        DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel);
     bool const advanced = weightThirds > ceilingThirds;
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
@@ -553,10 +578,10 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     }
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, weight "
-                  "{}/3 vs ceiling {} elites = {}/3) -> {}",
+                  "{}/3 vs ceiling {} elites = {}/3 at {:.0f} hp/level) -> {}",
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
-                  assistRadius, weightThirds, maxLeeroy, ceilingThirds,
+                  assistRadius, weightThirds, maxLeeroy, ceilingThirds, healthPerLevel,
                   advanced ? "ADVANCED" : "LEEROY");
     // On the surprising verdict (Advanced), dump every hostile the estimate saw —
     // distance to the camp, its computed aggro reach, the eligibility gate, and
