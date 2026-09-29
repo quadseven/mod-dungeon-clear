@@ -1122,7 +1122,12 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
 
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
-    Unit* target = DcTargeting::FindNearestReachableHostile(bot);
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+    uint32 const now = getMSTime();
+    Unit* target = DcTargeting::FindNearestReachableHostile(
+        bot, [&appr, now](Creature const* c)
+        { return appr.stalledFallback.IsBanned(c->GetGUID().GetRawValue(), now); });
     if (!target)
     {
         // We're stalled with nothing left to kill. Leave the stall reason in
@@ -1144,6 +1149,36 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     {
         context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(target->GetGUID());
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tClearing path \xe2\x80\x94 pulling " + std::string(target->GetName()) + ".");
+    }
+
+    // GIVE-UP BUDGET. This rung outranks Advance (20 vs 15) and EngageDirect returns
+    // true on every tick it is walking, so a target the leader never actually closes
+    // on would hold the tick for the rest of the run: Advance is the only thing that
+    // clears the stall reason, and Advance never runs. Live (guild finder run
+    // 298505, Ragefire Chasm): 19347 consecutive ticks here, none in Advance, the
+    // leader parked off its route for the whole 7200s. After DcStalledFallback::
+    // BUDGET_MS with no progress on the target, ban it for a while, clear the stall
+    // and fall through to Advance in this same tick so its off-line rejoin retries
+    // from where the leader now stands. If Advance stalls again the next candidate
+    // is tried, so the two alternate. Nothing here disables or stops the run.
+    if (appr.stalledFallback.Observe(target->GetGUID().GetRawValue(),
+                                     bot->GetExactDist(target), now) ==
+        DcStalledFallback::Verdict::GiveUp)
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] stalled fallback: no progress on {} ({:.1f}yd) in {}s -> "
+                 "banning it for {}s, clearing the stall and handing the tick back to Advance",
+                 bot->GetName(), target->GetName(), bot->GetExactDist(target),
+                 DcStalledFallback::BUDGET_MS / 1000, DcStalledFallback::BAN_MS / 1000);
+        appr.stalledFallback.Ban(target->GetGUID().GetRawValue(), now);
+        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(ObjectGuid::Empty);
+        ClearStall(context);
+        // Whatever the fallback's walk left in flight would make Advance's own
+        // re-entry MoveTo refuse (stock MoveTo refuses while a move is queued), and
+        // the cached route was built from a position the leader has since left.
+        bot->StopMovingOnCurrentPos();
+        appr.longPathExpiresMs = 0;
+        return false;
     }
 
     // Don't clear the stall reason here — only a successful Advance does that.
