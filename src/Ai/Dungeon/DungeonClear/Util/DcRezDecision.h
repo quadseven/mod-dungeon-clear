@@ -19,8 +19,8 @@
 //
 // This kernel answers, from a plain snapshot of the same-map party: should the
 // run HOLD for a resurrection (and if so, who rezzes whom), or DISABLE because
-// recovery is not viable (full wipe, no living rez class, out-of-combat
-// recovery clock expired)?
+// the whole party is dead (Wipe). No living rez class and an expired recovery
+// clock are HOLDs too: the dead release and corpse-run (MayReleaseSpirit).
 //
 // Election is deterministic from group order so every bot computes the same
 // answer independently (no cross-bot negotiation, no stored rezzer that can go
@@ -108,7 +108,7 @@ namespace DcRezDecision
         None,     // no deaths, the feature is disabled (the glue converts), or the
                   // instance forbids the spell and the run carries on short-handed
         Hold,     // suppress the bailout; recovery is in progress
-        Disable,  // recovery not viable — run the classic disable funnel
+        Disable,  // terminal: the whole party is dead (Wipe) or the feature is off
         Regroup   // raid wipe — revive at the instance entrance and continue
     };
 
@@ -119,9 +119,9 @@ namespace DcRezDecision
         Recovering,      // a bot rezzer is elected and will act
         WaitingOnHuman,  // only a human can rez — hold and prompt
         Wipe,            // everyone on the map is dead
-        NoRezzer,        // no living member's class can rez
+        NoRezzer,        // no living member's class can rez: hold, dead corpse-run
         NoRezzerInFight, // ditto, but the survivors are still swinging — hold
-        TimedOut,        // out-of-combat recovery clock expired
+        TimedOut,        // out-of-combat recovery clock expired: hold, dead corpse-run
         BlockedWaiting,  // the instance forbids resurrection — hold, it may lift
         BlockedStandDown // ...it did not lift; carry on short-handed, do not disable
     };
@@ -229,6 +229,20 @@ namespace DcRezDecision
         return raidMap && harnessOwnsRun;
     }
 
+    // May a DEAD member release its spirit and corpse-run under this verdict?
+    //
+    // The module keeps corpses where they fell (StayDeadAction) so a party rez
+    // can raise them. That is only right while a rez is actually coming. When no
+    // living member can raise them (NoRezzer), the elected rezzer ran out its
+    // budget (TimedOut), or nobody is left standing (Wipe), the corpse would lie
+    // there forever and the run with it. Releasing hands the walk back to the
+    // stock corpse-run, and the run resumes when a corpse is reached.
+    inline bool MayReleaseSpirit(Reason reason)
+    {
+        return reason == Reason::NoRezzer || reason == Reason::TimedOut ||
+               reason == Reason::Wipe;
+    }
+
     inline Result Decide(Inputs const& in, std::vector<Member> const& members)
     {
         Result r;
@@ -304,7 +318,7 @@ namespace DcRezDecision
         // while the instance forbids the spell, which classes are still standing is
         // not a fact about anything. Nothing latches — the moment the block lifts,
         // the verdict falls through to the ordinary election/timeout logic below and
-        // recovery (or the classic disable) resumes.
+        // recovery (or the corpse-run hold) resumes.
         if (in.rezBlocked)
         {
             bool const blockOutlivedTheWait =
@@ -354,7 +368,7 @@ namespace DcRezDecision
             // cannot recover from this death" while the death is still being
             // avenged reads a mid-fight snapshot as a final state. Hold while the
             // party is engaged; the moment combat ends, partyEngaged goes false and
-            // this same branch returns the Disable it always did. A party that goes
+            // this same branch returns the corpse-run Hold below. A party that goes
             // on to wipe reaches Reason::Wipe above instead, which is the more
             // accurate verdict anyway.
             //
@@ -394,8 +408,16 @@ namespace DcRezDecision
                 r.targetIdx = PickTarget(members);
                 return r;
             }
-            r.outcome = Outcome::Disable;
+            // NOT A DISABLE. Nobody standing can raise the dead, but the dead can
+            // release and corpse-run (MayReleaseSpirit) while the survivors hold
+            // (IsPending parks every pull gate). A guild run sat 4000s at zero
+            // bosses after the old disable here, waiting on a 'dc on' that no one
+            // was going to type. The verdict falls back to Recovering the moment a
+            // rez class is standing again, and to None when the corpses are
+            // reached, so the run resumes on its own.
+            r.outcome = Outcome::Hold;
             r.reason = Reason::NoRezzer;
+            r.targetIdx = PickTarget(members);
             return r;
         }
 
@@ -408,8 +430,11 @@ namespace DcRezDecision
         if (!in.partyEngaged && in.pendingSinceMs != 0 && in.timeoutMs != 0 &&
             in.nowMs - in.pendingSinceMs >= in.timeoutMs)
         {
-            r.outcome = Outcome::Disable;
+            // Same rule as NoRezzer: an expired budget releases the dead to
+            // corpse-run instead of ending the run. The elected rezzer stays named.
+            r.outcome = Outcome::Hold;
             r.reason = Reason::TimedOut;
+            r.rezzerIdx = botRezzer >= 0 ? botRezzer : humanAny;
             return r;
         }
 

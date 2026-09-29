@@ -107,6 +107,14 @@ namespace DcRezRecovery
     // falls back to the classic disable).
     bool RegroupAtEntrance(Player* bot);
 
+    // May THIS dead bot release its spirit and corpse-run? True in a dungeon when
+    // nobody on the map is left alive (a wipe: the run is disabled, nobody can
+    // raise anyone) or when the verdict is Hold with no rezzer coming (no living
+    // rez class, or the recovery budget ran out). False while a rez is on its way,
+    // so a corpse a living rezzer will raise is never released out from under it.
+    // Read-only. Feeds StayDeadAction, which otherwise pins every dungeon corpse.
+    bool MayReleaseSpirit(Player* bot);
+
     // "Neko is coming to resurrect Bib." / "Waiting for you to resurrect
     // Bib." — one status-panel sentence for the current recovery, empty when
     // none is in progress. Read-only (no clock side effects).

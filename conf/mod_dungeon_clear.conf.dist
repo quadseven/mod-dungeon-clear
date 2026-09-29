@@ -91,7 +91,9 @@ DungeonClear.Enable = 1
 #        bots dead in the open world always use stock auto-release. 0 restores
 #        stock auto-release everywhere. Honoured live on `.reload config`. The
 #        anti-stuck repop safety net (dead bot wedged in geometry / out of
-#        world) stays active either way.
+#        world) stays active either way. A corpse nobody can raise (no living
+#        rez class, recovery budget spent, or a wipe) is released anyway so
+#        the bot can corpse-run and the run can resume.
 #
 #        Default: 1
 #

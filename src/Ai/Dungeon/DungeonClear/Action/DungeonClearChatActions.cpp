@@ -234,6 +234,15 @@ namespace
     }
 }
 
+bool DcEnsureOnAction::Execute(Event event)
+{
+    // Leader with the run already on (paused or not): nothing to do, and above
+    // all nothing to reset.
+    if (DcLeaderSignal::IsDungeonClearLeader(bot) && DcRun::Of(context).enabled)
+        return true;
+    return DcOnAction::Execute(event);
+}
+
 bool DcOnAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))

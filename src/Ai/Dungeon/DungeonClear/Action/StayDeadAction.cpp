@@ -7,6 +7,7 @@
 #include "Map.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 
 bool DungeonClearStayDeadAction::isUseful()
 {
@@ -24,8 +25,13 @@ bool DungeonClearStayDeadAction::isUseful()
     // Read live (not cached) so `.reload config` and per-run overrides both take
     // effect without a restart. The dead-state "auto release" trigger fires on
     // the throttled "often" cadence, so the per-call lookup is negligible.
+    // ...unless nobody can raise it. With no rez class standing, an expired rez
+    // budget or a wipe, a pinned corpse never comes back and the run hangs on it
+    // (a guild run sat 4000s that way). Release and let the stock corpse run walk
+    // back; the run holds meanwhile and resumes when the corpse is reached.
     if (DcSettings::GetBool(bot, "PreventBotRelease"))
-        return false;  // never auto-release; bot stays a corpse until rezzed
+        return DcRezRecovery::MayReleaseSpirit(bot) ? AutoReleaseSpiritAction::isUseful()
+                                                    : false;  // never auto-release; bot stays a corpse until rezzed
 
     return AutoReleaseSpiritAction::isUseful();
 }

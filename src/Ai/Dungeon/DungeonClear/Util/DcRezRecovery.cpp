@@ -416,6 +416,12 @@ namespace
             else if (plan.verdict.reason == DcRezDecision::Reason::WaitingOnHuman)
                 line = plan.targetName + " died \xe2\x80\x94 waiting for you to resurrect them (" +
                        std::to_string(in.timeoutMs / 1000) + "s).";
+            else if (plan.verdict.reason == DcRezDecision::Reason::NoRezzer ||
+                     plan.verdict.reason == DcRezDecision::Reason::TimedOut)
+                // Nobody can raise them: they release and run back while the rest
+                // hold. The run resumes by itself when the corpse is reached.
+                line = plan.targetName + " died and can't be resurrected \xe2\x80\x94 "
+                       "running back to the corpse; holding here.";
             else if (plan.verdict.reason == DcRezDecision::Reason::NoRezzerInFight)
                 // No rezzer elected — there is none left. The hold is only until the
                 // fight ends, at which point the verdict becomes the classic disable.
@@ -684,6 +690,30 @@ namespace DcRezRecovery
         return true;
     }
 
+    bool MayReleaseSpirit(Player* bot)
+    {
+        if (!bot || !bot->isDead())
+            return false;
+        Group* group = bot->GetGroup();
+        if (!group)
+            return true;  // nobody to raise a lone corpse
+        bool anyAlive = false;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member->GetMapId() == bot->GetMapId() && member->IsAlive())
+            {
+                anyAlive = true;
+                break;
+            }
+        }
+        if (!anyAlive)
+            return true;  // wipe: the run is over, release and run back
+        Plan const plan = EvaluateImpl(bot, /*mutate*/ false);
+        return plan.verdict.outcome == DcRezDecision::Outcome::Hold &&
+               DcRezDecision::MayReleaseSpirit(plan.verdict.reason);
+    }
+
     std::string DescribeWait(Player* bot)
     {
         Plan const plan = EvaluateImpl(bot, /*mutate*/ false);
@@ -691,6 +721,9 @@ namespace DcRezRecovery
             return "";
         if (plan.verdict.reason == DcRezDecision::Reason::WaitingOnHuman)
             return "Waiting for you to resurrect " + plan.targetName + ".";
+        if (plan.verdict.reason == DcRezDecision::Reason::NoRezzer ||
+            plan.verdict.reason == DcRezDecision::Reason::TimedOut)
+            return plan.targetName + " is running back to their corpse.";
         if (plan.verdict.reason == DcRezDecision::Reason::BlockedWaiting)
             return "Can't resurrect " + plan.targetName +
                    " while the encounter is in progress.";

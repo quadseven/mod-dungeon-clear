@@ -9,6 +9,7 @@
 
 using DcRezDecision::Decide;
 using DcRezDecision::Inputs;
+using DcRezDecision::MayReleaseSpirit;
 using DcRezDecision::Member;
 using DcRezDecision::Outcome;
 using DcRezDecision::Reason;
@@ -178,14 +179,14 @@ TEST(DcRezDecisionTest, FullWipeDisables)
     EXPECT_EQ(r.reason, Reason::Wipe);
 }
 
-TEST(DcRezDecisionTest, NoRezClassAliveDisables)
+TEST(DcRezDecisionTest, NoRezClassAliveHoldsForACorpseRun)
 {
     // Both rez classes are the corpses; the survivors are mage/warrior/warlock.
     auto party = BaseParty();
     party[0].isDead = true;
     party[1].isDead = true;
     Result const r = Decide(BaseInputs(), party);
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::NoRezzer);
 }
 
@@ -210,9 +211,9 @@ TEST(DcRezDecisionTest, NoRezClassAliveHoldsWhileThePartyIsStillFighting)
 }
 
 // And the hold is only a deferral: the instant the fight ends the verdict is the
-// classic disable again, so the run still terminates rather than idling to the
-// no-progress watchdog.
-TEST(DcRezDecisionTest, NoRezClassDisablesOnceTheFightEnds)
+// corpse-run hold: nobody can raise the dead, so they release and walk back while
+// the survivors wait. It is never a disable: that stranded a guild run 4000s.
+TEST(DcRezDecisionTest, NoRezClassHoldsForACorpseRunOnceTheFightEnds)
 {
     auto party = BaseParty();
     party[0].isDead = true;
@@ -222,7 +223,7 @@ TEST(DcRezDecisionTest, NoRezClassDisablesOnceTheFightEnds)
     EXPECT_EQ(Decide(in, party).reason, Reason::NoRezzerInFight);
     in.partyEngaged = false;
     Result const r = Decide(in, party);
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::NoRezzer);
 }
 
@@ -278,7 +279,7 @@ TEST(DcRezDecisionTest, NoRezClassHoldsUntilTheQuietHasHeldItsGrace)
 
     in.noRezzerQuietSinceMs = in.nowMs - 12000;
     Result const r = Decide(in, NoRezzerParty());
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::NoRezzer);
 }
 
@@ -293,7 +294,7 @@ TEST(DcRezDecisionTest, NoRezClassHoldsWhileTheQuietClockIsUnarmed)
 
 // ...and the flag hold is CAPPED, so a flag nothing ever clears degrades to the
 // old verdict instead of hanging the run open forever.
-TEST(DcRezDecisionTest, NoRezClassDisablesOnceTheFlagHoldHitsItsCeiling)
+TEST(DcRezDecisionTest, NoRezClassSettlesToTheCorpseRunHoldOnceTheFlagHoldHitsItsCeiling)
 {
     auto in = FloorInputs();
     in.anySurvivorCombatFlagged = true;
@@ -302,7 +303,7 @@ TEST(DcRezDecisionTest, NoRezClassDisablesOnceTheFlagHoldHitsItsCeiling)
 
     in.noRezzerSinceMs = in.nowMs - 60000;
     Result const r = Decide(in, NoRezzerParty());
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::NoRezzer);
 }
 
@@ -341,7 +342,7 @@ TEST(DcRezDecisionTest, AFullWipeStillDisablesEvenIfFlaggedEngaged)
 
 // ---- the recovery clock ---------------------------------------------------------
 
-TEST(DcRezDecisionTest, TimeoutExpiryDisables)
+TEST(DcRezDecisionTest, TimeoutExpiryHoldsForACorpseRun)
 {
     auto party = BaseParty();
     party[2].isDead = true;
@@ -349,7 +350,7 @@ TEST(DcRezDecisionTest, TimeoutExpiryDisables)
     in.pendingSinceMs = 1000;
     in.nowMs = 1000 + in.timeoutMs;  // exactly at the budget
     Result const r = Decide(in, party);
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::TimedOut);
 }
 
@@ -428,7 +429,7 @@ TEST(DcRezDecisionTest, ClockRestampTrajectoryFreezesAcrossCombat)
 
 TEST(DcRezDecisionTest, TimeoutBeatsWaitingOnHuman)
 {
-    // An ignored "waiting for you to rez" prompt still disables on the clock.
+    // An ignored "waiting for you to rez" prompt hands over to the corpse run on the clock.
     auto party = BaseParty();
     party[0].isDead = true;
     party[1].isDead = true;
@@ -437,7 +438,7 @@ TEST(DcRezDecisionTest, TimeoutBeatsWaitingOnHuman)
     in.pendingSinceMs = 1000;
     in.nowMs = 1000 + in.timeoutMs;
     Result const r = Decide(in, party);
-    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::TimedOut);
 }
 
@@ -563,4 +564,66 @@ TEST(DcRezDecisionTest, TheBlockedBranchIsInertWhenNothingIsBlocked)
     EXPECT_EQ(r.outcome, Outcome::Hold);
     EXPECT_EQ(r.reason, Reason::Recovering);
     EXPECT_EQ(r.rezzerIdx, 1);
+}
+
+
+// ---- a resurrection failure never ends the run (guild run stranded) --------------
+//
+// A guild run sat 4000s at zero bosses after "Azaedine died and no one left alive
+// can resurrect - dungeon clear disabled". Neither verdict below may be a Disable:
+// the dead release and corpse-run, the living hold, and the run resumes when a
+// corpse is reached or a rez class is back.
+
+TEST(DcRezDecisionTest, NoRezzerNeverDisablesAndOnlyTheWipeDoes)
+{
+    auto in = BaseInputs();
+    Result const r = Decide(in, NoRezzerParty());
+    EXPECT_NE(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
+    // A corpse is still named so the hold can be announced.
+    EXPECT_GE(r.targetIdx, 0);
+}
+
+TEST(DcRezDecisionTest, TimedOutKeepsTheElectedRezzerAndHolds)
+{
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.pendingSinceMs = 1000;
+    in.nowMs = 1000 + in.timeoutMs + 500000;  // long past the budget
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
+    EXPECT_EQ(r.reason, Reason::TimedOut);
+    EXPECT_GE(r.rezzerIdx, 0);
+}
+
+TEST(DcRezDecisionTest, RunResumesWhenTheCorpseIsReached)
+{
+    auto party = NoRezzerParty();
+    EXPECT_EQ(Decide(BaseInputs(), party).outcome, Outcome::Hold);
+    for (Member& m : party)
+        m.isDead = false;  // corpse reached, everyone revived
+    EXPECT_EQ(Decide(BaseInputs(), party).outcome, Outcome::None);
+}
+
+TEST(DcRezDecisionTest, RunResumesToRecoveryWhenARezClassIsBackUp)
+{
+    auto party = NoRezzerParty();
+    EXPECT_EQ(Decide(BaseInputs(), party).reason, Reason::NoRezzer);
+    party[0].isDead = false;  // the tank corpse-ran back
+    Result const r = Decide(BaseInputs(), party);
+    EXPECT_EQ(r.reason, Reason::Recovering);
+}
+
+TEST(DcRezDecisionTest, DeadMembersMayReleaseOnlyWhenNoOneCanRaiseThem)
+{
+    EXPECT_TRUE(MayReleaseSpirit(Reason::NoRezzer));
+    EXPECT_TRUE(MayReleaseSpirit(Reason::TimedOut));
+    EXPECT_TRUE(MayReleaseSpirit(Reason::Wipe));
+    // A live rezzer is on its way, or the corpse must stay raisable.
+    EXPECT_FALSE(MayReleaseSpirit(Reason::Recovering));
+    EXPECT_FALSE(MayReleaseSpirit(Reason::WaitingOnHuman));
+    EXPECT_FALSE(MayReleaseSpirit(Reason::NoRezzerInFight));
+    EXPECT_FALSE(MayReleaseSpirit(Reason::BlockedWaiting));
+    EXPECT_FALSE(MayReleaseSpirit(Reason::NoDeaths));
 }

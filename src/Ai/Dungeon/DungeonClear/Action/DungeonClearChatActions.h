@@ -17,6 +17,17 @@ public:
     bool Execute(Event event) override;
 };
 
+// `dc on` that is safe to repeat: enables the run only when the leader's run is
+// off, and answers true without touching one that is under way (an accepted
+// `dc on` resets the run's transient state). Lets a coordinator keep asking for
+// a run to be on after the module disabled itself, without restarting it.
+class DcEnsureOnAction : public DcOnAction
+{
+public:
+    DcEnsureOnAction(PlayerbotAI* botAI) : DcOnAction(botAI) {}
+    bool Execute(Event event) override;
+};
+
 class DcOffAction : public Action
 {
 public:
