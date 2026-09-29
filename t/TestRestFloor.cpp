@@ -142,3 +142,69 @@ TEST(DcRestFloorTest, HealerWithNoDrinkIsNotCapped)
     p.canDrink = false;
     EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
 }
+
+
+// ---- readiness-scaled Leeroy ceiling --------------------------------------------
+
+TEST(DcReadinessCeilingTest, ReadyPartyKeepsTheCeiling)
+{
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, Readiness{}));
+}
+
+TEST(DcReadinessCeilingTest, ALowHealerShrinksTheCeiling)
+{
+    Readiness r;
+    r.healerManaPct = 20.0f;
+    EXPECT_EQ(6u, ReadinessScaledCeilingThirds(15, r));
+    r.healerManaPct = 45.0f;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+    r.healerManaPct = 50.0f;
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AHurtTankShrinksTheCeiling)
+{
+    Readiness r;
+    r.tankHpPct = 55.0f;
+    EXPECT_EQ(8u, ReadinessScaledCeilingThirds(15, r));
+    r.tankHpPct = 75.0f;
+    EXPECT_EQ(12u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AFightAlreadyOnAndAnUnreadyGateEachCost)
+{
+    Readiness r;
+    r.membersFighting = 2;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+    r.membersFighting = 1;
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, r));
+    r.gateNotReady = true;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, NeverBelowOneElite)
+{
+    Readiness r;
+    r.healerManaPct = 5.0f;
+    r.tankHpPct = 20.0f;
+    r.membersFighting = 4;
+    r.gateNotReady = true;
+    EXPECT_EQ(3u, ReadinessScaledCeilingThirds(15, r));
+    EXPECT_EQ(3u, ReadinessScaledCeilingThirds(3, r));
+    EXPECT_EQ(0u, ReadinessScaledCeilingThirds(0, r));
+}
+
+TEST(DcReadinessCeilingTest, TheStockadeWipeIsAdvancedNotLeeroy)
+{
+    // The live wipe: a four-mob inmate pack (weight 12 thirds) against a ceiling
+    // of 13, with the healer low, the tank hurt and two members already fighting.
+    // Full readiness says Leeroy; this readiness must say set it up.
+    unsigned const weight = 12;
+    EXPECT_LE(weight, ReadinessScaledCeilingThirds(13, Readiness{}));
+    Readiness r;
+    r.healerManaPct = 35.0f;
+    r.tankHpPct = 70.0f;
+    r.membersFighting = 2;
+    r.gateNotReady = true;
+    EXPECT_GT(weight, ReadinessScaledCeilingThirds(13, r));
+}
