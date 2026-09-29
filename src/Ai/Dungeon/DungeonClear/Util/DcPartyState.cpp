@@ -94,8 +94,103 @@ float DcPartyState::RestMinMpPct(Player* bot)
     // higher gate would strand the tank waiting on slow natural mana regen.
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
+namespace
+{
+    // Whether `member` holds a drink it is old enough to use. A member with no
+    // PlayerbotAI is a real player: their client drinks, so assume yes. The
+    // playerbots "drink" inventory qualifier walks spell category 59 items and
+    // keeps only the ones CanUseItem accepts, which is exactly the property that
+    // matters: a level 35 mage holding level 55 water (RequiredLevel 55) has
+    // nothing in this list and can never drink it.
+    bool HasUsableDrink(Player* member)
+    {
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI)
+            return true;
+        return !memberAI->GetAiObjectContext()
+                    ->GetValue<std::vector<Item*>>("inventory items", "drink")->Get().empty();
+    }
+
+    // The floors one member is held to under a scaled gate. The drink probe runs
+    // only when the member is short of the STOCK mana floor, so a healthy party
+    // pays nothing for it.
+    DcRestFloorDecision::Floors ScaledFloors(Player* member, float minHpPct, float minMpPct,
+                                             DcRestFloorDecision::Risk risk)
+    {
+        DcRestFloorDecision::Member m;
+        m.role = PlayerbotAI::IsTank(member)   ? DcRestFloorDecision::Role::Tank
+                 : PlayerbotAI::IsHeal(member) ? DcRestFloorDecision::Role::Healer
+                                               : DcRestFloorDecision::Role::Damage;
+        uint32 const maxMp = member->GetMaxPower(POWER_MANA);
+        m.usesMana = member->getPowerType() == POWER_MANA && maxMp > 0;
+        if (m.usesMana)
+        {
+            float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
+            if (mpPct < minMpPct)
+                m.canDrink = HasUsableDrink(member);
+        }
+        return DcRestFloorDecision::FloorsFor(m, minHpPct, minMpPct, risk);
+    }
+
+    // The next fight's risk (DcRestFloorDecision::ClassifyRisk), read from the
+    // lowest living same-map party level against the next boss's template level.
+    DcRestFloorDecision::Risk NextFightRisk(Player* bot, AiObjectContext* context)
+    {
+        bool bossPull = false;
+        int nextBossLevel = 0;
+        if (context)
+        {
+            std::optional<DungeonBossInfo> const next =
+                context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+            if (next && next->kind == DungeonAnchorKind::Boss)
+            {
+                bossPull = DcTickMemoAccess::AtBossEngage(bot, context, *next);
+                if (CreatureTemplate const* tmpl = sObjectMgr->GetCreatureTemplate(next->entry))
+                    nextBossLevel = static_cast<int>(tmpl->maxlevel);
+            }
+        }
+        int lowest = 0;
+        if (Group* group = bot->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member->GetMapId() != bot->GetMapId() || member->isDead())
+                    continue;
+                int const level = static_cast<int>(member->GetLevel());
+                if (lowest == 0 || level < lowest)
+                    lowest = level;
+            }
+        }
+        else
+            lowest = static_cast<int>(bot->GetLevel());
+        bool const raid = bot->GetMap() && bot->GetMap()->IsRaid();
+        return DcRestFloorDecision::ClassifyRisk(bossPull, raid, lowest, nextBossLevel);
+    }
+
+    bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
+                        Position const* spreadAnchor, float maxTankGap,
+                        DcRestFloorDecision::Risk const* risk);
+}
+
 bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                                 Position const* spreadAnchor, float maxTankGap)
+{
+    return PartyReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap, nullptr);
+}
+
+bool DcPartyState::IsPartyReady(Player* bot, RestGate const& rest, float maxSpread,
+                                Position const* spreadAnchor, float maxTankGap)
+{
+    return PartyReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
+                          rest.scaled ? &rest.risk : nullptr);
+}
+
+namespace
+{
+bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
+                    Position const* spreadAnchor, float maxTankGap,
+                    DcRestFloorDecision::Risk const* risk)
 {
     if (!bot)
         return false;
@@ -119,7 +214,15 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
             if (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)
                 return false;
         }
-        if (member->GetHealthPct() < minHpPct)
+        float hpFloor = minHpPct;
+        float mpFloor = minMpPct;
+        if (risk)
+        {
+            DcRestFloorDecision::Floors const f = ScaledFloors(member, minHpPct, minMpPct, *risk);
+            hpFloor = f.hp;
+            mpFloor = f.mp;
+        }
+        if (member->GetHealthPct() < hpFloor)
             return false;
         if (member->getPowerType() == POWER_MANA)
         {
@@ -127,7 +230,7 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
             if (maxMp > 0)
             {
                 float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
-                if (mpPct < minMpPct)
+                if (mpPct < mpFloor)
                     return false;
             }
         }
@@ -189,6 +292,7 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
     uint32 const quorumPct = DcSettings::GetUInt(bot, "RaidReadyQuorumPct");
     return meeting * 100 >= living * quorumPct;
 }
+}  // namespace
 DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContext* context)
 {
     // Through DcSettings (NOT raw sConfigMgr) so a per-run addon override of
@@ -349,6 +453,15 @@ DcPartyState::RestGate DcPartyState::GetRestGate(Player* bot, AiObjectContext* c
 
     gate.minHp = RestMinHpPct(bot);
     gate.minMp = RestMinMpPct(bot);
+
+    // RISK SCALING (DcRestFloorDecision). Only the STOCK floors are scaled. A
+    // RestHealthPct / RestManaPct the operator set is an order and is held
+    // verbatim, the same way the raid muster's push to 100 is (returned above).
+    if (!DcSettings::GetUInt(bot, "RestHealthPct") && !DcSettings::GetUInt(bot, "RestManaPct"))
+    {
+        gate.scaled = true;
+        gate.risk = NextFightRisk(bot, context);
+    }
     return gate;
 }
 bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
@@ -382,8 +495,7 @@ bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bo
         return false;
     SpreadGate const gate = GetSpreadGate(bot, context);
     RestGate const rest = GetRestGate(bot, context);
-    return IsPartyReady(bot, rest.minHp, rest.minMp, gate.maxSpread, gate.anchor,
-                        gate.maxTankGap);
+    return IsPartyReady(bot, rest, gate.maxSpread, gate.anchor, gate.maxTankGap);
 }
 bool DcPartyState::IsScriptedStageMustering(Player* bot, AiObjectContext* context)
 {
@@ -509,11 +621,36 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
     }
     return false;
 }
+namespace
+{
+    std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
+                                     float maxSpread, Position const* spreadAnchor,
+                                     float maxTankGap, DcRestFloorDecision::Risk const* risk);
+}
+
 std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float minHpPct, float minMpPct,
                                                     float maxSpread,
                                                     Position const* spreadAnchor,
                                                     float maxTankGap)
+{
+    return DescribeNotReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap,
+                                nullptr);
+}
+
+std::string DcPartyState::DescribePartyNotReady(Player* bot, RestGate const& rest,
+                                                float maxSpread, Position const* spreadAnchor,
+                                                float maxTankGap)
+{
+    return DescribeNotReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
+                                rest.scaled ? &rest.risk : nullptr);
+}
+
+namespace
+{
+std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
+                                 float maxSpread, Position const* spreadAnchor,
+                                 float maxTankGap, DcRestFloorDecision::Risk const* risk)
 {
     if (!bot)
         return "";
@@ -546,16 +683,29 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
                            : bot->GetDistance(member)) > maxSpread ||
              (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)))
             reason = "out of range";
-        else if (member->GetHealthPct() < minHpPct)
-            reason = "low HP";
-        else if (member->getPowerType() == POWER_MANA)
+        else
         {
-            uint32 const maxMp = member->GetMaxPower(POWER_MANA);
-            if (maxMp > 0)
+            float hpFloor = minHpPct;
+            float mpFloor = minMpPct;
+            if (risk)
             {
-                float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
-                if (mpPct < minMpPct)
-                    reason = "low mana";
+                DcRestFloorDecision::Floors const f =
+                    ScaledFloors(member, minHpPct, minMpPct, *risk);
+                hpFloor = f.hp;
+                mpFloor = f.mp;
+            }
+            if (member->GetHealthPct() < hpFloor)
+                reason = "low HP";
+            else if (member->getPowerType() == POWER_MANA)
+            {
+                uint32 const maxMp = member->GetMaxPower(POWER_MANA);
+                if (maxMp > 0)
+                {
+                    float const mpPct =
+                        100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
+                    if (mpPct < mpFloor)
+                        reason = "low mana";
+                }
             }
         }
 
@@ -582,6 +732,7 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
         out += " +" + std::to_string(extra) + " more";
     return out;
 }
+}  // namespace
 std::string DcPartyState::DescribePartyLooting(Player* bot)
 {
     if (!bot)

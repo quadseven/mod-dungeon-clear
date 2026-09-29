@@ -50,6 +50,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestHealReposition.cpp"
             "${MOD_PATH}/t/TestCombatRegroup.cpp"
             "${MOD_PATH}/t/TestSmartRest.cpp"
+            "${MOD_PATH}/t/TestRestFloor.cpp"
             "${MOD_PATH}/t/TestPostCombatRez.cpp"
             "${MOD_PATH}/t/TestStrandedRecovery.cpp"
             "${MOD_PATH}/t/TestStalledFallback.cpp"
