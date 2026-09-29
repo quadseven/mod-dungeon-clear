@@ -23,7 +23,7 @@
 //
 // WHAT A FLOOR IS FOR, PER ROLE. The healer's mana is the party's insurance, so
 // it keeps the highest floor of the three and never drops under
-// kHealerEasyMana. The tank's HP is what a pull spends first, so its HP floor
+// kHealerEasyMana (50). The tank's HP is what a pull spends first, so its HP floor
 // is the last to relax. A damage dealer's mana only shortens a fight, so it is
 // the first to relax and the deepest.
 //
@@ -63,8 +63,8 @@ namespace DcRestFloorDecision
     // Mana floors (percent) by role and risk. Each is capped by the configured
     // floor, so a lower configured floor always wins. Hard is the configured
     // floor untouched.
-    constexpr float kHealerNormalMana = 55.0f;
-    constexpr float kHealerEasyMana   = 40.0f;
+    constexpr float kHealerNormalMana = 60.0f;
+    constexpr float kHealerEasyMana   = 50.0f;
     constexpr float kTankNormalMana   = 45.0f;
     constexpr float kTankEasyMana     = 30.0f;
     constexpr float kDamageNormalMana = 45.0f;
@@ -72,8 +72,8 @@ namespace DcRestFloorDecision
 
     // HP floors (percent), same rules. The tank keeps the highest.
     constexpr float kNormalHp       = 80.0f;
-    constexpr float kTankEasyHp     = 70.0f;
-    constexpr float kOthersEasyHp   = 60.0f;
+    constexpr float kTankEasyHp     = 75.0f;
+    constexpr float kOthersEasyHp   = 65.0f;
 
     // A damage dealer that has nothing it can drink recovers mana only by
     // standing still, so waiting for the full configured floor on a boss pull

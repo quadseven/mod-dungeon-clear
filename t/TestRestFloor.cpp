@@ -96,17 +96,18 @@ TEST(DcRestFloorTest, HealerKeepsTheHighestManaFloorAtEveryRisk)
 TEST(DcRestFloorTest, AHealerBelowItsFloorStillHoldsAnEasyPull)
 {
     EXPECT_FALSE(Meets(Priest(), 100.0f, 35.0f, Risk::Easy));
-    EXPECT_TRUE(Meets(Priest(), 100.0f, 41.0f, Risk::Easy));
-    EXPECT_FALSE(Meets(Priest(), 100.0f, 50.0f, Risk::Normal));
+    EXPECT_TRUE(Meets(Priest(), 100.0f, 51.0f, Risk::Easy));
+    EXPECT_FALSE(Meets(Priest(), 100.0f, 45.0f, Risk::Easy));
+    EXPECT_FALSE(Meets(Priest(), 100.0f, 55.0f, Risk::Normal));
 }
 
 // ---- the tank spends HP first ---------------------------------------------------
 
-TEST(DcRestFloorTest, TankHpFloorRelaxesLastAndNeverBelowSeventy)
+TEST(DcRestFloorTest, TankHpFloorRelaxesLastAndNeverBelowSeventyFive)
 {
     EXPECT_FLOAT_EQ(kTankEasyHp, FloorsFor(Warrior(), kHp, kMp, Risk::Easy).hp);
     EXPECT_GT(FloorsFor(Warrior(), kHp, kMp, Risk::Easy).hp, FloorsFor(Rogue(), kHp, kMp, Risk::Easy).hp);
-    EXPECT_FALSE(Meets(Warrior(), 65.0f, 0.0f, Risk::Easy));
+    EXPECT_FALSE(Meets(Warrior(), 70.0f, 0.0f, Risk::Easy));
 }
 
 // ---- a lower configured floor always wins ---------------------------------------
