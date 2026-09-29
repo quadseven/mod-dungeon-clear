@@ -208,3 +208,45 @@ TEST(DcReadinessCeilingTest, TheStockadeWipeIsAdvancedNotLeeroy)
     r.gateNotReady = true;
     EXPECT_GT(weight, ReadinessScaledCeilingThirds(13, r));
 }
+
+
+TEST(DcReadinessCeilingTest, ADeadMemberAndALowCasterCost)
+{
+    Readiness r;
+    r.membersDown = 1;
+    EXPECT_EQ(9u, ReadinessScaledCeilingThirds(15, r));
+    r = Readiness{};
+    r.lowestManaPct = 10.0f;
+    EXPECT_EQ(13u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AnEdgePullNeedsFullReadiness)
+{
+    // The live pull: weight 12/3 against 13/3, ADVANCED-or-LEEROY hinged on
+    // nothing but the static ceiling. Rested: a face-pull. Anything short of
+    // full readiness: a set-up.
+    EXPECT_FALSE(ShouldSetUp(12, 13, Readiness{}));
+    Readiness r;
+    r.lowestManaPct = 35.0f;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+    r = Readiness{};
+    r.healerManaPct = 70.0f;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+    r = Readiness{};
+    r.membersFighting = 1;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+}
+
+TEST(DcReadinessCeilingTest, AWellInsideThePullIsNotHeldByTheMargin)
+{
+    Readiness r;
+    r.lowestManaPct = 35.0f;   // short of full readiness
+    EXPECT_FALSE(ShouldSetUp(6, 13, r));    // 46% of the ceiling
+    EXPECT_FALSE(ShouldSetUp(11, 13, r));   // 84.6%, just inside the margin
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));    // 92%
+}
+
+TEST(DcReadinessCeilingTest, OverTheScaledCeilingIsAlwaysASetUp)
+{
+    EXPECT_TRUE(ShouldSetUp(14, 13, Readiness{}));
+}

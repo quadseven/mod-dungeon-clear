@@ -117,6 +117,8 @@ namespace DcRestFloorDecision
         float healerManaPct = 100.0f;      // 100 when there is no healer to read
         unsigned membersFighting = 0;      // party members already in combat
         bool gateNotReady = false;         // the between-pulls gate is not green
+        unsigned membersDown = 0;          // dead same-map members
+        float lowestManaPct = 100.0f;      // lowest mana among mana users
     };
 
     constexpr float kHealerManaLow   = 30.0f;
@@ -125,7 +127,24 @@ namespace DcRestFloorDecision
     constexpr float kTankHpShort     = 80.0f;
     constexpr unsigned kFightOnCount = 2;
 
+    constexpr float kLowManaCaster = 20.0f;
+
+    // Full readiness: the bar a pull within kEdgeMarginPct of the ceiling needs.
+    constexpr float kFullHealerMana = 80.0f;
+    constexpr float kFullTankHp     = 90.0f;
+    constexpr float kFullLowestMana = 40.0f;
+    constexpr unsigned kEdgeMarginPct = 85;   // weight above 85% of the ceiling is "the edge"
+
+    bool FullyReady(Readiness const& r);
+
     unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r);
+
+    // The verdict itself: a set-up (Advanced) pull when the pack outweighs the
+    // readiness-scaled ceiling, OR when it sits within the edge margin of the
+    // unscaled ceiling and the party is not fully ready. A pack at 12/3 against
+    // a ceiling of 13/3 is accepted by a rested party and refused by one that is
+    // short of mana or health.
+    bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r);
 }
 
 #endif  // _DC_REST_FLOOR_DECISION_H
