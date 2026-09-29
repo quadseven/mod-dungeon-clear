@@ -78,7 +78,25 @@ namespace DcRestFloorDecision
             scale *= 0.7f;
         if (r.gateNotReady)
             scale *= 0.75f;
+        if (r.membersDown >= 1)
+            scale *= 0.6f;
+        if (r.lowestManaPct < kLowManaCaster)
+            scale *= 0.85f;
         unsigned const scaled = static_cast<unsigned>(static_cast<float>(ceilingThirds) * scale + 0.5f);
         return scaled < 3 ? 3 : scaled;
+    }
+
+    bool FullyReady(Readiness const& r)
+    {
+        return r.healerManaPct >= kFullHealerMana && r.tankHpPct >= kFullTankHp &&
+               r.membersFighting == 0 && !r.gateNotReady && r.membersDown == 0 &&
+               r.lowestManaPct >= kFullLowestMana;
+    }
+
+    bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r)
+    {
+        if (weightThirds > ReadinessScaledCeilingThirds(ceilingThirds, r))
+            return true;
+        return weightThirds * 100 > ceilingThirds * kEdgeMarginPct && !FullyReady(r);
     }
 }

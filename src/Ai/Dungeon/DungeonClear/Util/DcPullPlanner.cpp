@@ -564,11 +564,20 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
             for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
             {
                 Player* m = ref->GetSource();
-                if (!m || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                if (!m || m->GetMapId() != bot->GetMapId())
                     continue;
+                if (!m->IsAlive())
+                {
+                    ++ready.membersDown;
+                    continue;
+                }
                 if (m->IsInCombat())
                     ++ready.membersFighting;
                 uint32 const maxMp = m->GetMaxPower(POWER_MANA);
+                if (m->getPowerType() == POWER_MANA && maxMp > 0)
+                    ready.lowestManaPct = std::min(
+                        ready.lowestManaPct,
+                        100.0f * float(m->GetPower(POWER_MANA)) / float(maxMp));
                 if (PlayerbotAI::IsHeal(m) && m->getPowerType() == POWER_MANA && maxMp > 0)
                 {
                     float const pct = 100.0f * float(m->GetPower(POWER_MANA)) / float(maxMp);
@@ -586,7 +595,11 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel);
     uint32 const ceilingThirds =
         DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, ready);
-    bool const advanced = weightThirds > ceilingThirds;
+    // A pull within the edge margin of the ceiling needs full readiness: 12/3
+    // against 13/3 is the party's limit, not a comfortable pack. See
+    // DcRestFloorDecision::ShouldSetUp.
+    bool const advanced =
+        DcRestFloorDecision::ShouldSetUp(weightThirds, fragileCeilingThirds, ready);
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
     // actually present, so the second O(n^2) pass is skipped otherwise): re-run the
@@ -617,12 +630,15 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, weight "
                   "{}/3 vs ceiling {} elites = {}/3 at {:.0f} hp/level, readiness: "
-                  "tank {:.0f}% HP, healer {:.0f}% mana, {} fighting, gate {} -> {}/3) -> {}",
+                  "tank {:.0f}% HP, healer {:.0f}% mana, lowest caster {:.0f}% mana, {} fighting, "
+                  "{} down, gate {} -> {}/3, edge margin {}) -> {}",
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
                   assistRadius, weightThirds, maxLeeroy, fragileCeilingThirds, healthPerLevel,
-                  ready.tankHpPct, ready.healerManaPct, ready.membersFighting,
+                  ready.tankHpPct, ready.healerManaPct, ready.lowestManaPct,
+                  ready.membersFighting, ready.membersDown,
                   ready.gateNotReady ? "NOT ready" : "ready", ceilingThirds,
+                  DcRestFloorDecision::FullyReady(ready) ? "cleared" : "applies",
                   advanced ? "ADVANCED" : "LEEROY");
     // On the surprising verdict (Advanced), dump every hostile the estimate saw —
     // distance to the camp, its computed aggro reach, the eligibility gate, and
