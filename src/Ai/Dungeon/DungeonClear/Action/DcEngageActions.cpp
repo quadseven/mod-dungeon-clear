@@ -2368,14 +2368,6 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
                            "to resume."
                          : "The party wiped \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.";
             break;
-        case DcRezDecision::Reason::NoRezzer:
-            reason = deadName + " died and no one left alive can resurrect \xe2\x80\x94 dungeon clear "
-                     "disabled. Type 'dc on' when ready to resume.";
-            break;
-        case DcRezDecision::Reason::TimedOut:
-            reason = "Couldn't get " + deadName + " resurrected in time \xe2\x80\x94 dungeon clear "
-                     "disabled. Type 'dc on' when ready to resume.";
-            break;
         default:
             // Feature off (Reason::Disabled) or a race resolved the deaths
             // between trigger and action — the classic message.
