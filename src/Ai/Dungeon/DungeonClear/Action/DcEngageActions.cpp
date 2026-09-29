@@ -1658,7 +1658,7 @@ DungeonClearEngageActionBase::EventRest DungeonClearEngageActionBase::EventRestD
         return EventRest::None;
     if (BotBelowRest(bot, minHp, minMp))
         return EventRest::Yield;
-    if (!DcPartyState::IsPartyReady(bot, minHp, minMp, /*maxSpread*/ 100000.0f))
+    if (!DcPartyState::IsPartyReady(bot, rest, /*maxSpread*/ 100000.0f))
         return EventRest::Hold;
     return EventRest::None;
 }

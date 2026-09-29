@@ -151,7 +151,7 @@ namespace
         DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
         if (rest.minHp <= 0.0f && rest.minMp <= 0.0f)
             return true;
-        return DcPartyState::IsPartyReady(bot, rest.minHp, rest.minMp,
+        return DcPartyState::IsPartyReady(bot, rest,
                                           /*maxSpread*/ 100000.0f);
     }
 
