@@ -56,6 +56,7 @@ public:
         creators["dungeon clear hakkar loot blood"] = &DungeonClearActionContext::hakkar_loot_blood;
 
         creators["dc on"] = &DungeonClearActionContext::dc_on;
+        creators["dc ensure"] = &DungeonClearActionContext::dc_ensure;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
         creators["dc skip"] = &DungeonClearActionContext::dc_skip;
         creators["dc pause"] = &DungeonClearActionContext::dc_pause;
@@ -121,6 +122,7 @@ private:
     static Action* hakkar_loot_blood(PlayerbotAI* ai) { return new DungeonClearHakkarLootBloodAction(ai); }
 
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
+    static Action* dc_ensure(PlayerbotAI* ai) { return new DcEnsureOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }
     static Action* dc_skip(PlayerbotAI* ai) { return new DcSkipAction(ai); }
     static Action* dc_pause(PlayerbotAI* ai) { return new DcPauseAction(ai); }
