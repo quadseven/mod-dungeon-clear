@@ -902,7 +902,8 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
         return false;
     return true;
 }
-Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
+Unit* DcTargeting::FindNearestReachableHostile(
+    Player* bot, std::function<bool(Creature const*)> const& skip)
 {
     if (!bot)
         return nullptr;
@@ -927,6 +928,8 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
         if (!bot->IsHostileTo(c))
             continue;
         if (c->IsInCombat())
+            continue;
+        if (skip && skip(c))
             continue;
         float const dist = bot->GetDistance(c);
         if (dist > maxPullDistance)

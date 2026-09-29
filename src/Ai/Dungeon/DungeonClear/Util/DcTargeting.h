@@ -6,6 +6,7 @@
 #ifndef _DC_TARGETING_H
 #define _DC_TARGETING_H
 
+#include <functional>
 #include <vector>
 
 #include "ObjectGuid.h"
@@ -144,8 +145,11 @@ public:
     // Scans every loaded creature on the bot's map for an alive hostile that
     // (a) is not already in combat with someone else and (b) the bot can path
     // to. Returns the closest such unit, or nullptr. Used by the stalled
-    // fallback to kill obstacles when no path to the boss exists.
-    static Unit* FindNearestReachableHostile(Player* bot);
+    // fallback to kill obstacles when no path to the boss exists. `skip`, when
+    // given, drops a candidate before its (comparatively costly) reachability
+    // check; the fallback uses it to leave out targets it has given up on.
+    static Unit* FindNearestReachableHostile(
+        Player* bot, std::function<bool(Creature const*)> const& skip = nullptr);
 
     // Every unit that currently holds `member` in combat, GUID-deduped and
     // appended to `out`: the PvE combat references first (the authoritative
