@@ -13,6 +13,8 @@
 #include "DcBreadcrumb.h"
 #include "DcCombatFlag.h"
 #include "DcHazard.h"
+#include "DcPartyState.h"
+#include "DcRestFloorDecision.h"
 #include "DcZoneLine.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -546,8 +548,44 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         if (lv)
             healthPerLevel = static_cast<float>(hp) / static_cast<float>(lv);
     }
-    uint32 const ceilingThirds =
+    // READINESS AT THE MOMENT OF THE PULL. The fragility scale above is a fact
+    // about the party's bodies; this one is about its state right now: the
+    // healer's mana, the tank's health, how many members are already in a fight,
+    // and whether the between-pulls gate is green. A marginal pack that a rested
+    // party face-pulls becomes a set-up pull when the healer is low or a fight is
+    // already on. See DcRestFloorDecision::ReadinessScaledCeilingThirds.
+    DcRestFloorDecision::Readiness ready;
+    {
+        ready.tankHpPct = bot->GetHealthPct();
+        bool haveHealer = false;
+        float healerMp = 100.0f;
+        if (Group* group = bot->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* m = ref->GetSource();
+                if (!m || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                    continue;
+                if (m->IsInCombat())
+                    ++ready.membersFighting;
+                uint32 const maxMp = m->GetMaxPower(POWER_MANA);
+                if (PlayerbotAI::IsHeal(m) && m->getPowerType() == POWER_MANA && maxMp > 0)
+                {
+                    float const pct = 100.0f * float(m->GetPower(POWER_MANA)) / float(maxMp);
+                    if (!haveHealer || pct < healerMp)
+                        healerMp = pct;
+                    haveHealer = true;
+                }
+            }
+        }
+        ready.healerManaPct = healerMp;
+        ready.gateNotReady = !DcPartyState::IsBetweenPullsReady(
+            bot, botAI->GetAiObjectContext(), /*requireNoLoot*/ false);
+    }
+    uint32 const fragileCeilingThirds =
         DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel);
+    uint32 const ceilingThirds =
+        DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, ready);
     bool const advanced = weightThirds > ceilingThirds;
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
@@ -578,10 +616,13 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     }
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, weight "
-                  "{}/3 vs ceiling {} elites = {}/3 at {:.0f} hp/level) -> {}",
+                  "{}/3 vs ceiling {} elites = {}/3 at {:.0f} hp/level, readiness: "
+                  "tank {:.0f}% HP, healer {:.0f}% mana, {} fighting, gate {} -> {}/3) -> {}",
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
-                  assistRadius, weightThirds, maxLeeroy, ceilingThirds, healthPerLevel,
+                  assistRadius, weightThirds, maxLeeroy, fragileCeilingThirds, healthPerLevel,
+                  ready.tankHpPct, ready.healerManaPct, ready.membersFighting,
+                  ready.gateNotReady ? "NOT ready" : "ready", ceilingThirds,
                   advanced ? "ADVANCED" : "LEEROY");
     // On the surprising verdict (Advanced), dump every hostile the estimate saw —
     // distance to the camp, its computed aggro reach, the eligibility gate, and
@@ -920,10 +961,11 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // Report the verdict actually APPLIED (resolve can hold a patrol-contended pack
     // as a provisional LEEROY while it walks in, or as a WAIT at commit range), not
     // the raw classification.
-    DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
-                 target->GetGUID().ToString(),
+    DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {} (weight {}/3 vs ceiling {}/3)",
+                 bot->GetName(), target->GetGUID().ToString(),
                  pull.decision == DcPullDecisionCode::PatrolHold ? "WAITING (patrol)"
-                     : pull.decision == DcPullDecisionCode::Advanced ? "ADVANCED" : "LEEROY");
+                     : pull.decision == DcPullDecisionCode::Advanced ? "ADVANCED" : "LEEROY",
+                 cls.fullCount, cls.ceiling);
 }
 std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
                                                           float setback, float safeRadius,

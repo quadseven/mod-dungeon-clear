@@ -60,4 +60,25 @@ namespace DcRestFloorDecision
             out.mp = std::min(out.mp, kNoDrinkDamageCap);
         return out;
     }
+
+    unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r)
+    {
+        if (ceilingThirds <= 3)
+            return ceilingThirds;
+        float scale = 1.0f;
+        if (r.healerManaPct < kHealerManaLow)
+            scale *= 0.4f;
+        else if (r.healerManaPct < kHealerManaShort)
+            scale *= 0.7f;
+        if (r.tankHpPct < kTankHpLow)
+            scale *= 0.5f;
+        else if (r.tankHpPct < kTankHpShort)
+            scale *= 0.8f;
+        if (r.membersFighting >= kFightOnCount)
+            scale *= 0.7f;
+        if (r.gateNotReady)
+            scale *= 0.75f;
+        unsigned const scaled = static_cast<unsigned>(static_cast<float>(ceilingThirds) * scale + 0.5f);
+        return scaled < 3 ? 3 : scaled;
+    }
 }

@@ -100,6 +100,32 @@ namespace DcRestFloorDecision
 
     // The floors this member must meet, given the configured floors.
     Floors FloorsFor(Member const& m, float configuredHp, float configuredMp, Risk risk);
+
+    // ---- readiness-scaled Leeroy ceiling -------------------------------------
+    //
+    // The dynamic pull verdict compares a pack's weight to a ceiling (in thirds
+    // of an elite) that already shrinks for a fragile party. It never asked how
+    // READY the party is at the moment of the pull: a fresh healer and a tank at
+    // full health carry the same ceiling as a healer at 20% mana and a tank at
+    // half health, in the middle of a fight that is already on. This scales the
+    // ceiling down for exactly that, so a marginal pack becomes a set-up
+    // (Advanced) pull instead of a face-pull. Never below three thirds (one
+    // elite), and never up: a ready party keeps the ceiling it had.
+    struct Readiness
+    {
+        float tankHpPct = 100.0f;
+        float healerManaPct = 100.0f;      // 100 when there is no healer to read
+        unsigned membersFighting = 0;      // party members already in combat
+        bool gateNotReady = false;         // the between-pulls gate is not green
+    };
+
+    constexpr float kHealerManaLow   = 30.0f;
+    constexpr float kHealerManaShort = 50.0f;
+    constexpr float kTankHpLow       = 60.0f;
+    constexpr float kTankHpShort     = 80.0f;
+    constexpr unsigned kFightOnCount = 2;
+
+    unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r);
 }
 
 #endif  // _DC_REST_FLOOR_DECISION_H
