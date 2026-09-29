@@ -5,6 +5,7 @@
 
 #include "DcPartyState.h"
 
+#include "DcRestFloorDecision.h"
 #include "DcTickMemo.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
