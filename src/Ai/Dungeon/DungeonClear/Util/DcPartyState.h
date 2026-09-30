@@ -8,6 +8,8 @@
 
 #include <string>
 
+#include "DcRestFloorDecision.h"
+
 class AiObjectContext;
 class Player;
 struct Position;
@@ -138,8 +140,27 @@ public:
     {
         float minHp = 0.0f;
         float minMp = 0.0f;
+        // Risk scaling (DcRestFloorDecision). `scaled` is true only when minHp /
+        // minMp are the STOCK floors: an operator's RestHealthPct / RestManaPct
+        // (or the raid muster's push to 100) is a command and is held verbatim.
+        // When scaled, the gate holds each member to the floor the kernel gives
+        // its role at `risk` instead of one number for everybody.
+        bool scaled = false;
+        DcRestFloorDecision::Risk risk = DcRestFloorDecision::Risk::Hard;
     };
     static RestGate GetRestGate(Player* bot, AiObjectContext* context);
+
+    // IsPartyReady / DescribePartyNotReady against a RestGate: the same walk,
+    // with per-member floors when the gate is `scaled`. Every caller that got a
+    // RestGate from GetRestGate should ask through these so the gate, the
+    // status panel and the "waiting on" line can never name different floors.
+    static bool IsPartyReady(Player* bot, RestGate const& rest, float maxSpread,
+                             Position const* spreadAnchor = nullptr,
+                             float maxTankGap = 0.0f);
+    static std::string DescribePartyNotReady(Player* bot, RestGate const& rest,
+                                             float maxSpread,
+                                             Position const* spreadAnchor = nullptr,
+                                             float maxTankGap = 0.0f);
 
     // Between-pulls gate: party HP/MP recovered (RestMinHpPct/RestMinMpPct) and
     // spread within DungeonClear.PartyMaxSpread — measured per GetSpreadGate

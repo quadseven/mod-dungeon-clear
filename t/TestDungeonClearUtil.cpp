@@ -36,9 +36,6 @@ class DungeonClearWorldMock : public WorldMock
 {
 public:
     MOCK_METHOD(SQLQueryHolderCallback&, AddQueryHolderCallback, (SQLQueryHolderCallback&& callback), (override));
-#ifdef MOD_PLAYERBOTS
-    MOCK_METHOD(char const*, GetPlayerbotsDBRevision, (), (const, override));
-#endif
 };
 
 class DungeonClearTestBase : public ::testing::Test

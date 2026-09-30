@@ -195,6 +195,13 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    — enter on role-based low triggers, release at full hp/mana — edge-pinned
 #    by t/TestSmartRest; DcSmartRest is the engine glue owning the DcRunState
 #    latch fields + the cross-bot IsLatched read.)
+# Util/DcRestFloorDecision.{h,cpp}
+#   (Between-pulls rest floors by role and risk: pure kernel FloorsFor(member,
+#    configured floors, risk) + ClassifyRisk(boss pull, raid, lowest party level,
+#    next boss level). A damage dealer's mana relaxes first, the healer keeps the
+#    highest floor, Hard (boss, raid, party not clearly above the content) is the
+#    configured floors untouched. Edge-pinned by t/TestRestFloor; DcPartyState is
+#    the glue behind RestGate::scaled.)
 # Util/DcWaitAtBossDecision.{h,cpp}
 #   (Wait at Boss: pure pre-pull hold kernel — auto-pause the run right before
 #    a boss pull and hold for the human's resume, once per boss per run via the

@@ -88,10 +88,15 @@ namespace DcActionShared
     // at most this long. Past it the tank force-advances toward the next boss
     // and followers resume following, instead of the party parking forever on a
     // corpse it can't finish (group-loot rolls pending, bags full, un-pickable).
-    // 15s comfortably covers several members each walking in from lootDistance
-    // (15yd / ~7yd/s ≈ 2s) and grabbing multiple items, while still bounding a
-    // wedge. This is the "reasonable timeout, then move on" window.
-    inline constexpr uint32 DC_LOOT_YIELD_TIMEOUT_MS = 15 * 1000;
+    // 8s covers several members each walking in from lootDistance (15yd / ~7yd/s
+    // ≈ 2s) and grabbing multiple items, while still bounding a wedge. It was 15s.
+    // Measured on a live Stockade clear (~34 min): loot-yield episodes cost 173s of
+    // wall time (8%), and one corpse pile chained 98s of re-armed 15s timeouts; an
+    // 8s cut takes about 100s of that back. A real pickup resolves in a tick or
+    // two once in range (see DC_LOOT_CAMP_TIMEOUT_MS), so the longer window only
+    // ever bought time on loot that was never going to finish. This is the
+    // "reasonable timeout, then move on" window.
+    inline constexpr uint32 DC_LOOT_YIELD_TIMEOUT_MS = 8 * 1000;
 
     // How long a loot the bot abandoned (its yield above timed out on it) stays
     // on the per-corpse give-up list. While listed, DungeonClearUtil::Strip-

@@ -806,10 +806,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
     DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
     std::string const why = DcPartyState::DescribePartyNotReady(
-        bot, rest.minHp, rest.minMp,
-        gate.maxSpread, gate.anchor, gate.maxTankGap);
+        bot, rest, gate.maxSpread, gate.anchor, gate.maxTankGap);
     // ON CHANGE, OR ONCE PER INTERVAL, NOT EVERY TICK. See DcLogThrottle.h.
-    std::string const reason = why.empty() ? " (resting)" : (" - waiting on " + why);
+    std::string const reason = why.empty() ? " (resting)" : (" - " + why);
     uint32 const nowMs = getMSTime();
     if (DcLogThrottle::ShouldLog(appr.lastYieldLogMs == 0, reason != appr.lastYieldLogged,
                                  getMSTimeDiff(appr.lastYieldLogMs, nowMs),
