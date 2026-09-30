@@ -141,9 +141,9 @@ namespace DcRestFloorDecision
 
     // The verdict itself: a set-up (Advanced) pull when the pack outweighs the
     // readiness-scaled ceiling, OR when it sits within the edge margin of the
-    // unscaled ceiling and the party is not fully ready. A pack at 12/3 against
-    // a ceiling of 13/3 is accepted by a rested party and refused by one that is
-    // short of mana or health.
+    // fragility-scaled ceiling (before readiness scaling) and the party is not
+    // fully ready. A pack at 12/3 against a ceiling of 13/3 is accepted by a
+    // rested party and refused by one that is short of mana or health.
     bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r);
 }
 
