@@ -11,8 +11,10 @@ namespace DcRestFloorDecision
 {
     Risk ClassifyRisk(bool bossPull, bool raid, int lowestPartyLevel, int nextBossLevel)
     {
-        if (bossPull || raid)
+        if (raid)
             return Risk::Hard;
+        if (bossPull)
+            return Risk::Boss;
         if (lowestPartyLevel <= 0 || nextBossLevel <= 0)
             return Risk::Normal;
         int const lead = lowestPartyLevel - nextBossLevel;
@@ -29,7 +31,17 @@ namespace DcRestFloorDecision
         out.hp = configuredHp;
         out.mp = m.usesMana ? configuredMp : 0.0f;
 
-        if (risk != Risk::Hard)
+        if (risk == Risk::Boss && m.usesMana)
+        {
+            float bossMp = configuredMp;
+            if (m.role == Role::Tank)
+                bossMp = kBossTankMana;
+            else if (m.role == Role::Damage)
+                bossMp = kBossDamageMana;
+            out.mp = std::min(out.mp, bossMp);
+        }
+
+        if (risk != Risk::Hard && risk != Risk::Boss)
         {
             bool const easy = risk == Risk::Easy;
             float hp = kNormalHp;

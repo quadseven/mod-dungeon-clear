@@ -30,8 +30,9 @@
 // RISK IS A FACT ABOUT THE DUNGEON, NOT A GUESS ABOUT THE PACK. The caller
 // classifies it from the lowest party level against the next boss's level and
 // whether that boss is about to be pulled (ClassifyRisk). Hard leaves both
-// floors exactly as configured, so raids, heroics, boss pulls and any party
-// not clearly above the content behave as they always did.
+// floors exactly as configured. A dungeon boss keeps the configured HP and
+// healer mana floors, while tank and damage mana floors reflect the resources
+// those roles can safely spend.
 //
 // Engine-free so it is unit-testable in isolation (t/TestRestFloor), mirroring
 // DcSmartRestDecision. DcPartyState is the glue: it snapshots each member, asks
@@ -45,7 +46,8 @@ namespace DcRestFloorDecision
     {
         Easy,    // the party clearly outlevels the content
         Normal,  // in between, or the content's level is unknown
-        Hard,    // a boss pull, a raid, or a party not clearly above the content
+        Boss,    // a dungeon boss pull; healer reserve stays high, others can spend
+        Hard,    // a raid or a party not clearly above the content
     };
 
     enum class Role
@@ -70,14 +72,22 @@ namespace DcRestFloorDecision
     constexpr float kDamageNormalMana = 45.0f;
     constexpr float kDamageEasyMana   = 25.0f;
 
+    // At a dungeon boss, preserve the healer's configured reserve while letting
+    // tanks and damage casters start with half a bar. Holding every mana user at
+    // HighMana (65 by default) repeatedly parks the party after ordinary trash;
+    // the readiness-scaled pull ceiling still treats a caster below 40% as not
+    // fully ready and shrinks further below 20%.
+    constexpr float kBossTankMana   = 50.0f;
+    constexpr float kBossDamageMana = 50.0f;
+
     // HP floors (percent), same rules. The tank keeps the highest.
     constexpr float kNormalHp       = 80.0f;
     constexpr float kTankEasyHp     = 75.0f;
     constexpr float kOthersEasyHp   = 65.0f;
 
     // A damage dealer that has nothing it can drink recovers mana only by
-    // standing still, so waiting for the full configured floor on a boss pull
-    // is a long wait for a small gain. Capped here even at Hard.
+    // standing still. Keep the wait bounded even when the role floor is at its
+    // most conservative. Capped here even at Hard.
     constexpr float kNoDrinkDamageCap = 50.0f;
 
     struct Member

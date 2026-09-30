@@ -29,12 +29,13 @@ namespace
 
 // ---- the live case --------------------------------------------------------------
 
-TEST(DcRestFloorTest, MageAtSixtyFourPercentDoesNotHoldAnEasyPull)
+TEST(DcRestFloorTest, MageAtSixtyFourPercentDoesNotHoldABossAfterTrash)
 {
-    // Stockade, campaign 27: a level 35 mage at 1158/1818 mana = 63.7%, floor 65, tank and
-    // healer fine, bosses 24-29 against a party of 35+.
-    EXPECT_FALSE(Meets(Mage(), 100.0f, 63.7f, Risk::Hard));   // what the gate did
-    EXPECT_TRUE(Meets(Mage(), 100.0f, 63.7f, Risk::Easy));    // what it should do
+    // The configured HighMana floor is 65. Boss readiness should keep the
+    // healer at that reserve without making a damage mage wait for it.
+    EXPECT_FALSE(Meets(Mage(), 100.0f, 63.7f, Risk::Hard));
+    EXPECT_TRUE(Meets(Mage(), 100.0f, 63.7f, Risk::Boss));
+    EXPECT_TRUE(Meets(Mage(), 100.0f, 63.7f, Risk::Easy));
     EXPECT_TRUE(Meets(Mage(), 100.0f, 63.7f, Risk::Normal));
 }
 
@@ -46,10 +47,11 @@ TEST(DcRestFloorTest, ClassifiesTheStockadeAsEasy)
 
 // ---- risk classification --------------------------------------------------------
 
-TEST(DcRestFloorTest, BossPullAndRaidAreAlwaysHard)
+TEST(DcRestFloorTest, BossPullUsesRoleFloorsWhileRaidsRemainHard)
 {
-    EXPECT_EQ(Risk::Hard, ClassifyRisk(true, false, 60, 20));
+    EXPECT_EQ(Risk::Boss, ClassifyRisk(true, false, 60, 20));
     EXPECT_EQ(Risk::Hard, ClassifyRisk(false, true, 60, 20));
+    EXPECT_EQ(Risk::Boss, ClassifyRisk(true, false, 35, 29));
 }
 
 TEST(DcRestFloorTest, PartyAtOrBelowTheBossIsHard)
@@ -81,6 +83,33 @@ TEST(DcRestFloorTest, HardKeepsTheConfiguredFloorsForEveryRole)
         EXPECT_FLOAT_EQ(kHp, f.hp);
         EXPECT_FLOAT_EQ(m.usesMana ? kMp : 0.0f, f.mp);
     }
+}
+
+TEST(DcRestFloorTest, BossKeepsHealerReserveButLetsOtherManaUsersStartAtHalf)
+{
+    Floors const healer = FloorsFor(Priest(), kHp, kMp, Risk::Boss);
+    Floors const damage = FloorsFor(Mage(), kHp, kMp, Risk::Boss);
+    Member manaTank = Mage();
+    manaTank.role = Role::Tank;
+    Floors const tankMana = FloorsFor(manaTank, kHp, kMp, Risk::Boss);
+
+    EXPECT_FLOAT_EQ(kHp, healer.hp);
+    EXPECT_FLOAT_EQ(kMp, healer.mp);
+    EXPECT_FLOAT_EQ(kHp, damage.hp);
+    EXPECT_FLOAT_EQ(kBossDamageMana, damage.mp);
+    EXPECT_FLOAT_EQ(kBossTankMana, tankMana.mp);
+    EXPECT_TRUE(Meets(Mage(), 100.0f, 50.0f, Risk::Boss));
+    EXPECT_FALSE(Meets(Priest(), 100.0f, 64.9f, Risk::Boss));
+    EXPECT_FALSE(Meets(Mage(), 100.0f, 49.9f, Risk::Boss));
+}
+
+TEST(DcRestFloorTest, BossManaFloorsNeverRaiseAnOperatorFloor)
+{
+    Floors const healer = FloorsFor(Priest(), kHp, 40.0f, Risk::Boss);
+    Floors const damage = FloorsFor(Mage(), kHp, 40.0f, Risk::Boss);
+
+    EXPECT_FLOAT_EQ(40.0f, healer.mp);
+    EXPECT_FLOAT_EQ(40.0f, damage.mp);
 }
 
 // ---- the healer is the insurance ------------------------------------------------
