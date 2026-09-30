@@ -60,4 +60,43 @@ namespace DcRestFloorDecision
             out.mp = std::min(out.mp, kNoDrinkDamageCap);
         return out;
     }
+
+    unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r)
+    {
+        if (ceilingThirds <= 3)
+            return ceilingThirds;
+        float scale = 1.0f;
+        if (r.healerManaPct < kHealerManaLow)
+            scale *= 0.4f;
+        else if (r.healerManaPct < kHealerManaShort)
+            scale *= 0.7f;
+        if (r.tankHpPct < kTankHpLow)
+            scale *= 0.5f;
+        else if (r.tankHpPct < kTankHpShort)
+            scale *= 0.8f;
+        if (r.membersFighting >= kFightOnCount)
+            scale *= 0.7f;
+        if (r.gateNotReady)
+            scale *= 0.75f;
+        if (r.membersDown >= 1)
+            scale *= 0.6f;
+        if (r.lowestManaPct < kLowManaCaster)
+            scale *= 0.85f;
+        unsigned const scaled = static_cast<unsigned>(static_cast<float>(ceilingThirds) * scale + 0.5f);
+        return scaled < 3 ? 3 : scaled;
+    }
+
+    bool FullyReady(Readiness const& r)
+    {
+        return r.healerManaPct >= kFullHealerMana && r.tankHpPct >= kFullTankHp &&
+               r.membersFighting == 0 && !r.gateNotReady && r.membersDown == 0 &&
+               r.lowestManaPct >= kFullLowestMana;
+    }
+
+    bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r)
+    {
+        if (weightThirds > ReadinessScaledCeilingThirds(ceilingThirds, r))
+            return true;
+        return weightThirds * 100 > ceilingThirds * kEdgeMarginPct && !FullyReady(r);
+    }
 }

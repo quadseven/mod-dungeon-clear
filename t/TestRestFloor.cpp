@@ -142,3 +142,111 @@ TEST(DcRestFloorTest, HealerWithNoDrinkIsNotCapped)
     p.canDrink = false;
     EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
 }
+
+
+// ---- readiness-scaled Leeroy ceiling --------------------------------------------
+
+TEST(DcReadinessCeilingTest, ReadyPartyKeepsTheCeiling)
+{
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, Readiness{}));
+}
+
+TEST(DcReadinessCeilingTest, ALowHealerShrinksTheCeiling)
+{
+    Readiness r;
+    r.healerManaPct = 20.0f;
+    EXPECT_EQ(6u, ReadinessScaledCeilingThirds(15, r));
+    r.healerManaPct = 45.0f;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+    r.healerManaPct = 50.0f;
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AHurtTankShrinksTheCeiling)
+{
+    Readiness r;
+    r.tankHpPct = 55.0f;
+    EXPECT_EQ(8u, ReadinessScaledCeilingThirds(15, r));
+    r.tankHpPct = 75.0f;
+    EXPECT_EQ(12u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AFightAlreadyOnAndAnUnreadyGateEachCost)
+{
+    Readiness r;
+    r.membersFighting = 2;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+    r.membersFighting = 1;
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, r));
+    r.gateNotReady = true;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, NeverBelowOneElite)
+{
+    Readiness r;
+    r.healerManaPct = 5.0f;
+    r.tankHpPct = 20.0f;
+    r.membersFighting = 4;
+    r.gateNotReady = true;
+    EXPECT_EQ(3u, ReadinessScaledCeilingThirds(15, r));
+    EXPECT_EQ(3u, ReadinessScaledCeilingThirds(3, r));
+    EXPECT_EQ(0u, ReadinessScaledCeilingThirds(0, r));
+}
+
+TEST(DcReadinessCeilingTest, TheStockadeWipeIsAdvancedNotLeeroy)
+{
+    // The live wipe: a four-mob inmate pack (weight 12 thirds) against a ceiling
+    // of 13, with the healer low, the tank hurt and two members already fighting.
+    // Full readiness says Leeroy; this readiness must say set it up.
+    unsigned const weight = 12;
+    EXPECT_LE(weight, ReadinessScaledCeilingThirds(13, Readiness{}));
+    Readiness r;
+    r.healerManaPct = 35.0f;
+    r.tankHpPct = 70.0f;
+    r.membersFighting = 2;
+    r.gateNotReady = true;
+    EXPECT_GT(weight, ReadinessScaledCeilingThirds(13, r));
+}
+
+
+TEST(DcReadinessCeilingTest, ADeadMemberAndALowCasterCost)
+{
+    Readiness r;
+    r.membersDown = 1;
+    EXPECT_EQ(9u, ReadinessScaledCeilingThirds(15, r));
+    r = Readiness{};
+    r.lowestManaPct = 10.0f;
+    EXPECT_EQ(13u, ReadinessScaledCeilingThirds(15, r));
+}
+
+TEST(DcReadinessCeilingTest, AnEdgePullNeedsFullReadiness)
+{
+    // The live pull: weight 12/3 against 13/3, ADVANCED-or-LEEROY hinged on
+    // nothing but the static ceiling. Rested: a face-pull. Anything short of
+    // full readiness: a set-up.
+    EXPECT_FALSE(ShouldSetUp(12, 13, Readiness{}));
+    Readiness r;
+    r.lowestManaPct = 35.0f;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+    r = Readiness{};
+    r.healerManaPct = 70.0f;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+    r = Readiness{};
+    r.membersFighting = 1;
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));
+}
+
+TEST(DcReadinessCeilingTest, AWellInsideThePullIsNotHeldByTheMargin)
+{
+    Readiness r;
+    r.lowestManaPct = 35.0f;   // short of full readiness
+    EXPECT_FALSE(ShouldSetUp(6, 13, r));    // 46% of the ceiling
+    EXPECT_FALSE(ShouldSetUp(11, 13, r));   // 84.6%, just inside the margin
+    EXPECT_TRUE(ShouldSetUp(12, 13, r));    // 92%
+}
+
+TEST(DcReadinessCeilingTest, OverTheScaledCeilingIsAlwaysASetUp)
+{
+    EXPECT_TRUE(ShouldSetUp(14, 13, Readiness{}));
+}

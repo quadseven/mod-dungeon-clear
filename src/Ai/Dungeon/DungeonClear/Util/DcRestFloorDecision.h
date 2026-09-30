@@ -100,6 +100,51 @@ namespace DcRestFloorDecision
 
     // The floors this member must meet, given the configured floors.
     Floors FloorsFor(Member const& m, float configuredHp, float configuredMp, Risk risk);
+
+    // ---- readiness-scaled Leeroy ceiling -------------------------------------
+    //
+    // The dynamic pull verdict compares a pack's weight to a ceiling (in thirds
+    // of an elite) that already shrinks for a fragile party. It never asked how
+    // READY the party is at the moment of the pull: a fresh healer and a tank at
+    // full health carry the same ceiling as a healer at 20% mana and a tank at
+    // half health, in the middle of a fight that is already on. This scales the
+    // ceiling down for exactly that, so a marginal pack becomes a set-up
+    // (Advanced) pull instead of a face-pull. Never below three thirds (one
+    // elite), and never up: a ready party keeps the ceiling it had.
+    struct Readiness
+    {
+        float tankHpPct = 100.0f;
+        float healerManaPct = 100.0f;      // 100 when there is no healer to read
+        unsigned membersFighting = 0;      // party members already in combat
+        bool gateNotReady = false;         // the between-pulls gate is not green
+        unsigned membersDown = 0;          // dead same-map members
+        float lowestManaPct = 100.0f;      // lowest mana among mana users
+    };
+
+    constexpr float kHealerManaLow   = 30.0f;
+    constexpr float kHealerManaShort = 50.0f;
+    constexpr float kTankHpLow       = 60.0f;
+    constexpr float kTankHpShort     = 80.0f;
+    constexpr unsigned kFightOnCount = 2;
+
+    constexpr float kLowManaCaster = 20.0f;
+
+    // Full readiness: the bar a pull within kEdgeMarginPct of the ceiling needs.
+    constexpr float kFullHealerMana = 80.0f;
+    constexpr float kFullTankHp     = 90.0f;
+    constexpr float kFullLowestMana = 40.0f;
+    constexpr unsigned kEdgeMarginPct = 85;   // weight above 85% of the ceiling is "the edge"
+
+    bool FullyReady(Readiness const& r);
+
+    unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r);
+
+    // The verdict itself: a set-up (Advanced) pull when the pack outweighs the
+    // readiness-scaled ceiling, OR when it sits within the edge margin of the
+    // fragility-scaled ceiling (before readiness scaling) and the party is not
+    // fully ready. A pack at 12/3 against a ceiling of 13/3 is accepted by a
+    // rested party and refused by one that is short of mana or health.
+    bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r);
 }
 
 #endif  // _DC_REST_FLOOR_DECISION_H
