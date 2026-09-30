@@ -17,7 +17,7 @@
 // module even preserves rez-able corpses (StayDeadAction / PreventBotRelease)
 // naming a party rez as the intended wake path, but nothing ever performed it.
 //
-// This kernel answers, from a plain snapshot of the same-map party: should the
+// This kernel answers, from a plain snapshot of the recovery party: should the
 // run HOLD for a resurrection (and if so, who rezzes whom), or DISABLE because
 // the whole party is dead (Wipe). No living rez class and an expired recovery
 // clock are HOLDs too: the dead release and corpse-run (MayReleaseSpirit).
@@ -49,8 +49,16 @@
 
 namespace DcRezDecision
 {
-    // One same-map group member, snapshotted by the glue (which, unlike the
-    // Smart Rest snapshot, KEEPS dead members — they are the whole point).
+    // A released ghost can move to a world-map graveyard while survivors stay
+    // in the dungeon. Keep dead group members in recovery decisions across maps;
+    // living members on another map still belong to another leg.
+    inline bool IsRecoveryParticipant(bool sameMap, bool dead)
+    {
+        return sameMap || dead;
+    }
+
+    // One recovery participant, snapshotted by the glue. It includes living
+    // same-map members and dead group members on any map, unlike Smart Rest.
     struct Member
     {
         bool isDead = false;

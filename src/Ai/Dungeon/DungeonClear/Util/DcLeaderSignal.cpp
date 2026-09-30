@@ -495,10 +495,22 @@ Player* DcLeaderSignal::FindRunOwner(Player* bot)
     if (!group)
         return owns(bot) ? bot : nullptr;
 
+    // Prefer the run owner on bot's map. If it released spirit, it can now be
+    // on a graveyard map while the party remains inside the instance; retain
+    // that dead owner's run state so surviving members can keep the run gated.
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
         if (!member || member->GetMapId() != bot->GetMapId())
+            continue;
+        if (owns(member))
+            return member;
+    }
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || !member->isDead() || member->GetMapId() == bot->GetMapId())
             continue;
         if (owns(member))
             return member;

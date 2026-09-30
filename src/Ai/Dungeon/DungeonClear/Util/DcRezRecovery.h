@@ -18,8 +18,8 @@ class Player;
 
 // Engine glue for post-combat party resurrection (see DcRezDecision.h for the
 // kernel semantics). This is the only place the feature touches game objects:
-// it resolves the run owner, snapshots the same-map group (KEEPING dead
-// members), reads the settings via DcSettings, stamps/clears the recovery
+// it resolves the run owner, snapshots living same-map members plus dead
+// group members on any map, reads settings via DcSettings, stamps/clears recovery
 // clock on the owner's DcRunState, runs the pure kernel, and emits the
 // (deduped) party-chat announcements.
 //
@@ -27,10 +27,11 @@ class Player;
 // elects among ALIVE tank bots, so when the leader itself is the corpse the
 // election returns null (or a different tank whose own run state is default).
 // Recovery must keep working exactly then — a healer follower has to walk over
-// and raise its tank — so ResolveRunOwner falls back to scanning the same-map
-// group for the member whose OWN DcRunState is enabled (the run owner), dead
-// or alive. All clocks/announce stamps live on that owner's run state and are
-// written cross-bot (the same single-threaded access DcSmartRest relies on),
+// and raise its tank — so ResolveRunOwner scans same-map group members first,
+// then dead group members on other maps, for the member whose OWN DcRunState is
+// enabled (the run owner). All clocks/announce stamps live on that owner's run
+// state and are written cross-bot (the same single-threaded access
+// DcSmartRest relies on),
 // dying with DcRunState::Reset() automatically.
 namespace DcRezRecovery
 {
@@ -38,7 +39,7 @@ namespace DcRezRecovery
     bool Enabled(Player* bot);
 
     // The kernel verdict resolved to live identities. rezzer/target are only
-    // meaningful for Hold outcomes; deadName always names the first same-map
+    // meaningful for Hold outcomes; deadName always names the first recovery
     // corpse (for disable messages).
     struct Plan
     {
@@ -71,7 +72,8 @@ namespace DcRezRecovery
 
     // Cheap hold-gate read for the leader's readiness sites (between-pulls,
     // event rest): true while the run should hold for a recovery — feature on,
-    // run enabled+unpaused, and any same-map group member dead. Deliberately
+    // run enabled+unpaused, and any group member dead. Released ghosts remain
+    // in this gate after moving to a graveyard on another map. Deliberately
     // stateless (a group walk, not a clock read) so gate ordering within a
     // tick can never race the clock stamping.
     bool IsPending(Player* leaderTank);
