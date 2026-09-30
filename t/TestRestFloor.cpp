@@ -165,6 +165,17 @@ TEST(DcRestFloorTest, DamageDealerWithNoDrinkIsCappedEvenOnABossPull)
     EXPECT_FLOAT_EQ(kMp, FloorsFor(Mage(), kHp, kMp, Risk::Hard).mp);
 }
 
+TEST(DcRestFloorTest, TankWithNoDrinkUsesTheLowerReserveOnABossPull)
+{
+    Member tank = Mage();
+    tank.role = Role::Tank;
+    tank.canDrink = false;
+    EXPECT_FLOAT_EQ(kNoDrinkTankCap, FloorsFor(tank, kHp, kMp, Risk::Boss).mp);
+    EXPECT_FLOAT_EQ(kNoDrinkTankCap, FloorsFor(tank, kHp, kMp, Risk::Hard).mp);
+    tank.canDrink = true;
+    EXPECT_FLOAT_EQ(kBossTankMana, FloorsFor(tank, kHp, kMp, Risk::Boss).mp);
+}
+
 TEST(DcRestFloorTest, HealerWithNoDrinkIsNotCapped)
 {
     Member p = Priest();

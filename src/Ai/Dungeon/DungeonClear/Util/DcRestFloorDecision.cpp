@@ -68,8 +68,13 @@ namespace DcRestFloorDecision
             }
         }
 
-        if (m.usesMana && !m.canDrink && m.role == Role::Damage)
-            out.mp = std::min(out.mp, kNoDrinkDamageCap);
+        if (m.usesMana && !m.canDrink)
+        {
+            if (m.role == Role::Damage)
+                out.mp = std::min(out.mp, kNoDrinkDamageCap);
+            else if (m.role == Role::Tank)
+                out.mp = std::min(out.mp, kNoDrinkTankCap);
+        }
         return out;
     }
 
