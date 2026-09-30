@@ -1,0 +1,105 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#ifndef _DC_REST_FLOOR_DECISION_H
+#define _DC_REST_FLOOR_DECISION_H
+
+// Pure decision kernel: how much HP and mana one member must have before the
+// between-pulls gate lets the party pull again, scaled by how dangerous the
+// next fight is and by what the member is for.
+//
+// WHY THIS EXISTS. The gate held EVERY living member to one pair of floors
+// (RestMinHpPct / RestMinMpPct: 85 HP and 65 mana with stock playerbots
+// settings) whatever was ahead. Live in The Stockade (campaign 27, a party of
+// levels 35-39 against bosses of levels 24-29, zero deaths across two clean
+// runs): about half of a 34 minute run was the tank standing still on
+// "advance yielding: party not ready / resting - Waiting on <mage> (low mana)", a
+// level 35 mage sitting at 64% mana against the 65% floor, while the tank and
+// healer were fine and the next pack was trivial. Nothing about that wait
+// bought safety: a wipe is what a floor is for, and a mage at 64% mana behind
+// a healthy tank is not one.
+//
+// WHAT A FLOOR IS FOR, PER ROLE. The healer's mana is the party's insurance, so
+// it keeps the highest floor of the three and never drops under
+// kHealerEasyMana (50). The tank's HP is what a pull spends first, so its HP floor
+// is the last to relax. A damage dealer's mana only shortens a fight, so it is
+// the first to relax and the deepest.
+//
+// RISK IS A FACT ABOUT THE DUNGEON, NOT A GUESS ABOUT THE PACK. The caller
+// classifies it from the lowest party level against the next boss's level and
+// whether that boss is about to be pulled (ClassifyRisk). Hard leaves both
+// floors exactly as configured, so raids, heroics, boss pulls and any party
+// not clearly above the content behave as they always did.
+//
+// Engine-free so it is unit-testable in isolation (t/TestRestFloor), mirroring
+// DcSmartRestDecision. DcPartyState is the glue: it snapshots each member, asks
+// FloorsFor, and holds the gate against the answer. The status panel and the
+// "waiting on" log line ask the same kernel, so a wait is never named that the
+// gate is not holding for.
+
+namespace DcRestFloorDecision
+{
+    enum class Risk
+    {
+        Easy,    // the party clearly outlevels the content
+        Normal,  // in between, or the content's level is unknown
+        Hard,    // a boss pull, a raid, or a party not clearly above the content
+    };
+
+    enum class Role
+    {
+        Tank,
+        Healer,
+        Damage,
+    };
+
+    // How many levels the lowest party member must be ABOVE the next boss for
+    // the content to count as Easy. At or below zero it is Hard.
+    constexpr int kEasyLevelLead = 5;
+    constexpr int kHardLevelLead = 0;
+
+    // Mana floors (percent) by role and risk. Each is capped by the configured
+    // floor, so a lower configured floor always wins. Hard is the configured
+    // floor untouched.
+    constexpr float kHealerNormalMana = 60.0f;
+    constexpr float kHealerEasyMana   = 50.0f;
+    constexpr float kTankNormalMana   = 45.0f;
+    constexpr float kTankEasyMana     = 30.0f;
+    constexpr float kDamageNormalMana = 45.0f;
+    constexpr float kDamageEasyMana   = 25.0f;
+
+    // HP floors (percent), same rules. The tank keeps the highest.
+    constexpr float kNormalHp       = 80.0f;
+    constexpr float kTankEasyHp     = 75.0f;
+    constexpr float kOthersEasyHp   = 65.0f;
+
+    // A damage dealer that has nothing it can drink recovers mana only by
+    // standing still, so waiting for the full configured floor on a boss pull
+    // is a long wait for a small gain. Capped here even at Hard.
+    constexpr float kNoDrinkDamageCap = 50.0f;
+
+    struct Member
+    {
+        Role role = Role::Damage;
+        bool usesMana = false;
+        // Whether the member holds a drink it is old enough to use. True for a
+        // real player (their client drinks) and for a member nobody asked.
+        bool canDrink = true;
+    };
+
+    struct Floors
+    {
+        float hp = 0.0f;
+        float mp = 0.0f;  // 0 for a member that does not use mana
+    };
+
+    // Risk of the next fight. `nextBossLevel` 0 means unknown.
+    Risk ClassifyRisk(bool bossPull, bool raid, int lowestPartyLevel, int nextBossLevel);
+
+    // The floors this member must meet, given the configured floors.
+    Floors FloorsFor(Member const& m, float configuredHp, float configuredMp, Risk risk);
+}
+
+#endif  // _DC_REST_FLOOR_DECISION_H

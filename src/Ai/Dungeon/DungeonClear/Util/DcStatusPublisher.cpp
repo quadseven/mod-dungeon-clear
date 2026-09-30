@@ -334,13 +334,12 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // recovery), leaving this arm the spread-only "out of range" waits —
         // exactly mirroring the between-pulls gate.
         else if (DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
-                 !DcPartyState::IsPartyReady(bot, rest.minHp, rest.minMp,
+                 !DcPartyState::IsPartyReady(bot, rest,
                      gate.maxSpread, gate.anchor, gate.maxTankGap))
         {
             stateStr = "resting";
-            std::string const who = DcPartyState::DescribePartyNotReady(bot, rest.minHp, rest.minMp,
-                                                                            gate.maxSpread, gate.anchor,
-                                                                            gate.maxTankGap);
+            std::string const who = DcPartyState::DescribePartyNotReady(bot, rest, gate.maxSpread,
+                                                                            gate.anchor, gate.maxTankGap);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else if (!stall.empty())

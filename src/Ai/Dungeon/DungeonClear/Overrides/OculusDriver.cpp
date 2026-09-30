@@ -88,7 +88,7 @@ namespace
         DcPartyState::RestGate const rest = DcPartyState::GetRestGate(owner, context);
         if (rest.minHp <= 0.0f && rest.minMp <= 0.0f)
             return true;
-        return DcPartyState::IsPartyReady(owner, rest.minHp, rest.minMp, /*maxSpread*/ 100000.0f);
+        return DcPartyState::IsPartyReady(owner, rest, /*maxSpread*/ 100000.0f);
     }
 
     // --- the census ---------------------------------------------------------------
