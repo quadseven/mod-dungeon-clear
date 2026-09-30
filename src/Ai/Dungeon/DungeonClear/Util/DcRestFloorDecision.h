@@ -90,6 +90,11 @@ namespace DcRestFloorDecision
     // most conservative. Capped here even at Hard.
     constexpr float kNoDrinkDamageCap = 50.0f;
 
+    // A mana-using tank also cannot reach its boss reserve without a usable
+    // drink. Keep more for the tank than damage dealers, but avoid a long
+    // stationary wait for mana that cannot be replenished in the field.
+    constexpr float kNoDrinkTankCap = 35.0f;
+
     struct Member
     {
         Role role = Role::Damage;
