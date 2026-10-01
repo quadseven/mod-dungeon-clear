@@ -87,12 +87,15 @@ namespace DcStrategyGate
         bool const inDungeon = map && map->IsDungeon();
         DcRunState& run = DcRun::Of(botAI);
         uint32 const instanceId = bot->GetInstanceId();
+        bool const matchingInstance =
+            inDungeon && run.runInstanceId != 0 && run.runInstanceId == instanceId;
         RunStateAction const runAction = DecideRunState(
-            inDungeon, bot->isDead(), run.enabled, run.corpseRunHold,
-            inDungeon && run.runInstanceId != 0 && run.runInstanceId == instanceId);
+            inDungeon, bot->isDead(), run.enabled, run.corpseRunHold, matchingInstance);
         bool const preserveRunForCorpse =
             runAction == RunStateAction::PreserveForCorpse ||
             (runAction == RunStateAction::Keep && run.corpseRunHold && bot->isDead());
+        bool const holdCorpseRunInside =
+            run.corpseRunHold && bot->isDead() && matchingInstance;
 
         if (runAction == RunStateAction::Disable)
             DcActionShared::DisableDungeonClear(
@@ -104,6 +107,11 @@ namespace DcStrategyGate
             run.corpseRunHold = false;
             DcStatusPublisher::MarkActiveTank(bot->GetGUID());
         }
+
+        // A released ghost can re-enter the instance before reaching its corpse.
+        // Keep the ordinary corpse-run AI until it revives; reinstalling the DC
+        // strategy ladder while dead would take movement away from that recovery.
+        bool const gateInDungeon = inDungeon && !holdCorpseRunInside;
 
         bool const hasNon = botAI->HasStrategy(kNonCombat, BOT_STATE_NON_COMBAT);
         bool const hasCmb = botAI->HasStrategy(kCombat, BOT_STATE_COMBAT);
@@ -130,7 +138,7 @@ namespace DcStrategyGate
         // Per-engine decision via the pure kernel. The two engines are installed
         // and stripped together, but each is checked independently so a partial
         // state (e.g. a reset that rebuilt only one engine) self-heals.
-        Plan const plan = MakePlan(inDungeon, hasNon, hasCmb, strayInCmb, strayInNon);
+        Plan const plan = MakePlan(gateInDungeon, hasNon, hasCmb, strayInCmb, strayInNon);
 
         if (plan.nonCombat == Action::None && plan.combat == Action::None &&
             !plan.stripStrayInCombat && !plan.stripStrayInNonCombat)

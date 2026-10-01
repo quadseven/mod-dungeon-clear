@@ -161,10 +161,12 @@ TEST(DungeonClearStrategyGate, DeadOwnerKeepsRunStateWhileOutsideInstance)
               RunStateAction::Keep);
 }
 
-TEST(DungeonClearStrategyGate, CorpseRunResumesOnlyInOriginalInstance)
+TEST(DungeonClearStrategyGate, CorpseRunResumesAliveOnlyInOriginalInstance)
 {
-    EXPECT_EQ(DecideRunState(true, true, true, true, true), RunStateAction::Resume);
+    EXPECT_EQ(DecideRunState(true, true, true, true, true), RunStateAction::Keep);
+    EXPECT_EQ(DecideRunState(true, false, true, true, true), RunStateAction::Resume);
     EXPECT_EQ(DecideRunState(true, true, true, true, false), RunStateAction::Disable);
+    EXPECT_EQ(DecideRunState(true, false, true, true, false), RunStateAction::Disable);
 }
 
 TEST(DungeonClearStrategyGate, RevivingOutsideDiscardsHeldRun)

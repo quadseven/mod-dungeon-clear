@@ -58,7 +58,7 @@ struct DcRunState
     bool        enabled = false;   // the run's master switch (leader-owned)
     bool        paused  = false;   // soft-stop layered on `enabled`; see OnResume
     uint32      runInstanceId   = 0;    // instance that accepted `dc on`; 0 = none
-    bool        corpseRunHold   = false; // owner released spirit; resume only in this instance
+    bool        corpseRunHold   = false; // released owner ghost; resume there after resurrection
 
     // This run is on a RAID map — stamped by `dc on` from Map::IsRaid(), read
     // via DcRun::IsRaid. Raid runs change the non-interference contract: DC
