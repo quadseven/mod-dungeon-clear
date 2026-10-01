@@ -51,8 +51,8 @@ public:
     // elects only among ALIVE tank bots, so in a 5-man with one tank it returns
     // nullptr the moment that tank dies, and every gate built on it goes inert
     // precisely when the run most needs deciding. This one falls back to scanning
-    // the same-map group, then dead group members on other maps, for the bot whose
-    // own run state is `enabled` — only ever the tank that started the run.
+    // the same-map group for the bot whose own run state is `enabled` — which is
+    // only ever the tank that started the run, alive or a corpse.
     //
     // Use this (not FindLeaderTank) wherever the question is "what is this RUN's
     // state", and FindLeaderTank wherever it is "who is DRIVING right now".

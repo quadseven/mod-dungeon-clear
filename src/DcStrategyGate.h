@@ -56,6 +56,32 @@ namespace DcStrategyGate
         return Action::None;
     }
 
+    enum class RunStateAction
+    {
+        Keep,
+        PreserveForCorpse,
+        Resume,
+        Disable
+    };
+
+    // The run owner can leave the instance only as a dead ghost during this
+    // recovery path. Keep its run state while dead, resume only in the original
+    // instance, and discard it after an outside resurrection or entry elsewhere.
+    constexpr RunStateAction DecideRunState(bool inDungeon, bool ownerDead,
+                                             bool runEnabled, bool corpseRunHold,
+                                             bool matchingInstance)
+    {
+        if (corpseRunHold)
+        {
+            if (inDungeon)
+                return matchingInstance ? RunStateAction::Resume : RunStateAction::Disable;
+            return ownerDead ? RunStateAction::Keep : RunStateAction::Disable;
+        }
+        if (runEnabled && !inDungeon && ownerDead)
+            return RunStateAction::PreserveForCorpse;
+        return RunStateAction::Keep;
+    }
+
     // The full per-bot reconciliation, composed from the kernel above plus the
     // cross-engine hygiene the two-engine invariant leaves implicit.
     //

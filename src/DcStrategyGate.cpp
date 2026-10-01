@@ -18,6 +18,7 @@
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFollowerLifecycle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 namespace
@@ -26,7 +27,8 @@ namespace
     char const* const kCombat    = "dungeon clear combat";
 
     // Strip-time cleanup. A bot that is losing the DC strategies must not carry
-    // any live run state past the triggers that owned it:
+    // live run state past the triggers that owned it, except for a dead run owner
+    // whose corpse run can return to the original instance:
     //   * a LEADER's `dungeon clear enabled` flag would otherwise survive on its
     //     value context and auto-resume the clear the next time it enters a
     //     dungeon and the strategy is re-installed. DisableDungeonClear resets the
@@ -37,11 +39,18 @@ namespace
     //     follow-tank teardown tick.
     // Both are gated so the common case (a bot that never ran DC) does no work and
     // emits no addon chatter.
-    void TeardownOnStrip(PlayerbotAI* botAI, Player* bot)
+    void TeardownOnStrip(PlayerbotAI* botAI, Player* bot, bool preserveRunForCorpse)
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-        if (DcRun::Of(ctx).enabled)
+        if (preserveRunForCorpse && DcRun::Of(ctx).enabled)
+        {
+            // The strategies are map-local, but the run belongs to this owner.
+            // Keep it while the owner corpse-runs so it can resume on re-entry.
+            DcRun::Of(ctx).corpseRunHold = true;
+            DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
+        }
+        else if (DcRun::Of(ctx).enabled)
             DcActionShared::DisableDungeonClear(
                 botAI, "Left the dungeon \xe2\x80\x94 dungeon clear disabled.");
 
@@ -76,6 +85,25 @@ namespace DcStrategyGate
 
         Map* map = bot->GetMap();
         bool const inDungeon = map && map->IsDungeon();
+        DcRunState& run = DcRun::Of(botAI);
+        uint32 const instanceId = bot->GetInstanceId();
+        RunStateAction const runAction = DecideRunState(
+            inDungeon, bot->isDead(), run.enabled, run.corpseRunHold,
+            inDungeon && run.runInstanceId != 0 && run.runInstanceId == instanceId);
+        bool const preserveRunForCorpse =
+            runAction == RunStateAction::PreserveForCorpse ||
+            (runAction == RunStateAction::Keep && run.corpseRunHold && bot->isDead());
+
+        if (runAction == RunStateAction::Disable)
+            DcActionShared::DisableDungeonClear(
+                botAI, "Corpse run ended outside its dungeon instance.");
+        else if (runAction == RunStateAction::PreserveForCorpse)
+            run.corpseRunHold = true;
+        else if (runAction == RunStateAction::Resume)
+        {
+            run.corpseRunHold = false;
+            DcStatusPublisher::MarkActiveTank(bot->GetGUID());
+        }
 
         bool const hasNon = botAI->HasStrategy(kNonCombat, BOT_STATE_NON_COMBAT);
         bool const hasCmb = botAI->HasStrategy(kCombat, BOT_STATE_COMBAT);
@@ -111,7 +139,7 @@ namespace DcStrategyGate
         // Run the strip cleanup once, before removing any strategy, so the run
         // state is torn down while its values/actions still exist.
         if (plan.teardown)
-            TeardownOnStrip(botAI, bot);
+            TeardownOnStrip(botAI, bot, preserveRunForCorpse);
 
         switch (plan.nonCombat)
         {

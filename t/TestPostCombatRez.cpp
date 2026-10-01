@@ -9,7 +9,6 @@
 
 using DcRezDecision::Decide;
 using DcRezDecision::Inputs;
-using DcRezDecision::IsRecoveryParticipant;
 using DcRezDecision::MayReleaseSpirit;
 using DcRezDecision::Member;
 using DcRezDecision::Outcome;
@@ -54,13 +53,6 @@ TEST(DcRezDecisionTest, NoDeathsIsNone)
     Result const r = Decide(BaseInputs(), BaseParty());
     EXPECT_EQ(r.outcome, Outcome::None);
     EXPECT_EQ(r.reason, Reason::NoDeaths);
-}
-
-TEST(DcRezDecisionTest, ReleasedGhostRemainsInTheRecoverySnapshot)
-{
-    EXPECT_TRUE(IsRecoveryParticipant(/*sameMap=*/false, /*dead=*/true));
-    EXPECT_FALSE(IsRecoveryParticipant(/*sameMap=*/false, /*dead=*/false));
-    EXPECT_TRUE(IsRecoveryParticipant(/*sameMap=*/true, /*dead=*/false));
 }
 
 TEST(DcRezDecisionTest, EmptyRosterIsNone)

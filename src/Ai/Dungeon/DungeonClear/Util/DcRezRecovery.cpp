@@ -56,9 +56,8 @@ namespace
     // DcLeaderSignal::FindRunOwner and the header comment.
     Player* ResolveRunOwner(Player* bot) { return DcLeaderSignal::FindRunOwner(bot); }
 
-    // Same-map living members plus dead group members on any map. Released
-    // ghosts move to the world map while survivors remain in the instance, but
-    // they still belong to this recovery episode. `players` receives the
+    // Same-map group snapshot, KEEPING dead members (unlike the Smart Rest
+    // snapshot — the corpses are the whole point here). `players` receives the
     // matching Player* per row so verdict indices resolve to live identities.
     void BuildSnapshot(Player* bot, Player* owner, std::vector<Member>& out,
                        std::vector<Player*>& players)
@@ -84,8 +83,7 @@ namespace
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
-            if (!member || !DcRezDecision::IsRecoveryParticipant(
-                               member->GetMapId() == bot->GetMapId(), member->isDead()))
+            if (!member || member->GetMapId() != bot->GetMapId())
                 continue;
             add(member);
         }
@@ -158,7 +156,7 @@ namespace
     //
     // Ungrouped bots return true so they still fall through to EvaluateImpl, whose
     // no-group snapshot is over the resolved run OWNER, not over `bot`.
-    bool AnyRecoveryMemberDead(Player* bot)
+    bool AnySameMapMemberDead(Player* bot)
     {
         Group* group = bot->GetGroup();
         if (!group)
@@ -166,7 +164,7 @@ namespace
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
-            if (!member)
+            if (!member || member->GetMapId() != bot->GetMapId())
                 continue;
             if (member->isDead())
                 return true;
@@ -461,8 +459,7 @@ namespace DcRezRecovery
     {
         if (!leaderTank || !Enabled(leaderTank))
             return false;
-        Player* owner = ResolveRunOwner(leaderTank);
-        PlayerbotAI* ai = owner ? GET_PLAYERBOT_AI(owner) : nullptr;
+        PlayerbotAI* ai = GET_PLAYERBOT_AI(leaderTank);
         if (!ai)
             return false;
         DcRunState const& run = DcRun::Of(ai);
@@ -491,8 +488,7 @@ namespace DcRezRecovery
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
-            if (!member || !DcRezDecision::IsRecoveryParticipant(
-                               member->GetMapId() == leaderTank->GetMapId(), member->isDead()))
+            if (!member || member->GetMapId() != leaderTank->GetMapId())
                 continue;
             if (member->isDead())
                 return true;
@@ -548,7 +544,7 @@ namespace DcRezRecovery
         // NO CORPSE -> no recovery to be elected for. EvaluateImpl reaches the same
         // answer (its no-deaths plan is Outcome::None, which fails the Hold test
         // below) after allocating and filling the snapshot; ask it the cheap way.
-        if (!AnyRecoveryMemberDead(bot))
+        if (!AnySameMapMemberDead(bot))
             return false;
 
         // mutate=false: see the header. The trigger owns the clock; this is the

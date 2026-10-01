@@ -13,8 +13,10 @@
 // exercised live, per the plan's validation checklist.
 using DcStrategyGate::Action;
 using DcStrategyGate::Decide;
+using DcStrategyGate::DecideRunState;
 using DcStrategyGate::MakePlan;
 using DcStrategyGate::Plan;
+using DcStrategyGate::RunStateAction;
 
 // MakePlan argument order, spelled out once so the cases below stay readable:
 //   (inDungeon, hasNonCombat, hasCombat, strayInCombat, strayInNonCombat)
@@ -150,3 +152,22 @@ static_assert(!MakePlan(true, true, true, true, false).teardown,
               "removing a stray must not abort a live in-dungeon run");
 static_assert(!MakePlan(false, false, false, false, false).teardown,
               "a compliant out-of-dungeon bot plans nothing at all");
+
+TEST(DungeonClearStrategyGate, DeadOwnerKeepsRunStateWhileOutsideInstance)
+{
+    EXPECT_EQ(DecideRunState(false, true, true, false, false),
+              RunStateAction::PreserveForCorpse);
+    EXPECT_EQ(DecideRunState(false, true, true, true, false),
+              RunStateAction::Keep);
+}
+
+TEST(DungeonClearStrategyGate, CorpseRunResumesOnlyInOriginalInstance)
+{
+    EXPECT_EQ(DecideRunState(true, true, true, true, true), RunStateAction::Resume);
+    EXPECT_EQ(DecideRunState(true, true, true, true, false), RunStateAction::Disable);
+}
+
+TEST(DungeonClearStrategyGate, RevivingOutsideDiscardsHeldRun)
+{
+    EXPECT_EQ(DecideRunState(false, false, true, true, false), RunStateAction::Disable);
+}
