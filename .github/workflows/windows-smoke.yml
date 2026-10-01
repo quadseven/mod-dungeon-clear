@@ -133,11 +133,12 @@ jobs:
           # pinned packages keep breaking on CI.
 
           # --- Boost 1.87.0 (msvc-14.3, 64-bit) prebuilt -> BOOST_ROOT ---
-          # Direct-download host; the plain /download URL serves an interstitial.
+          # Use the HTTPS download endpoint without `viasf=1`, which can
+          # redirect to an HTTP mirror that PowerShell correctly rejects.
           if (-not (Test-Path 'C:\local\boost_1_87_0\boost'))
           {
               $boostExe = Join-Path $env:RUNNER_TEMP 'boost.exe'
-              Invoke-WebRequest -Uri 'https://master.dl.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe?viasf=1' -OutFile $boostExe
+              Invoke-WebRequest -Uri 'https://downloads.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe' -OutFile $boostExe
               $boostMB = (Get-Item $boostExe).Length / 1MB
               Write-Host ("Downloaded Boost installer: {0:N1} MB" -f $boostMB)
               if ($boostMB -lt 50) { throw "Boost installer download looks wrong ($([int]$boostMB) MB) - likely an HTML page." }
