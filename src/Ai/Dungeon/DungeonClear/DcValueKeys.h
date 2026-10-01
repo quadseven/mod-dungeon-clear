@@ -27,6 +27,7 @@ namespace DcKey
 {
     // --- DungeonClear-owned values (registered by DungeonClearValueContext) -------
     inline constexpr char const* DungeonBosses           = "dungeon bosses";
+    inline constexpr char const* ExpectedEncounterMask   = "dungeon clear expected encounter mask";
     inline constexpr char const* NextDungeonBoss         = "next dungeon boss";
     inline constexpr char const* LiveBoss                = "dungeon clear live boss";
     // Leader-owned run-level state (enabled, paused + pause cluster, selected-boss
