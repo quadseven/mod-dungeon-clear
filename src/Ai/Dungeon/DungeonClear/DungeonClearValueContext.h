@@ -9,6 +9,7 @@
 #include "NamedObjectContext.h"
 #include "Value.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonExpectedEncounterMaskValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearBlockingDoorValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearDpsTargetValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearFarTargetsValue.h"
@@ -33,6 +34,7 @@ public:
     DungeonClearValueContext() : NamedObjectContext<UntypedValue>(false, false)
     {
         creators[DcKey::DungeonBosses] = &DungeonClearValueContext::dungeon_bosses;
+        creators[DcKey::ExpectedEncounterMask] = &DungeonClearValueContext::expected_encounter_mask;
         creators[DcKey::NextDungeonBoss] = &DungeonClearValueContext::next_dungeon_boss;
         creators[DcKey::LiveBoss] = &DungeonClearValueContext::dungeon_clear_live_boss;
         creators[DcKey::RunState] = &DungeonClearValueContext::dungeon_clear_run_state;
@@ -89,6 +91,7 @@ public:
 
 private:
     static UntypedValue* dungeon_bosses(PlayerbotAI* ai) { return new DungeonBossesValue(ai); }
+    static UntypedValue* expected_encounter_mask(PlayerbotAI* ai) { return new DungeonExpectedEncounterMaskValue(ai); }
     static UntypedValue* next_dungeon_boss(PlayerbotAI* ai) { return new NextDungeonBossValue(ai); }
     static UntypedValue* dungeon_clear_live_boss(PlayerbotAI* ai) { return new DungeonClearLiveBossValue(ai); }
     static UntypedValue* dungeon_clear_run_state(PlayerbotAI* ai) { return new DungeonClearRunStateValue(ai); }

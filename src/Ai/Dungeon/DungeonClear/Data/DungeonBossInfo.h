@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DUNGEONBOSSINFO_H
 
 #include <string>
+#include <vector>
 
 #include "Common.h"
 
@@ -100,6 +101,19 @@ inline uint32 BossOrderKey(DungeonBossInfo const& b)
 {
     return b.orderOverride >= 0 ? static_cast<uint32>(b.orderOverride)
                                 : b.encounterIndex;
+}
+
+// The wing-filtered boss list is the dungeon brain's source of truth for which
+// encounters this character can clear. Objectives and bosses without a DBC bit
+// do not contribute to the instance save's completed-encounter mask.
+inline uint32 DungeonBossesExpectedEncounterMask(
+    std::vector<DungeonBossInfo> const& bosses)
+{
+    uint32 mask = 0;
+    for (DungeonBossInfo const& boss : bosses)
+        if (boss.kind == DungeonAnchorKind::Boss && boss.encounterIndex < 32)
+            mask |= 1u << boss.encounterIndex;
+    return mask;
 }
 
 #endif

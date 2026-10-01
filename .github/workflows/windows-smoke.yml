@@ -133,11 +133,13 @@ jobs:
           # pinned packages keep breaking on CI.
 
           # --- Boost 1.87.0 (msvc-14.3, 64-bit) prebuilt -> BOOST_ROOT ---
-          # Direct-download host; the plain /download URL serves an interstitial.
+          # Fetch from Boost's archive host directly. SourceForge returned
+          # HTTP 403 on the Windows runner, before this job reached compilation.
           if (-not (Test-Path 'C:\local\boost_1_87_0\boost'))
           {
               $boostExe = Join-Path $env:RUNNER_TEMP 'boost.exe'
-              Invoke-WebRequest -Uri 'https://master.dl.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe?viasf=1' -OutFile $boostExe
+              & curl.exe --fail --location --proto-redir '=https' --max-redirs 5 --retry 3 --retry-delay 2 --user-agent 'Mozilla/5.0' --output $boostExe 'https://archives.boost.io/release/1.87.0/binaries/boost_1_87_0-msvc-14.3-64.exe'
+              if ($LASTEXITCODE -ne 0) { throw "Boost download failed with curl exit code $LASTEXITCODE." }
               $boostMB = (Get-Item $boostExe).Length / 1MB
               Write-Host ("Downloaded Boost installer: {0:N1} MB" -f $boostMB)
               if ($boostMB -lt 50) { throw "Boost installer download looks wrong ($([int]$boostMB) MB) - likely an HTML page." }

@@ -2056,3 +2056,22 @@ TEST(DungeonEventIntegrityTest, SuppressionCrossingOwnsThePull)
     // the whelps guarantee.
     EXPECT_TRUE(ev->persistent);
 }
+
+TEST(DungeonClearWingRegistryTest, ExpectedMaskIncludesOnlyCreditableWingBosses)
+{
+    DungeonBossInfo bossA;
+    bossA.kind = DungeonAnchorKind::Boss;
+    bossA.encounterIndex = 0;
+    DungeonBossInfo bossB;
+    bossB.kind = DungeonAnchorKind::Boss;
+    bossB.encounterIndex = 1;
+    DungeonBossInfo objective;
+    objective.kind = DungeonAnchorKind::Objective;
+    objective.encounterIndex = 2;
+    DungeonBossInfo noCredit;
+    noCredit.kind = DungeonAnchorKind::Boss;
+    noCredit.encounterIndex = 64;
+
+    EXPECT_EQ(DungeonBossesExpectedEncounterMask(
+                  {bossA, bossB, objective, noCredit}), 0b11u);
+}
