@@ -315,6 +315,8 @@ bool DcOnAction::Execute(Event event)
 
     // Reset transient state and enable.
     DcRun::Of(context).enabled = true;
+    DcRun::Of(context).runInstanceId = bot->GetInstanceId();
+    DcRun::Of(context).corpseRunHold = false;
     // Raid runs flip the non-interference contract (boss stand-down; see
     // DcRunState). Map::IsDungeon() was verified above, so this is the honest
     // map type, stamped once for the run session.

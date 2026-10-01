@@ -18,7 +18,8 @@ class Player;
 // This gate replaces the global install with a single per-bot invariant:
 //
 //     a bot has "dungeon clear" (non-combat) and "dungeon clear combat" (combat)
-//     installed  <=>  it is currently on a dungeon/raid map (Map::IsDungeon()).
+//     installed while on a dungeon/raid map (Map::IsDungeon()), except a dead
+//     run owner being held for a corpse run in its original instance.
 //
 // The invariant is enforced from three drivers (all in DungeonClearModule.cpp),
 // every one of which funnels through Reconcile():
@@ -38,8 +39,8 @@ class Player;
 namespace DcStrategyGate
 {
     // Pure decision kernel (headless-testable: no game types). Given whether the
-    // bot is on a dungeon/raid map and whether it currently has the DC strategy
-    // installed, returns what to do to satisfy the invariant.
+    // bot should have the DC strategy for its current map and whether it currently
+    // has that strategy installed, returns the action needed to satisfy the gate.
     enum class Action
     {
         None,     // already correct
@@ -54,6 +55,37 @@ namespace DcStrategyGate
         if (!inDungeon && hasStrategy)
             return Action::Strip;
         return Action::None;
+    }
+
+    enum class RunStateAction
+    {
+        Keep,
+        PreserveForCorpse,
+        Resume,
+        Disable
+    };
+
+    // The run owner can leave the instance only as a dead ghost during this
+    // recovery path. Keep its run state while dead, resume after resurrection in
+    // the original instance, and discard it after an outside resurrection or
+    // entry elsewhere.
+    constexpr RunStateAction DecideRunState(bool inDungeon, bool ownerDead,
+                                             bool runEnabled, bool corpseRunHold,
+                                             bool matchingInstance)
+    {
+        if (corpseRunHold)
+        {
+            if (inDungeon)
+            {
+                if (!matchingInstance)
+                    return RunStateAction::Disable;
+                return ownerDead ? RunStateAction::Keep : RunStateAction::Resume;
+            }
+            return ownerDead ? RunStateAction::Keep : RunStateAction::Disable;
+        }
+        if (runEnabled && !inDungeon && ownerDead)
+            return RunStateAction::PreserveForCorpse;
+        return RunStateAction::Keep;
     }
 
     // The full per-bot reconciliation, composed from the kernel above plus the
