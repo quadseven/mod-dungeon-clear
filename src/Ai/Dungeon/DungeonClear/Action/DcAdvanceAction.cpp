@@ -639,13 +639,29 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
             // Surface WHY we're holding: the at-boss trigger only pulls once the
             // party is ready and no loot is pending. When it doesn't fire, this
             // is the line that explains the otherwise-silent idle at the boss.
+            // AND WHICH MEMBER, when the party is the reason. A hold at Fenrus
+            // the Devourer on the dev realm (2026-10-04) logged partyReady=0
+            // for sixteen minutes and nothing else, so the stall was blind.
+            // Named with the gate's own thresholds, as the yield line does.
+            bool const partyReady = IsBetweenPullsReady(bot, context);
+            std::string notReady;
+            if (!partyReady)
+            {
+                DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
+                DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+                notReady = DcPartyState::DescribePartyNotReady(
+                    bot, rest, gate.maxSpread, gate.anchor, gate.maxTankGap);
+                if (notReady.empty())
+                    notReady = "resting or a pending resurrection";
+            }
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
-                      "for at-boss [partyReady={} availLoot={} canLoot={}]",
+                      "for at-boss [partyReady={} availLoot={} canLoot={} tankCombat={}]{}{}",
                       bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
-                      IsBetweenPullsReady(bot, context) ? 1 : 0,
+                      partyReady ? 1 : 0,
                       AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
-                      AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0);
+                      AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
+                      bot->IsInCombat() ? 1 : 0, notReady.empty() ? "" : " - ", notReady);
             DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             ClearStall(context);
             // Parked at the boss waiting for the at-boss pull — not navigating,
