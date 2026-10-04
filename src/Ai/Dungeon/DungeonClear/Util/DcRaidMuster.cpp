@@ -51,8 +51,8 @@ void ApplyMusterRestOverride(Player* bot, DcRunState& run)
 
 // One ForceRebuff round: every same-map bot member opens a rebuff window
 // (group-variant buffs, reagents, buff-first multiplier — all the stock
-// machinery). The worldbuff strategy (simulated flasks/food) is installed
-// by DcStrategyGate on raid maps, so its auras land during the same window.
+// machinery). Simulated flask/food auras (the worldbuff strategy) are never
+// granted; DcStrategyGate strips it.
 void IssueRebuffRound(Player* bot)
 {
     Group* group = bot->GetGroup();
