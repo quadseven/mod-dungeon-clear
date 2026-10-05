@@ -578,6 +578,23 @@ DungeonClear.ClearRoomBeforeBoss = 1
 DungeonClear.RoomClearTimeout = 30
 
 #
+#    DungeonClear.ClearBossNeighbours
+#    DungeonClear.BossNeighbourRadius
+#        A boss with no room-aggro row still has elites beside it. With this on
+#        (Dynamic pull only, never in raids), the elites within
+#        BossNeighbourRadius yards of the live boss are cleared before the boss
+#        is pulled, each by the careful Advanced pull (tagged from range and
+#        dragged to camp). An elite within the realm's creature assist radius
+#        (+2 yards) of the boss cannot be pulled alone and comes with the boss.
+#        RoomClearTimeout above bounds the clear.
+#
+#        Default: 1 (heroic default 0) / 30.0
+#
+
+DungeonClear.ClearBossNeighbours = 1
+DungeonClear.BossNeighbourRadius = 30.0
+
+#
 #    DungeonClear.RoomAggroPathPadding
 #        Extra yards added to a room-aggro boss's avoid-sphere when the tank
 #        routes AROUND it to reach a trash pack during the pre-clear. The
@@ -1527,6 +1544,9 @@ DungeonClear.SpectateSpeed = 2.5
 #    No size hold: the heroic ceiling is already 2 elites and its packs are
 #    authored around it, so a hold would stop runs the profile already clears.
 # DungeonClear.PullOversizeHold.Heroic = 0
+
+#    No boss-neighbour pre-clear: heroic rooms worth clearing are authored rows.
+# DungeonClear.ClearBossNeighbours.Heroic = 0
 
 #    En-route pack avoidance, ON for heroic and off for normal. The pull estimate
 #    answers "who joins a fight that STAYS PUT at the target" — the right question

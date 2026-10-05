@@ -23,6 +23,7 @@ class InstanceScript;
 class AiObjectContext;
 class PlayerbotAI;
 struct DungeonBossInfo;
+struct RoomAggroBoss;
 
 class DcTargeting
 {
@@ -269,6 +270,21 @@ public:
     // holds the boss pull and routes the trash clear: while it is true the boss
     // gate stands down and the pull pipeline / room-clear action work the room.
     static bool IsRoomClearActive(Player* bot, AiObjectContext* ctx);
+
+    // The room the room-clear machinery runs for `bossEntry`: its RoomAggroRegistry
+    // row, else a synthesized boss-neighbour room (RoomAggroRegistry::NeighbourRoom)
+    // when RoomAggroRegistry::NeighbourRoomApplies, else nullptr. The synthesized
+    // row lives in thread-local storage and is rebuilt on every call: valid for
+    // the current tick only. Only DungeonClearRoomTrashValue and the room envelope
+    // it measures (DcEngageGeometry::TankReachedRoomByPath) read this form.
+    static RoomAggroBoss const* BossRoom(Player* bot, AiObjectContext* ctx, uint32 bossEntry);
+
+    // BossRoom, except that a synthesized neighbour room counts only while it
+    // still holds trash ("dungeon clear room trash remaining" non-empty), so a
+    // boss with nobody beside it keeps every standoff and gate it had. Every
+    // other "is the next boss a room boss" reader asks this.
+    static RoomAggroBoss const* ActiveBossRoom(Player* bot, AiObjectContext* ctx,
+                                               uint32 bossEntry);
 
     // True when a room-clear is active (IsRoomClearActive) AND the room carries a
     // pullOutRadius (RoomAggroBoss::pullOutRadius > 0). Such a room deliberately

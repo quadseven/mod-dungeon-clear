@@ -282,7 +282,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     // room-clear driver (Off/Leeroy) or the pull pipeline (advanced/dynamic)
     // clears it first; the gate reopens the instant the room is clear (or the
     // RoomClearTimeout valve fires inside the value). Cheap cached read.
-    if (RoomAggroRegistry::Find(bot->GetMapId(), next->entry) &&
+    if (DcTargeting::ActiveBossRoom(bot, context, next->entry) &&
         !AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return false;
 
@@ -780,6 +780,14 @@ bool DungeonClearRoomTrashTrigger::IsActive()
 
     // Only at a flagged boss with room trash still up.
     if (!DcTargeting::IsRoomClearActive(bot, context))
+        return false;
+
+    // A boss-neighbour room (no authored row) is cleared only by the set-up pull
+    // its pullOutRadius forces: its elites stand inside the boss's aggro sphere,
+    // so walking in to melee one would wake the boss. Never this Leeroy driver.
+    if (std::optional<DungeonBossInfo> const nb =
+            AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
+        !nb || !RoomAggroRegistry::Find(bot->GetMapId(), nb->entry))
         return false;
 
     // When pull-to-camp is in effect for this pack, the higher-priority pull

@@ -543,7 +543,7 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
         AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return std::nullopt;
-    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
+    if (!DcTargeting::ActiveBossRoom(bot, context, next->entry))
         return std::nullopt;
     if (AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
         return std::nullopt;

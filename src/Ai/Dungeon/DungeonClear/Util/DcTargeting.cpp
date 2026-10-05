@@ -61,6 +61,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
@@ -1204,6 +1205,56 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
     context->GetValue<uint32>(DcKey::RunInstance)->Set(instanceId);
     return true;
 }
+RoomAggroBoss const* DcTargeting::BossRoom(Player* bot, AiObjectContext* ctx, uint32 bossEntry)
+{
+    if (!bot || !bossEntry)
+        return nullptr;
+    if (RoomAggroBoss const* row = RoomAggroRegistry::Find(bot->GetMapId(), bossEntry))
+        return row;
+    if (!ctx)
+        return nullptr;
+    // Only a real encounter boss gets a neighbour room: this is asked with the
+    // next anchor's entry, which can be an objective rather than a boss.
+    if (!IsDungeonBossEntry(ctx, bossEntry))
+        return nullptr;
+
+    Creature* const live = GetLiveBoss(bot, ctx, bossEntry);
+    bool const fightInPlace =
+        live && FightInPlaceRegistry::IsNoPullZone(bot->GetMapId(), live->GetPositionX(),
+                                                   live->GetPositionY());
+    bool const applies = RoomAggroRegistry::NeighbourRoomApplies(
+        DcSettings::GetBool(bot, "ClearBossNeighbours"),
+        bot->GetMap() && bot->GetMap()->IsRaid(),
+        ctx->GetValue<uint32>(DcKey::PullSetting)->Get() == 2u,
+        /*registryRow*/ false,
+        BossPullbackRegistry::Find(bot->GetMapId(), bossEntry) != nullptr,
+        fightInPlace);
+    if (!applies)
+        return nullptr;
+
+    // The glue radius is the engine's own assist reach plus a margin: an elite
+    // that close answers the boss's call for help (and the boss answers its), so
+    // it cannot be tagged alone.
+    float const glue =
+        sWorld->getFloatConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_RADIUS) + 2.0f;
+    static thread_local std::unordered_map<uint64, RoomAggroBoss> rooms;
+    uint64 const key = (uint64(bot->GetMapId()) << 32) | uint64(bossEntry);
+    RoomAggroBoss& room = rooms[key];
+    room = RoomAggroRegistry::NeighbourRoom(bot->GetMapId(), bossEntry,
+                                            DcSettings::GetFloat(bot, "BossNeighbourRadius"),
+                                            glue);
+    return &room;
+}
+RoomAggroBoss const* DcTargeting::ActiveBossRoom(Player* bot, AiObjectContext* ctx,
+                                                 uint32 bossEntry)
+{
+    RoomAggroBoss const* room = BossRoom(bot, ctx, bossEntry);
+    if (!room || !room->elitesOnly || !ctx)
+        return room;  // an authored row, or nothing
+    if (ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().empty())
+        return nullptr;
+    return room;
+}
 bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
 {
     if (!bot || !ctx)
@@ -1213,7 +1264,7 @@ bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
         ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
-    if (!RoomAggroRegistry::Find(bot->GetMapId(), next->entry))
+    if (!ActiveBossRoom(bot, ctx, next->entry))
         return false;
 
     // Cheap cached read first; the envelope probe (level-reachability) runs only
@@ -1264,7 +1315,7 @@ bool DcTargeting::RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx)
         ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
     if (!next.has_value())
         return false;
-    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), next->entry);
+    RoomAggroBoss const* room = ActiveBossRoom(bot, ctx, next->entry);
     if (!room || room->pullOutRadius <= 0.0f)
         return false;
 

@@ -283,3 +283,22 @@ bool RoomAggroRegistry::IsRoomTrash(RoomAggroBoss const& boss, uint32 entry,
         return false;
     return true;
 }
+
+RoomAggroBoss RoomAggroRegistry::NeighbourRoom(uint32 mapId, uint32 bossEntry, float radius,
+                                               float glueRadius)
+{
+    RoomAggroBoss room;
+    room.mapId = mapId;
+    room.bossEntry = bossEntry;
+    room.radius = radius;
+    room.pullOutRadius = glueRadius > 0.0f ? glueRadius : 0.1f;
+    room.elitesOnly = true;
+    return room;
+}
+
+bool RoomAggroRegistry::NeighbourRoomApplies(bool enabled, bool raid, bool dynamicPull,
+                                             bool registryRow, bool pullbackBoss,
+                                             bool fightInPlace)
+{
+    return enabled && !raid && dynamicPull && !registryRow && !pullbackBoss && !fightInPlace;
+}

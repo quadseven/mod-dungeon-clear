@@ -155,7 +155,7 @@ float DcEngageGeometry::BossEngageRange(Player* bot, AiObjectContext* ctx,
     // by the at-boss trigger until the room is clear (RoomAggroRegistry + trash
     // remaining), so this changes only WHERE the tank stands to clear, not when it
     // pulls.
-    if (RoomAggroRegistry::Find(bot->GetMapId(), boss.entry))
+    if (DcTargeting::ActiveBossRoom(bot, ctx, boss.entry))
     {
         // The single-source sphere (same value the room-trash exclusion and the
         // skirt avoid-ring use). The standoff sits a fixed buffer OUTSIDE it; the
@@ -1013,7 +1013,7 @@ bool DcEngageGeometry::WithinRoomClearWindow(Player* bot, AiObjectContext* ctx,
     if (!bot || !ctx)
         return false;
 
-    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), boss.entry);
+    RoomAggroBoss const* room = DcTargeting::ActiveBossRoom(bot, ctx, boss.entry);
     if (!room)
         return false;   // not a room-aggro boss — no room-clear window
 
@@ -1045,7 +1045,9 @@ bool DcEngageGeometry::TankReachedRoomByPath(Player* bot, AiObjectContext* ctx,
     if (!bot || !ctx)
         return false;
 
-    RoomAggroBoss const* room = RoomAggroRegistry::Find(bot->GetMapId(), boss.entry);
+    // The raw form: DungeonClearRoomTrashValue asks this while computing the
+    // very set ActiveBossRoom would read.
+    RoomAggroBoss const* room = DcTargeting::BossRoom(bot, ctx, boss.entry);
     if (!room)
         return false;   // not a room-aggro boss — no room-clear envelope
 
