@@ -16,7 +16,7 @@ namespace DcPullDecisionIo
     namespace
     {
         struct VerdictNamePair { PullVerdict v; char const* name; };
-        constexpr std::array<VerdictNamePair, 7> kVerdictNames = {{
+        constexpr std::array<VerdictNamePair, 8> kVerdictNames = {{
             { PullVerdict::NoOp,             "NoOp"             },
             { PullVerdict::HoldNoTarget,     "HoldNoTarget"     },
             { PullVerdict::DropToLeeroy,     "DropToLeeroy"     },
@@ -24,6 +24,7 @@ namespace DcPullDecisionIo
             { PullVerdict::ApproachAsLeeroy, "ApproachAsLeeroy" },
             { PullVerdict::PatrolWaitHold,   "PatrolWaitHold"   },
             { PullVerdict::Advanced,         "Advanced"         },
+            { PullVerdict::OversizeHold,     "OversizeHold"     },
         }};
     }
 
@@ -66,6 +67,7 @@ namespace DcPullDecisionIo
             .Add("atCommitRange", o.atCommitRange)
             .Add("patrolContended", o.patrolContended)
             .Add("patrolWaitExpired", o.patrolWaitExpired)
+            .Add("sizeHold", o.sizeHold)
             .Str();
     }
 
@@ -97,6 +99,7 @@ namespace DcPullDecisionIo
         o.atCommitRange       = DcDecisionJson::GetB(m, "atCommitRange", o.atCommitRange);
         o.patrolContended     = DcDecisionJson::GetB(m, "patrolContended", o.patrolContended);
         o.patrolWaitExpired   = DcDecisionJson::GetB(m, "patrolWaitExpired", o.patrolWaitExpired);
+        o.sizeHold            = DcDecisionJson::GetB(m, "sizeHold", o.sizeHold);
         out.obs = o;
         return true;
     }

@@ -85,6 +85,11 @@ struct RoomAggroBoss
     // so the camp must stand well clear of her (skirtRadius 40) or killing Pack B in
     // her wake wakes the boss. 0 => use the computed sphere alone (every other row).
     float  skirtRadius{0.0f};
+
+    // Count elites only. Set on a synthesized boss-neighbour room
+    // (RoomAggroRegistry::NeighbourRoom), never on an authored row: an authored
+    // room is the script's own pull, which takes every hostile in it.
+    bool   elitesOnly{false};
 };
 
 class RoomAggroRegistry
@@ -120,6 +125,34 @@ public:
     // the gate would livelock on a mob it can never separate.
     static bool IsRoomTrash(RoomAggroBoss const& boss, uint32 entry,
                             float distToBoss, float bossSafeRadius);
+
+    // ---- boss neighbours: the room every boss has -----------------------------
+    //
+    // An authored row is a SCRIPTED room pull. Every other boss still has the
+    // elites that stand or wander beside it, and engaging the boss with them is
+    // how guild groups died (wow-overseer#575): Lady Anacondra's Deviate
+    // Guardians, 8 and 20 yards from her, made the first or second kill in 4 of
+    // 5 Wailing Caverns wipes there, and Rhahk'Zor stands with two Watchmen.
+    //
+    // NeighbourRoom is the row the room-clear machinery runs for such a boss:
+    // the elites within `radius` of the live boss are cleared first, by the
+    // set-up pull (a non-zero pullOutRadius forces it, see
+    // DcTargeting::RoomClearForcesAdvanced), which tags each from range and drags
+    // it to camp. An elite within `glueRadius` (the engine's assist radius plus a
+    // margin) cannot be tagged without the boss answering its call for help, so
+    // it is left to come with the boss, exactly as an authored row's sphere does.
+    // Pure.
+    static RoomAggroBoss NeighbourRoom(uint32 mapId, uint32 bossEntry, float radius,
+                                       float glueRadius);
+
+    // Whether a boss gets a neighbour room. Not when it has an authored row (the
+    // row wins), not in raids (the raid muster owns the boss approach), only on
+    // the Dynamic pull setting (the forced set-up pull needs the governor), and
+    // not for a pull-back boss or a boss in a fight-in-place room, whose pull is
+    // authored. Pure.
+    static bool NeighbourRoomApplies(bool enabled, bool raid, bool dynamicPull,
+                                     bool registryRow, bool pullbackBoss,
+                                     bool fightInPlace);
 };
 
 #endif

@@ -191,6 +191,8 @@ TEST(DcSettingsRegistryTest, HeroicProfileIsExactlyThePullSafetySet)
         "PullCombatSpread",
         "PullDynamicPartyLag",
         "PullPatrolWaitSec",
+        "PullOversizeHold",
+        "ClearBossNeighbours",
         "PullEnRouteAvoid",
         "AdvanceWindowYards",
         "TrashWidthCap",

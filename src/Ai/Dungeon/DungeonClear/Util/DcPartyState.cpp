@@ -34,6 +34,7 @@
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "Group.h"
+#include "LFG.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
 #include "Log.h"
@@ -95,6 +96,66 @@ float DcPartyState::RestMinMpPct(Player* bot)
     // higher gate would strand the tank waiting on slow natural mana regen.
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
+bool DcPartyState::IsSeatedHealer(Player* member)
+{
+    if (!member)
+        return false;
+    Group* group = member->GetGroup();
+    if (!group)
+        return false;
+    for (Group::MemberSlot const& slot : group->GetMemberSlots())
+        if (slot.guid == member->GetGUID())
+            return (slot.roles & lfg::PLAYER_ROLE_HEALER) != 0;
+    return false;
+}
+
+DcRestFloorDecision::Role DcPartyState::RoleOf(Player* member)
+{
+    if (PlayerbotAI::IsTank(member))
+        return DcRestFloorDecision::Role::Tank;
+    if (IsSeatedHealer(member) || PlayerbotAI::IsHeal(member))
+        return DcRestFloorDecision::Role::Healer;
+    return DcRestFloorDecision::Role::Damage;
+}
+
+bool DcPartyState::GatesOnMana(Player* member)
+{
+    if (!member || member->GetMaxPower(POWER_MANA) == 0)
+        return false;  // no mana pool at all (warrior, rogue, death knight)
+    DcRestFloorDecision::Power power = DcRestFloorDecision::Power::Other;
+    switch (member->getPowerType())
+    {
+        case POWER_MANA:   power = DcRestFloorDecision::Power::Mana;   break;
+        case POWER_RAGE:   power = DcRestFloorDecision::Power::Rage;   break;
+        case POWER_ENERGY: power = DcRestFloorDecision::Power::Energy; break;
+        default: break;
+    }
+    return DcRestFloorDecision::GatesOnMana(power, member->getClass() == CLASS_DRUID,
+                                            RoleOf(member));
+}
+
+float DcPartyState::HealerManaPct(Player* bot)
+{
+    if (!bot)
+        return -1.0f;
+    Group* group = bot->GetGroup();
+    if (!group)
+        return -1.0f;
+    std::vector<DcRestFloorDecision::HealerCandidate> members;
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* m = ref->GetSource();
+        if (!m || !m->IsAlive() || m->GetMapId() != bot->GetMapId() || !GatesOnMana(m))
+            continue;
+        DcRestFloorDecision::HealerCandidate c;
+        c.seatedHealer = IsSeatedHealer(m);
+        c.healStrategy = PlayerbotAI::IsHeal(m);
+        c.manaPct = 100.0f * float(m->GetPower(POWER_MANA)) / float(m->GetMaxPower(POWER_MANA));
+        members.push_back(c);
+    }
+    return DcRestFloorDecision::HealerManaPct(members);
+}
+
 namespace
 {
     // Whether `member` holds a drink it is old enough to use. A member with no
@@ -119,11 +180,9 @@ namespace
                                              DcRestFloorDecision::Risk risk)
     {
         DcRestFloorDecision::Member m;
-        m.role = PlayerbotAI::IsTank(member)   ? DcRestFloorDecision::Role::Tank
-                 : PlayerbotAI::IsHeal(member) ? DcRestFloorDecision::Role::Healer
-                                               : DcRestFloorDecision::Role::Damage;
+        m.role = DcPartyState::RoleOf(member);
         uint32 const maxMp = member->GetMaxPower(POWER_MANA);
-        m.usesMana = member->getPowerType() == POWER_MANA && maxMp > 0;
+        m.usesMana = DcPartyState::GatesOnMana(member);
         if (m.usesMana)
         {
             float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
@@ -225,7 +284,7 @@ bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread
         }
         if (member->GetHealthPct() < hpFloor)
             return false;
-        if (member->getPowerType() == POWER_MANA)
+        if (DcPartyState::GatesOnMana(member))
         {
             uint32 const maxMp = member->GetMaxPower(POWER_MANA);
             if (maxMp > 0)
@@ -697,7 +756,7 @@ std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
             }
             if (member->GetHealthPct() < hpFloor)
                 reason = "low HP";
-            else if (member->getPowerType() == POWER_MANA)
+            else if (DcPartyState::GatesOnMana(member))
             {
                 uint32 const maxMp = member->GetMaxPower(POWER_MANA);
                 if (maxMp > 0)

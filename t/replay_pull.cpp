@@ -50,6 +50,7 @@ namespace
         EXPECT_EQ(a.atCommitRange, b.atCommitRange);
         EXPECT_EQ(a.patrolContended, b.patrolContended);
         EXPECT_EQ(a.patrolWaitExpired, b.patrolWaitExpired);
+        EXPECT_EQ(a.sizeHold, b.sizeHold);
     }
 
     // A spread of records across the governor's outcomes for the round-trip test.
@@ -93,6 +94,11 @@ namespace
         approach.patrolWaitEnabled = true;
         approach.patrolContended = true;
         push(approach);
+
+        PullObservation size = base;  // OversizeHold
+        size.advanced = true;
+        size.sizeHold = true;
+        push(size);
 
         PullObservation noop = base;  // NoOp (throttled)
         noop.sameTarget = true;

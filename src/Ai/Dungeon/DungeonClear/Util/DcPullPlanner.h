@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include "Position.h"
+#include "DcRestFloorDecision.h"
 
 class Player;
 class Unit;
@@ -31,6 +32,15 @@ struct DcPullClassification
     std::uint32_t reducedCount = 0;
     std::uint32_t ceiling      = 0;
     std::uint32_t bodyCount    = 0;
+    // What a ranged TAG of the target brings, in thirds: the target, its
+    // formation, and one assist hop, without the proximity aggro of a fight on
+    // top of the pack. The set-up pull tags from range, so this is the weight a
+    // split pull actually fights. See DcRestFloorDecision::ClassifyPullSize.
+    std::uint32_t tagCount     = 0;
+    // The three-way verdict (face-pull / set-up / not whole). FacePull when the
+    // size gate is off (PullOversizeHold 0, raids), so a caller that only reads
+    // the bool sees the old answer.
+    DcRestFloorDecision::PullSize size = DcRestFloorDecision::PullSize::FacePull;
 };
 
 class DcPullPlanner

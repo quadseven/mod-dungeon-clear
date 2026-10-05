@@ -7,6 +7,42 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 
+// --- Boss neighbours (wow-overseer#575) -------------------------------------
+
+TEST(RoomAggroRegistryTest, AnacondrasGuardiansAreClearedFirstUnlessGluedToHer)
+{
+    // Lady Anacondra (Wailing Caverns, map 43, entry 3671) has no authored row,
+    // so before this change nothing was cleared around her and her Deviate
+    // Guardians (3637) joined 4 of 5 fights there.
+    ASSERT_EQ(RoomAggroRegistry::Find(43, 3671), nullptr);
+    ASSERT_TRUE(RoomAggroRegistry::NeighbourRoomApplies(true, false, true, false, false, false));
+
+    RoomAggroBoss const room = RoomAggroRegistry::NeighbourRoom(43, 3671, 30.0f, 12.0f);
+    EXPECT_TRUE(room.elitesOnly);
+    EXPECT_GT(room.pullOutRadius, 0.0f);  // forces the set-up pull
+    // Guardian 20yd out: cleared first. 8yd out: answers her call, comes with her.
+    EXPECT_TRUE(RoomAggroRegistry::IsRoomTrash(room, 3637, 20.0f, room.pullOutRadius));
+    EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(room, 3637, 8.0f, room.pullOutRadius));
+    EXPECT_FALSE(RoomAggroRegistry::IsRoomTrash(room, 3637, 35.0f, room.pullOutRadius));
+}
+
+TEST(RoomAggroRegistryTest, NeighbourRoomOnlyWhereNothingElseOwnsTheBoss)
+{
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(false, false, true, false, false, false));
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(true, true, true, false, false, false));   // raid
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(true, false, false, false, false, false)); // not Dynamic
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(true, false, true, true, false, false));   // authored row
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(true, false, true, false, true, false));   // pull-back boss
+    EXPECT_FALSE(RoomAggroRegistry::NeighbourRoomApplies(true, false, true, false, false, true));   // fight in place
+}
+
+TEST(RoomAggroRegistryTest, AuthoredRowsAreNeverElitesOnly)
+{
+    RoomAggroBoss const* b = RoomAggroRegistry::Find(557, 18341);  // Pandemonius
+    ASSERT_NE(b, nullptr);
+    EXPECT_FALSE(b->elitesOnly);
+}
+
 // --- Find -----------------------------------------------------------------
 
 TEST(RoomAggroRegistryTest, FindsFlaggedBoss)

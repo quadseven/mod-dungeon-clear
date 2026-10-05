@@ -58,8 +58,9 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         return out;
     }
 
-    RoomAggroBoss const* room =
-        RoomAggroRegistry::Find(bot->GetMapId(), next->entry);
+    // Authored row, or a boss-neighbour room (DcTargeting::BossRoom). The raw
+    // form: ActiveBossRoom reads this value.
+    RoomAggroBoss const* room = DcTargeting::BossRoom(bot, context, next->entry);
     if (!room)
     {
         trackedBoss = 0;
@@ -209,6 +210,17 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         {
             ++exTarget;
             continue;
+        }
+        // A boss-neighbour room counts elites only: a normal beside the boss is
+        // a third of a body and not worth a pull of its own.
+        if (room->elitesOnly)
+        {
+            Creature const* c = u->ToCreature();
+            if (!c || !c->isElite())
+            {
+                ++exTarget;
+                continue;
+            }
         }
         // Scripted never-dies mobs are not room trash — clearing a room that
         // contains one would never complete. See DcNeverTargetRegistry.

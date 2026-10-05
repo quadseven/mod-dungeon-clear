@@ -367,6 +367,19 @@ inline constexpr DcSettingDef kDcSettings[] =
     // tank even reached the room.)
     { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
     { "RoomClearTimeout",      DcType::UInt, 180,   0,  600,  true  },
+    // Boss neighbours (RoomAggroRegistry::NeighbourRoom). A boss with no authored
+    // room row still has elites beside it; with this on, the elites within
+    // BossNeighbourRadius of the live boss are cleared first by set-up pulls,
+    // and an elite within the engine's assist radius (+2yd) of the boss comes
+    // with it. Same timeout valve as above. Dynamic pull only, never in raids.
+    // Live (wow-overseer#575): Lady Anacondra's Deviate Guardians made the
+    // first or second kill in 4 of 5 Wailing Caverns wipes there.
+    //
+    // HEROIC: off. Heroic bosses with rooms worth clearing are authored rows,
+    // and a new pre-clear before every heroic boss is a change those tuned runs
+    // have never been measured against.
+    { "ClearBossNeighbours",   DcType::Bool,   1,   0,    1,  true,   0 },
+    { "BossNeighbourRadius",   DcType::Float, 30,  10,   60,  true  },
     // Extra yards added to a room-aggro boss's avoid-sphere when the tank routes
     // AROUND it to reach a trash pack (DcEngageGeometry::AggroSafeApproachPoint).
     // The room-trash EXCLUSION sphere is sized to the boss's exact aggro range +
@@ -605,6 +618,21 @@ inline constexpr DcSettingDef kDcSettings[] =
     // = 1 and gets it for heroic runs only, using the difficulty layer rather than
     // a second setting. See DcPullPlanner::UpdateDynamicPullMode.
     { "PullForceAdvanced",          DcType::Bool,   0,  0,   1,  true  },
+    // Pull size gate (DcRestFloorDecision::ClassifyPullSize). A pack whose weight
+    // is over 1.5x the readiness-scaled ceiling is not pulled whole: the set-up
+    // pull takes it when a ranged tag brings few enough, otherwise the tank holds
+    // out of aggro for PullOversizeWaitSec while the party rests and wanderers
+    // move, then sets it up. A tag over PullOversizeNeverPct of the ceiling is
+    // never pulled (0 = no such cap). Live (wow-overseer#575): 112 of 236 guild
+    // pulls estimated 3 or more mobs, up to 8 Ragefire troggs against a ceiling
+    // of 10 to 11 thirds, and the tank died first.
+    //
+    // HEROIC: off. The heroic ceiling is 2 elites and its packs are authored
+    // around it (scripted stages, en-route avoidance); a hold there would stop
+    // runs the heroic profile already clears. Raids never use it (gated in code).
+    { "PullOversizeHold",           DcType::Bool,   1,  0,   1,  true,   0 },
+    { "PullOversizeWaitSec",        DcType::Float, 45,  5, 300,  true  },
+    { "PullOversizeNeverPct",       DcType::UInt, 200,  0, 1000, true  },
     // CombatSpread pads every proximity reach to model the party drifting to
     // flank/kite during the fight (the camp is a disc, not a point). This is a
     // zone-independent fudge for player movement, NOT a per-zone distance, so one

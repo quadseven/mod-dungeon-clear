@@ -239,6 +239,26 @@ public:
     // advance.
     static std::string DescribePartyLooting(Player* bot);
 
+    // ---- roles and power, read the same way by the gate and the pull verdict ---
+
+    // True when `member` holds the healer seat of its group: the group's
+    // dungeon-finder role for it carries the healer bit (the guild run queues
+    // each member with its seat as its role).
+    static bool IsSeatedHealer(Player* member);
+
+    // The role the rest floors hold `member` to: a tank strategy, else the
+    // healer seat or a heal strategy, else damage.
+    static DcRestFloorDecision::Role RoleOf(Player* member);
+
+    // Whether `member`'s mana is a reason to wait (DcRestFloorDecision::
+    // GatesOnMana over its CURRENT power type and form): warriors, rogues and a
+    // druid tank in any form never; a shapeshifted druid healer yes.
+    static bool GatesOnMana(Player* member);
+
+    // The mana percent of the party's healer (DcRestFloorDecision::HealerManaPct):
+    // the seated healer, else a heal-strategy member, the lowest among several.
+    // Negative when there is none on `bot`'s map.
+    static float HealerManaPct(Player* bot);
 };
 
 #endif  // _DC_PARTY_STATE_H
