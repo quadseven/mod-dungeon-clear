@@ -11,7 +11,7 @@
 // Pure decision kernel for the RAID pre-boss muster — the full-stop between
 // "approach finished" and "engage" that Plan C of the raid-support program
 // specifies: stage the raid at the standoff, top everyone off to full, run a
-// ForceRebuff round (group buffs + the worldbuff simulated consumables), and
+// ForceRebuff round (group buffs), and
 // only then release the pull. Trash flow runs on quorum; THIS gate is strict —
 // every boss opens with everyone staged and topped, or with a logged timeout.
 //

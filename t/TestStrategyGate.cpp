@@ -173,3 +173,37 @@ TEST(DungeonClearStrategyGate, RevivingOutsideDiscardsHeldRun)
 {
     EXPECT_EQ(DecideRunState(false, false, true, true, false), RunStateAction::Disable);
 }
+
+// ---------------------------------------------------------------------------
+// DecideWorldbuff: the simulated flask/food strategy is never granted.
+// ---------------------------------------------------------------------------
+
+using DcStrategyGate::DecideWorldbuff;
+
+TEST(DungeonClearStrategyGate, NeverInstallsWorldbuffOnARaidMap)
+{
+    EXPECT_NE(DecideWorldbuff(/*inDungeon*/ true, /*isRaid*/ true, /*has*/ false), Action::Install);
+    EXPECT_EQ(DecideWorldbuff(true, true, false), Action::None);
+}
+
+TEST(DungeonClearStrategyGate, StripsWorldbuffOnARaidMap)
+{
+    EXPECT_EQ(DecideWorldbuff(true, true, true), Action::Strip);
+}
+
+TEST(DungeonClearStrategyGate, StripsWorldbuffOnADungeonMap)
+{
+    EXPECT_EQ(DecideWorldbuff(true, false, true), Action::Strip);
+}
+
+TEST(DungeonClearStrategyGate, NeverInstallsWorldbuffAnywhere)
+{
+    for (bool inDungeon : { false, true })
+        for (bool isRaid : { false, true })
+            EXPECT_NE(DecideWorldbuff(inDungeon, isRaid, false), Action::Install);
+}
+
+TEST(DungeonClearStrategyGate, LeavesTheOpenWorldAlone)
+{
+    EXPECT_EQ(DecideWorldbuff(false, false, true), Action::None);
+}

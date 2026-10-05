@@ -57,6 +57,15 @@ namespace DcStrategyGate
         return Action::None;
     }
 
+    // Playerbots' `worldbuff` strategy grants simulated flask/food auras nobody
+    // earned. Natural progression: raid buffs come only from real consumables and
+    // real world buffs, so the gate never installs it and strips it from any bot
+    // inside an instance (issue 534). A bot in the open world is left alone.
+    constexpr Action DecideWorldbuff(bool inDungeon, bool /*isRaid*/, bool hasWorldbuff)
+    {
+        return inDungeon && hasWorldbuff ? Action::Strip : Action::None;
+    }
+
     enum class RunStateAction
     {
         Keep,
