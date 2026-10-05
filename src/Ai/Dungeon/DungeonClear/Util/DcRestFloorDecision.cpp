@@ -13,6 +13,12 @@ namespace DcRestFloorDecision
     {
         if (raid)
             return Risk::Hard;
+        if (lowestPartyLevel > 0 && lowestPartyLevel < kLowLevelParty)
+        {
+            bool const easy = !bossPull && nextBossLevel > 0 &&
+                              lowestPartyLevel - nextBossLevel >= kEasyLevelLead;
+            return easy ? Risk::Easy : Risk::LowLevel;
+        }
         if (bossPull)
             return Risk::Boss;
         if (lowestPartyLevel <= 0 || nextBossLevel <= 0)
@@ -41,7 +47,7 @@ namespace DcRestFloorDecision
             out.mp = std::min(out.mp, bossMp);
         }
 
-        if (risk != Risk::Hard && risk != Risk::Boss)
+        if (risk != Risk::Hard && risk != Risk::Boss && risk != Risk::LowLevel)
         {
             bool const easy = risk == Risk::Easy;
             float hp = kNormalHp;
@@ -70,12 +76,36 @@ namespace DcRestFloorDecision
 
         if (m.usesMana && !m.canDrink)
         {
-            if (m.role == Role::Damage)
+            // A low-level caster regenerates its bar in seconds standing still.
+            if (m.role == Role::Damage && risk != Risk::LowLevel)
                 out.mp = std::min(out.mp, kNoDrinkDamageCap);
             else if (m.role == Role::Tank)
                 out.mp = std::min(out.mp, kNoDrinkTankCap);
         }
         return out;
+    }
+
+    bool GatesOnMana(Power currentPower, bool druid, Role role)
+    {
+        if (druid && role == Role::Tank)
+            return false;  // fights on rage; cannot drink in bear form
+        if (currentPower == Power::Mana)
+            return true;
+        return druid && role == Role::Healer;  // shifts out to heal
+    }
+
+    float HealerManaPct(std::vector<HealerCandidate> const& members)
+    {
+        float seated = -1.0f;
+        float strategy = -1.0f;
+        for (HealerCandidate const& m : members)
+        {
+            if (m.seatedHealer && (seated < 0.0f || m.manaPct < seated))
+                seated = m.manaPct;
+            if (m.healStrategy && (strategy < 0.0f || m.manaPct < strategy))
+                strategy = m.manaPct;
+        }
+        return seated >= 0.0f ? seated : strategy;
     }
 
     unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r)

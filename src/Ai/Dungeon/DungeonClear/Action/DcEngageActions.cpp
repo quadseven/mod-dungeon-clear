@@ -1085,8 +1085,8 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
         // (eating and drinking need out-of-combat) would park the tank at the
         // standoff forever. See DcPartyState::GetRestGate.
         DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
-        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
-        bool const lowMana = maxMana > 0 && bot->GetPowerPct(POWER_MANA) < rest.minMp;
+        bool const lowMana = DcPartyState::GatesOnMana(bot) &&
+                             bot->GetPowerPct(POWER_MANA) < rest.minMp;
         bool const lowHealth = bot->GetHealthPct() < rest.minHp;
         lowRes = lowMana || lowHealth;
     }
@@ -1611,16 +1611,17 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
 
 namespace
 {
-    // Is `p` below the given HP / mana rest floors? A non-mana class (warrior /
-    // rogue tank) has GetMaxPower(POWER_MANA) == 0 and is never held on mana. A
-    // 0 threshold means "don't gate on this resource".
+    // Is `p` below the given HP / mana rest floors? Only a member whose mana is a
+    // reason to wait is held on mana: never a warrior or rogue, never a druid
+    // tank (DcPartyState::GatesOnMana). A 0 threshold means "don't gate on this
+    // resource".
     bool BotBelowRest(Player* p, float minHpPct, float minMpPct)
     {
         if (!p)
             return false;
         if (minHpPct > 0.0f && p->GetHealthPct() < minHpPct)
             return true;
-        if (minMpPct > 0.0f && p->GetMaxPower(POWER_MANA) > 0 &&
+        if (minMpPct > 0.0f && DcPartyState::GatesOnMana(p) &&
             p->GetPowerPct(POWER_MANA) < minMpPct)
             return true;
         return false;

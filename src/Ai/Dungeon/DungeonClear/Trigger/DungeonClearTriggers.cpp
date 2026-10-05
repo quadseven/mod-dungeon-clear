@@ -1174,8 +1174,10 @@ bool DungeonClearNeedsDrinkTrigger::IsActive()
     uint32 const target = RestTargetIfActive(bot, context, "RestManaPct");
     if (target == 0)
         return false;
-    // Non-mana classes (warriors/rogues) never drink.
-    if (bot->GetMaxPower(POWER_MANA) == 0)
+    // Only a member whose mana is a reason to wait drinks: never a warrior or
+    // rogue, never a druid tank (it fights on rage and cannot drink in bear
+    // form). See DcPartyState::GatesOnMana.
+    if (!DcPartyState::GatesOnMana(bot))
         return false;
     return bot->GetPowerPct(POWER_MANA) < static_cast<float>(target);
 }

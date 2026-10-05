@@ -4,6 +4,7 @@
  */
 
 #include "DcSmartRest.h"
+#include "DcPartyState.h"
 
 #include "DcSmartRestDecision.h"
 #include "DungeonClearTuning.h"
@@ -41,8 +42,7 @@ namespace
             // Solo tank: a one-member party still smart-rests on itself.
             Member m;
             m.hpPct = leader->GetHealthPct();
-            m.isManaUser = leader->getPowerType() == POWER_MANA &&
-                           leader->GetMaxPower(POWER_MANA) > 0;
+            m.isManaUser = DcPartyState::GatesOnMana(leader);
             if (m.isManaUser)
                 m.manaPct = leader->GetPowerPct(POWER_MANA);
             m.isHealer = PlayerbotAI::IsHeal(leader);
@@ -65,8 +65,7 @@ namespace
 
             Member m;
             m.hpPct = member->GetHealthPct();
-            m.isManaUser = member->getPowerType() == POWER_MANA &&
-                           member->GetMaxPower(POWER_MANA) > 0;
+            m.isManaUser = DcPartyState::GatesOnMana(member);
             if (m.isManaUser)
                 m.manaPct = member->GetPowerPct(POWER_MANA);
             m.isHealer = PlayerbotAI::IsHeal(member);

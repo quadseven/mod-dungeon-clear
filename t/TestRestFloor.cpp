@@ -367,3 +367,121 @@ TEST(DcPullSizeTest, ANeverCapOfZeroOnlyWaits)
     Readiness ready;
     EXPECT_EQ(PullSize::Wait, ClassifyPullSize(24, 24, 6, ready, 0));
 }
+
+// ---- power type: only a mana user waits on mana -----------------------------
+
+namespace
+{
+    // A member as DcPartyState builds it: usesMana from its current power and form.
+    Member Built(Power power, bool druid, Role role)
+    {
+        Member m;
+        m.role = role;
+        m.usesMana = GatesOnMana(power, druid, role);
+        m.canDrink = false;
+        return m;
+    }
+
+    void ExpectNeverBlocksOnMana(Member const& m)
+    {
+        for (Risk r : {Risk::Easy, Risk::Normal, Risk::Boss, Risk::Hard, Risk::LowLevel})
+        {
+            EXPECT_FLOAT_EQ(0.0f, FloorsFor(m, kHp, kMp, r).mp);
+            EXPECT_TRUE(Meets(m, 100.0f, 0.0f, r));
+        }
+    }
+}
+
+TEST(DcRestFloorTest, AWarriorTankNeverBlocksAPullOnMana)
+{
+    // Rage starts at 0 out of combat; waiting for it would wait forever.
+    EXPECT_FALSE(GatesOnMana(Power::Rage, false, Role::Tank));
+    ExpectNeverBlocksOnMana(Built(Power::Rage, false, Role::Tank));
+}
+
+TEST(DcRestFloorTest, ARogueNeverBlocksAPullOnMana)
+{
+    EXPECT_FALSE(GatesOnMana(Power::Energy, false, Role::Damage));
+    ExpectNeverBlocksOnMana(Built(Power::Energy, false, Role::Damage));
+}
+
+TEST(DcRestFloorTest, ABearFormDruidTankNeverBlocksAPullOnMana)
+{
+    // In bear form its mana is hidden and it cannot drink; judged by health only.
+    EXPECT_FALSE(GatesOnMana(Power::Rage, true, Role::Tank));
+    ExpectNeverBlocksOnMana(Built(Power::Rage, true, Role::Tank));
+    // Out of form between pulls it still tanks on rage: its mana stays irrelevant.
+    EXPECT_FALSE(GatesOnMana(Power::Mana, true, Role::Tank));
+    // Health still gates it.
+    EXPECT_FALSE(Meets(Built(Power::Rage, true, Role::Tank), 50.0f, 0.0f, Risk::LowLevel));
+}
+
+TEST(DcRestFloorTest, ManaUsersAndAShapeshiftedDruidHealerStillWaitOnMana)
+{
+    EXPECT_TRUE(GatesOnMana(Power::Mana, false, Role::Healer));   // priest
+    EXPECT_TRUE(GatesOnMana(Power::Mana, false, Role::Damage));   // mage, warlock, hunter
+    EXPECT_TRUE(GatesOnMana(Power::Mana, false, Role::Tank));     // paladin tank
+    EXPECT_TRUE(GatesOnMana(Power::Energy, true, Role::Healer));  // shifts out to heal
+    EXPECT_FALSE(GatesOnMana(Power::Energy, true, Role::Damage)); // cat-form druid
+}
+
+// ---- low level: rest to the configured floor ---------------------------------
+
+TEST(DcRestFloorTest, ALowLevelPartyRestsToTheConfiguredFloor)
+{
+    // wow-overseer#575: casters pulled at a 50% median with no drinks. Under
+    // level 30 the stock floors hold for every role, boss or trash.
+    EXPECT_EQ(Risk::LowLevel, ClassifyRisk(false, false, 18, 20));
+    EXPECT_EQ(Risk::LowLevel, ClassifyRisk(false, false, 18, 15));
+    EXPECT_EQ(Risk::LowLevel, ClassifyRisk(true, false, 19, 20));
+    EXPECT_EQ(Risk::Easy, ClassifyRisk(false, false, 25, 18));    // clearly over it
+    EXPECT_EQ(Risk::Hard, ClassifyRisk(false, true, 18, 20));     // raids unchanged
+
+    Risk const r = ClassifyRisk(true, false, 19, 20);
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(Mage(), kHp, kMp, r).mp);
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(Priest(), kHp, kMp, r).mp);
+    EXPECT_FLOAT_EQ(kHp, FloorsFor(Warrior(), kHp, kMp, r).hp);
+}
+
+TEST(DcRestFloorTest, ALowLevelCasterWithNoDrinkStillRegensToTheFloor)
+{
+    Member mage = Mage();
+    mage.canDrink = false;
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(mage, kHp, kMp, ClassifyRisk(false, false, 18, 20)).mp);
+    // A mana tank with no drink keeps its bounded wait (#12).
+    Member pally;
+    pally.role = Role::Tank;
+    pally.usesMana = true;
+    pally.canDrink = false;
+    EXPECT_FLOAT_EQ(kNoDrinkTankCap,
+                    FloorsFor(pally, kHp, kMp, ClassifyRisk(false, false, 18, 20)).mp);
+}
+
+// ---- whose mana is the healer's ----------------------------------------------
+
+TEST(DcRestFloorTest, TheSeatedHealerIsReadEvenWithoutAHealStrategy)
+{
+    // Cave's Retribution paladin in the healer seat: no heal strategy, so the
+    // gate read 100% at every pull. The seat is read now.
+    HealerCandidate ret;
+    ret.seatedHealer = true;
+    ret.manaPct = 30.0f;
+    HealerCandidate mage;
+    mage.manaPct = 10.0f;
+    EXPECT_FLOAT_EQ(30.0f, HealerManaPct({ret, mage}));
+}
+
+TEST(DcRestFloorTest, TheSeatWinsElseAHealStrategyElseNobody)
+{
+    HealerCandidate seat;
+    seat.seatedHealer = true;
+    seat.manaPct = 70.0f;
+    HealerCandidate shaman;
+    shaman.healStrategy = true;
+    shaman.manaPct = 20.0f;
+    EXPECT_FLOAT_EQ(70.0f, HealerManaPct({seat, shaman}));
+    EXPECT_FLOAT_EQ(20.0f, HealerManaPct({shaman}));
+    HealerCandidate dps;
+    EXPECT_LT(HealerManaPct({dps}), 0.0f);
+    EXPECT_LT(HealerManaPct({}), 0.0f);
+}

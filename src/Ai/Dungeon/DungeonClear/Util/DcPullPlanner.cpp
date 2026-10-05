@@ -578,8 +578,9 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     DcRestFloorDecision::Readiness ready;
     {
         ready.tankHpPct = bot->GetHealthPct();
-        bool haveHealer = false;
-        float healerMp = 100.0f;
+        // The seated healer, else a heal-strategy member: DcPartyState::
+        // HealerManaPct. 100 only when the party truly has nobody to heal.
+        float const healerMp = DcPartyState::HealerManaPct(bot);
         if (Group* group = bot->GetGroup())
         {
             for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
@@ -594,21 +595,16 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                 }
                 if (m->IsInCombat())
                     ++ready.membersFighting;
-                uint32 const maxMp = m->GetMaxPower(POWER_MANA);
-                if (m->getPowerType() == POWER_MANA && maxMp > 0)
+                // Mana only for a member whose mana is a reason to wait: never a
+                // warrior's or rogue's, never a druid tank's (DcPartyState::GatesOnMana).
+                if (DcPartyState::GatesOnMana(m))
                     ready.lowestManaPct = std::min(
                         ready.lowestManaPct,
-                        100.0f * float(m->GetPower(POWER_MANA)) / float(maxMp));
-                if (PlayerbotAI::IsHeal(m) && m->getPowerType() == POWER_MANA && maxMp > 0)
-                {
-                    float const pct = 100.0f * float(m->GetPower(POWER_MANA)) / float(maxMp);
-                    if (!haveHealer || pct < healerMp)
-                        healerMp = pct;
-                    haveHealer = true;
-                }
+                        100.0f * float(m->GetPower(POWER_MANA)) /
+                            float(m->GetMaxPower(POWER_MANA)));
             }
         }
-        ready.healerManaPct = healerMp;
+        ready.healerManaPct = healerMp < 0.0f ? 100.0f : healerMp;
         ready.gateNotReady = !DcPartyState::IsBetweenPullsReady(
             bot, botAI->GetAiObjectContext(), /*requireNoLoot*/ false);
     }

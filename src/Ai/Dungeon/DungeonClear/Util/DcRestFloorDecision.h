@@ -6,6 +6,8 @@
 #ifndef _DC_REST_FLOOR_DECISION_H
 #define _DC_REST_FLOOR_DECISION_H
 
+#include <vector>
+
 // Pure decision kernel: how much HP and mana one member must have before the
 // between-pulls gate lets the party pull again, scaled by how dangerous the
 // next fight is and by what the member is for.
@@ -48,6 +50,14 @@ namespace DcRestFloorDecision
         Normal,  // in between, or the content's level is unknown
         Boss,    // a dungeon boss pull; healer reserve stays high, others can spend
         Hard,    // a raid or a party not clearly above the content
+        // A party whose lowest member is under kLowLevelParty and not clearly
+        // above the content: everyone rests to the configured floors before every
+        // pull, boss or trash. Natural regeneration refills a level 15 to 25 mana
+        // bar in seconds, so a damage dealer with nothing to drink still waits
+        // (kNoDrinkDamageCap does not apply); a mana tank with no drink keeps
+        // kNoDrinkTankCap. Live (wow-overseer#575): 134 of 236 guild pulls went
+        // in with the gate NOT ready, casters at a 50% median.
+        LowLevel,
     };
 
     enum class Role
@@ -60,6 +70,9 @@ namespace DcRestFloorDecision
     // How many levels the lowest party member must be ABOVE the next boss for
     // the content to count as Easy. At or below zero it is Hard.
     constexpr int kEasyLevelLead = 5;
+    // Party level under which pulls are sized by the tank's own health
+    // (TankHpCeilingThirds) and rests go to the configured floors (Risk::LowLevel).
+    constexpr int kLowLevelParty = 30;
     constexpr int kHardLevelLead = 0;
 
     // Mana floors (percent) by role and risk. Each is capped by the configured
@@ -110,7 +123,27 @@ namespace DcRestFloorDecision
         float mp = 0.0f;  // 0 for a member that does not use mana
     };
 
-    // Risk of the next fight. `nextBossLevel` 0 means unknown.
+    // ---- power type: only a mana user waits on mana ---------------------------
+    //
+    // Warriors fight on rage (0 out of combat, never waited for), rogues on
+    // energy (regenerates in seconds), a druid in bear form on rage and in cat
+    // form on energy with its mana bar hidden. A druid TANK fights on rage and
+    // cannot drink in bear form, so it is judged by health alone whatever form it
+    // stands in. A shapeshifted druid HEALER shifts out to heal, so its mana
+    // still counts. Everyone else counts mana exactly when its current power is
+    // mana. Everyone gates on health.
+    enum class Power
+    {
+        Mana,
+        Rage,
+        Energy,
+        Other,  // runic power, focus, none
+    };
+
+    bool GatesOnMana(Power currentPower, bool druid, Role role);
+
+    // Risk of the next fight. `nextBossLevel` 0 means unknown. A party whose
+    // lowest member is under kLowLevelParty is LowLevel unless it is Easy.
     Risk ClassifyRisk(bool bossPull, bool raid, int lowestPartyLevel, int nextBossLevel);
 
     // The floors this member must meet, given the configured floors.
@@ -154,6 +187,24 @@ namespace DcRestFloorDecision
 
     unsigned ReadinessScaledCeilingThirds(unsigned ceilingThirds, Readiness const& r);
 
+    // ---- whose mana is "the healer's" -------------------------------------------
+    //
+    // The readiness gate read healer mana only from members with a heal strategy
+    // and reported 100% when there were none, so a group whose healer seat held a
+    // Retribution paladin read 100% at all 145 Wailing Caverns pull decisions
+    // (wow-overseer#575). The healer is the member SEATED as healer (the group's
+    // dungeon-finder role), else any member running a heal strategy; among
+    // several, the lowest mana. Only members that gate on mana (GatesOnMana) are
+    // candidates. Returns a negative number when there is no healer to read.
+    struct HealerCandidate
+    {
+        bool  seatedHealer = false;
+        bool  healStrategy = false;
+        float manaPct = 100.0f;
+    };
+
+    float HealerManaPct(std::vector<HealerCandidate> const& members);
+
     // The verdict itself: a set-up (Advanced) pull when the pack outweighs the
     // readiness-scaled ceiling, OR when it sits within the edge margin of the
     // unscaled ceiling and the party is not fully ready. A pack at 12/3 against
@@ -176,7 +227,6 @@ namespace DcRestFloorDecision
     // level 19 elites holds two, a 350 health one holds one. Never below one elite
     // and never above the ceiling it was given. Zero inputs (unknown) leave the
     // ceiling alone, and so does a party at or above kLowLevelParty.
-    constexpr int   kLowLevelParty       = 30;
     constexpr float kTankHpPerEliteLevel = 16.0f;
 
     unsigned TankHpCeilingThirds(unsigned ceilingThirds, int partyAverageLevel,
