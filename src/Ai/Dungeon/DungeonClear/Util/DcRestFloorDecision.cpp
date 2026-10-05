@@ -116,4 +116,49 @@ namespace DcRestFloorDecision
             return true;
         return weightThirds * 100 > ceilingThirds * kEdgeMarginPct && !FullyReady(r);
     }
+
+    unsigned TankHpCeilingThirds(unsigned ceilingThirds, int partyAverageLevel,
+                                 unsigned tankMaxHp, int mobLevel)
+    {
+        if (partyAverageLevel <= 0 || partyAverageLevel >= kLowLevelParty)
+            return ceilingThirds;
+        if (tankMaxHp == 0 || mobLevel <= 0 || ceilingThirds <= 3)
+            return ceilingThirds;
+        float const held = 3.0f * static_cast<float>(tankMaxHp) /
+                           (kTankHpPerEliteLevel * static_cast<float>(mobLevel));
+        unsigned const thirds = static_cast<unsigned>(held + 0.5f);
+        if (thirds < 3)
+            return 3;
+        return thirds < ceilingThirds ? thirds : ceilingThirds;
+    }
+
+    PullSize ClassifyPullSize(unsigned weightThirds, unsigned tagThirds,
+                              unsigned ceilingThirds, Readiness const& r,
+                              unsigned neverWholePct)
+    {
+        unsigned const scaled = ReadinessScaledCeilingThirds(ceilingThirds, r);
+        if (weightThirds * 100 <= scaled * kOversizePct)
+            return ShouldSetUp(weightThirds, ceilingThirds, r) ? PullSize::SetUp
+                                                               : PullSize::FacePull;
+        if (neverWholePct > 0 && tagThirds * 100 > ceilingThirds * neverWholePct)
+            return PullSize::TooBig;
+        if (tagThirds > scaled)
+            return PullSize::Wait;
+        return PullSize::SetUp;
+    }
+
+    bool PullSizeHolds(PullSize size, bool waitExpired)
+    {
+        switch (size)
+        {
+            case PullSize::TooBig:
+                return true;
+            case PullSize::Wait:
+                return !waitExpired;
+            case PullSize::FacePull:
+            case PullSize::SetUp:
+                break;
+        }
+        return false;
+    }
 }

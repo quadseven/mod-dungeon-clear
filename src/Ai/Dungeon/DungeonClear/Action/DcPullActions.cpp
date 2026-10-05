@@ -682,16 +682,24 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // 3, so this just keeps the tank planted (no tag, no camp handshake)
             // until the governor flips the verdict (patrol passed -> LEEROY/ADVANCED)
             // or the wait times out. Followers trail normally (pull mode is off).
-            if (pull.decision == DcPullDecisionCode::PatrolHold)
+            //
+            // Size hold (decision == 4) plants the tank the same way, but wherever
+            // the verdict lands (first sight of the pack, outside its aggro) rather
+            // than at commit range: walking up to a pack that is not going to be
+            // pulled only risks pulling it.
+            if (IsPullHoldDecision(pull.decision))
             {
-                // Hold, not Soft: this branch is only reached at commit range,
-                // i.e. the tank arrives here mid escort-spline glide driven by
+                // Hold, not Soft: the tank usually arrives here mid escort-spline
+                // glide driven by
                 // Advance. Stop::Soft is not escort-aware and lets the tank coast
                 // on into the pack it is meant to be waiting out; Stop::Hold kills
                 // the glide (same reason the commit branch below uses Hold).
                 DcMovement::StopBot(bot, DcMovement::Stop::Hold);
-                DC_PULL_TRACE("[DC:{}] pull idle: holding for patrol ({:.1f}yd to pack)",
-                              bot->GetName(), bot->GetExactDist2d(trash));
+                DC_PULL_TRACE("[DC:{}] pull idle: holding for {} ({:.1f}yd to pack)",
+                              bot->GetName(),
+                              pull.decision == DcPullDecisionCode::OversizeHold
+                                  ? "a pack too big to pull whole" : "patrol",
+                              bot->GetExactDist2d(trash));
                 return true;
             }
             // Don't commit until the pack is within reach (the trigger gates on the

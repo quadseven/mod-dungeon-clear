@@ -37,7 +37,18 @@ enum class DcPullDecisionCode : uint32
     Leeroy     = 1,  // straight face-pull; the party rolls in on the tank
     Advanced   = 2,  // LOS pull-to-camp maneuver; the camp machinery owns the party
     PatrolHold = 3,  // hold at commit range, waiting a lone patrol out before pulling
+    OversizeHold = 4,  // hold out of aggro: the pack is too big to pull whole now
+                       // (DcRestFloorDecision::ClassifyPullSize Wait / TooBig)
 };
+
+// The two codes that keep the pull rung live with the behavioural pull bool off:
+// the tank is planted short of the pack and every engage rung stands down. Every
+// reader that used to test PatrolHold alone asks this, so a new hold code cannot
+// be honoured by one rung and walked through by another.
+inline bool IsPullHoldDecision(DcPullDecisionCode d)
+{
+    return d == DcPullDecisionCode::PatrolHold || d == DcPullDecisionCode::OversizeHold;
+}
 
 // All transient state for one advanced/dynamic pull run, owned as a single value
 // (DungeonClearPullContextValue, "dungeon clear pull context") so the whole pull
@@ -359,6 +370,13 @@ struct DcPullContext
                                                  // DungeonClearMath::ShouldWaitForPatrol
                                                  // (decision == 3 surfaces it). Reset
                                                  // when the pack changes.
+    uint32      oversizeWaitSince = 0;           // getMSTime() the current pack first
+                                                 // read Wait (over the oversize line,
+                                                 // tag over the scaled ceiling); 0 =
+                                                 // not waiting. Budget latch for
+                                                 // PullOversizeWaitSec (decision == 4
+                                                 // surfaces it). Reset when the pack
+                                                 // changes.
     uint32      targetLostSince = 0;             // getMSTime() the pull target first
                                                  // resolved null while a Dynamic
                                                  // verdict was standing; 0 = present.
@@ -409,6 +427,7 @@ struct DcPullContext
         decisionTarget  = ObjectGuid::Empty;
         decisionSince   = 0;
         patrolWaitSince = 0;
+        oversizeWaitSince = 0;
         targetLostSince = 0;
     }
 

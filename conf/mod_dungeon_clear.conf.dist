@@ -1180,6 +1180,48 @@ DungeonClear.PullDynamicMaxLeeroyMobs = 5
 DungeonClear.PullForceAdvanced = 0
 
 #
+#    DungeonClear.PullOversizeHold
+#        Dynamic pull only. A pack whose weight is more than 1.5 times the
+#        party's readiness-scaled ceiling is not pulled whole. If a ranged tag
+#        of its nearest mob would bring few enough (the mob, its formation and
+#        one assist hop), the careful Advanced pull takes just that. Otherwise
+#        the tank stops outside the pack's aggro and waits while the party
+#        rests and wandering mobs move, for at most PullOversizeWaitSec, then
+#        sets the pull up. A pack whose tag is over PullOversizeNeverPct of the
+#        ceiling is never pulled. Off on heroic; never used in raids.
+#
+#        Below party average level 30 the ceiling also follows the tank's own
+#        maximum health against the mob's level (one elite per 16 health per
+#        mob level), not only the elite count.
+#
+#        Default: 1 (heroic default 0)
+#
+
+DungeonClear.PullOversizeHold = 1
+
+#
+#    DungeonClear.PullOversizeWaitSec
+#        Dynamic pull only. The longest the tank holds a pack that is too big
+#        to pull whole now (PullOversizeHold) before setting the pull up.
+#
+#        Default: 45.0
+#
+
+DungeonClear.PullOversizeWaitSec = 45.0
+
+#
+#    DungeonClear.PullOversizeNeverPct
+#        Dynamic pull only. A pack whose ranged tag weighs more than this
+#        percent of the ceiling is never pulled: the tank holds short of it and
+#        says so in the log. 0 removes the cap, so such a pack is set up after
+#        PullOversizeWaitSec like any other.
+#
+#        Default: 200
+#
+
+DungeonClear.PullOversizeNeverPct = 200
+
+#
 #    DungeonClear.PullCombatSpread
 #        Dynamic pull only. Yards added to every mob's proximity-aggro reach in the
 #        estimate above, modelling the party drifting to flank/kite/reposition
@@ -1481,6 +1523,10 @@ DungeonClear.SpectateSpeed = 2.5
 #    Actually wait a patrol out. 8s gives up on plenty of real patrol loops, and
 #    giving up means committing into a pack that was about to be smaller.
 # DungeonClear.PullPatrolWaitSec.Heroic = 18.0
+
+#    No size hold: the heroic ceiling is already 2 elites and its packs are
+#    authored around it, so a hold would stop runs the profile already clears.
+# DungeonClear.PullOversizeHold.Heroic = 0
 
 #    En-route pack avoidance, ON for heroic and off for normal. The pull estimate
 #    answers "who joins a fight that STAYS PUT at the target" — the right question

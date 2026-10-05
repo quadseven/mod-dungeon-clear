@@ -28,7 +28,8 @@
 namespace DcPullDecision
 {
     // One verdict per governor outcome. The numeric pull "decision" the addon
-    // reads (0 none, 1 Leeroy, 2 Advanced, 3 patrol-hold) is noted per verdict;
+    // reads (0 none, 1 Leeroy, 2 Advanced, 3 patrol-hold, 4 size-hold) is noted
+    // per verdict;
     // the planner translates a verdict back into apply(mode, decision).
     enum class PullVerdict : std::uint8_t
     {
@@ -39,6 +40,7 @@ namespace DcPullDecision
         ApproachAsLeeroy,  // patrol-contended pack, still approaching -> provisional Leeroy (off, 1)
         PatrolWaitHold,    // at commit range, waiting a lone patrol out -> mode off, decision 3
         Advanced,          // commit Advanced: mode on, decision 2
+        OversizeHold,      // pack too big to pull whole now -> mode off, decision 4
     };
 
     // Flat data resolved by the planner. Booleans only — the planner does the
@@ -66,6 +68,11 @@ namespace DcPullDecision
         bool atCommitRange     = false;  // tank within PullCommitRange of the pack
         bool patrolContended   = false;  // fullCount > ceiling && reducedCount <= ceiling
         bool patrolWaitExpired = false;  // at commit: ShouldWaitForPatrol() said proceed
+
+        // --- pull size (DcRestFloorDecision::ClassifyPullSize) ---
+        // The pack is over the oversize line and PullSizeHolds said hold: wait
+        // out of aggro (Wait, inside its budget) or never pull it whole (TooBig).
+        bool sizeHold = false;
     };
 
     // Returns the verdict the governor should apply (or NoOp to leave the

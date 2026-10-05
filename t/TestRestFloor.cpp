@@ -290,3 +290,80 @@ TEST(DcReadinessCeilingTest, OverTheScaledCeilingIsAlwaysASetUp)
 {
     EXPECT_TRUE(ShouldSetUp(14, 13, Readiness{}));
 }
+
+// ---- low-level ceiling: the tank's body -------------------------------------
+
+TEST(DcPullSizeTest, LowLevelCeilingFollowsTheTanksHealth)
+{
+    // 3 * hp / (16 * mob level) thirds. A 650 health tank against level 19
+    // elites holds two; a 350 health one holds one.
+    EXPECT_EQ(6u, TankHpCeilingThirds(15, 19, 650, 19));
+    EXPECT_EQ(3u, TankHpCeilingThirds(15, 16, 350, 19));
+    // Ragefire: a level 17 warrior at 450 health against level 14 troggs.
+    EXPECT_EQ(6u, TankHpCeilingThirds(10, 17, 450, 14));
+}
+
+TEST(DcPullSizeTest, LowLevelCeilingNeverRaisesNorDropsUnderOneElite)
+{
+    EXPECT_EQ(9u, TankHpCeilingThirds(9, 25, 5000, 20));  // never above the ceiling given
+    EXPECT_EQ(3u, TankHpCeilingThirds(15, 12, 100, 14));  // never under one elite
+}
+
+TEST(DcPullSizeTest, LowLevelCeilingLeavesHigherLevelsAndUnknownsAlone)
+{
+    EXPECT_EQ(15u, TankHpCeilingThirds(15, 30, 350, 19));  // at the line: unchanged
+    EXPECT_EQ(15u, TankHpCeilingThirds(15, 60, 350, 62));
+    EXPECT_EQ(15u, TankHpCeilingThirds(15, 0, 350, 19));   // unknown level
+    EXPECT_EQ(15u, TankHpCeilingThirds(15, 19, 0, 19));    // unknown health
+    EXPECT_EQ(15u, TankHpCeilingThirds(15, 19, 350, 0));   // unknown mob level
+}
+
+// ---- pull size: the third verdict -------------------------------------------
+
+TEST(DcPullSizeTest, UnderTheOversizeLineKeepsTheTwoWayVerdict)
+{
+    Readiness ready;
+    EXPECT_EQ(PullSize::FacePull, ClassifyPullSize(6, 6, 9, ready, kNeverWholePct));
+    EXPECT_EQ(PullSize::SetUp, ClassifyPullSize(12, 12, 9, ready, kNeverWholePct));  // 1.33x
+    EXPECT_EQ(PullSize::SetUp, ClassifyPullSize(9, 9, 6, ready, kNeverWholePct));    // exactly 1.5x
+}
+
+TEST(DcPullSizeTest, RagefireEightTroggsAreNeverPulledWhole)
+{
+    // Run 205: packs of 4 to 8 troggs, the tank at 450 health, ceiling 6 thirds
+    // after the tank cap. Eight troggs clumped inside one assist hop: the tag
+    // brings all 24 thirds, four times the ceiling.
+    Readiness ready;
+    EXPECT_EQ(PullSize::TooBig, ClassifyPullSize(24, 24, 6, ready, kNeverWholePct));
+    EXPECT_EQ(PullSize::TooBig, ClassifyPullSize(15, 15, 6, ready, kNeverWholePct));
+    EXPECT_TRUE(PullSizeHolds(PullSize::TooBig, false));
+    EXPECT_TRUE(PullSizeHolds(PullSize::TooBig, true));
+}
+
+TEST(DcPullSizeTest, AFourTroggClumpWaitsForRestThenIsSetUp)
+{
+    // Healer at 40%: the scaled ceiling is 4 of 6. Twelve thirds is three
+    // times that, the tag is no smaller, and it sits at exactly twice the full
+    // ceiling, so it is held until the party rests, never face-pulled.
+    Readiness tired;
+    tired.healerManaPct = 40.0f;
+    EXPECT_EQ(4u, ReadinessScaledCeilingThirds(6, tired));
+    EXPECT_EQ(PullSize::Wait, ClassifyPullSize(12, 12, 6, tired, kNeverWholePct));
+    EXPECT_TRUE(PullSizeHolds(PullSize::Wait, false));
+    EXPECT_FALSE(PullSizeHolds(PullSize::Wait, true));  // budget spent: set it up
+}
+
+TEST(DcPullSizeTest, ASplitPullTakesOnlyWhatTheTagBrings)
+{
+    // Fifteen thirds counted for a fight on top of the pack, but a ranged tag
+    // of the nearest mob brings two elites: the set-up pull takes those.
+    Readiness ready;
+    EXPECT_EQ(PullSize::SetUp, ClassifyPullSize(15, 6, 6, ready, kNeverWholePct));
+    EXPECT_FALSE(PullSizeHolds(PullSize::SetUp, false));
+}
+
+TEST(DcPullSizeTest, ANeverCapOfZeroOnlyWaits)
+{
+    Readiness ready;
+    EXPECT_EQ(PullSize::Wait, ClassifyPullSize(24, 24, 6, ready, 0));
+}

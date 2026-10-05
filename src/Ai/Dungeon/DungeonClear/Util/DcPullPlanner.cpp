@@ -520,6 +520,22 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     uint32 const count = DungeonClearMath::EstimateAggroCount(
         mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE,
         /*excludeLonePatrollers*/ false, &counted, &weightThirds);
+
+    // What a ranged TAG brings instead: the same estimate with every proximity
+    // reach and the combat spread zeroed, so only the target, its formation and
+    // one assist hop from it count. A set-up pull tags the nearest mob from
+    // outside the pack's aggro and drags it to camp, so neighbours that would
+    // only join a fight standing ON the pack stay where they are. This is the
+    // weight the size gate weighs a split pull by.
+    uint32 tagThirds = 0;
+    {
+        std::vector<DungeonClearMath::DynPullMob> tagMobs = mobs;
+        for (DungeonClearMath::DynPullMob& m : tagMobs)
+            m.aggroReach = 0.0f;
+        DungeonClearMath::EstimateAggroCount(
+            tagMobs, targetIdx, /*combatSpread*/ 0.0f, assistRadius, DC_Z_LEVEL_TOLERANCE,
+            /*excludeLonePatrollers*/ false, nullptr, &tagThirds);
+    }
     // The verdict weighs the counted set, not its raw body count: an elite is a
     // full unit, a normal a third. The ceiling (MaxLeeroyMobs, set in elites) is
     // scaled to the same thirds unit, so a room of weak normal trash no longer
@@ -527,8 +543,9 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // A party of thin bodies (a level-16 tank at 350 health) cannot hold the
     // pack a sturdy one can, so the ceiling shrinks with health per level.
     float healthPerLevel = 0.0f;
+    int partyAverageLevel = 0;
     {
-        uint32 hp = 0, lv = 0;
+        uint32 hp = 0, lv = 0, n = 0;
         if (Group* group = bot->GetGroup())
         {
             for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
@@ -538,15 +555,19 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                     continue;
                 hp += m->GetMaxHealth();
                 lv += m->GetLevel();
+                ++n;
             }
         }
         else
         {
             hp = bot->GetMaxHealth();
             lv = bot->GetLevel();
+            n = 1;
         }
         if (lv)
             healthPerLevel = static_cast<float>(hp) / static_cast<float>(lv);
+        if (n)
+            partyAverageLevel = static_cast<int>(lv / n);
     }
     // READINESS AT THE MOMENT OF THE PULL. The fragility scale above is a fact
     // about the party's bodies; this one is about its state right now: the
@@ -591,15 +612,31 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         ready.gateNotReady = !DcPartyState::IsBetweenPullsReady(
             bot, botAI->GetAiObjectContext(), /*requireNoLoot*/ false);
     }
-    uint32 const fragileCeilingThirds =
-        DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel);
+    // Below DcRestFloorDecision::kLowLevelParty the ceiling also answers to the
+    // TANK's real health against the mob's level, not only to the party's mean:
+    // the leader is the tank (or, with no tank, the member the pack goes to).
+    uint32 const fragileCeilingThirds = DcRestFloorDecision::TankHpCeilingThirds(
+        DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel),
+        partyAverageLevel, bot->GetMaxHealth(), static_cast<int>(target->GetLevel()));
     uint32 const ceilingThirds =
         DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, ready);
     // A pull within the edge margin of the ceiling needs full readiness: 12/3
     // against 13/3 is the party's limit, not a comfortable pack. See
     // DcRestFloorDecision::ShouldSetUp.
-    bool const advanced =
-        DcRestFloorDecision::ShouldSetUp(weightThirds, fragileCeilingThirds, ready);
+    //
+    // The size gate adds the third answer: a pack far over the ceiling is not
+    // pulled whole (DcRestFloorDecision::ClassifyPullSize). Off in raids, whose
+    // ceiling sizes forty bodies, and by PullOversizeHold (off on heroic).
+    bool const sizeGate = DcSettings::GetBool(bot, "PullOversizeHold") &&
+                          !(bot->GetMap() && bot->GetMap()->IsRaid());
+    DcRestFloorDecision::PullSize const size = sizeGate
+        ? DcRestFloorDecision::ClassifyPullSize(
+              weightThirds, tagThirds, fragileCeilingThirds, ready,
+              DcSettings::GetUInt(bot, "PullOversizeNeverPct"))
+        : (DcRestFloorDecision::ShouldSetUp(weightThirds, fragileCeilingThirds, ready)
+               ? DcRestFloorDecision::PullSize::SetUp
+               : DcRestFloorDecision::PullSize::FacePull);
+    bool const advanced = size != DcRestFloorDecision::PullSize::FacePull;
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is
     // actually present, so the second O(n^2) pass is skipped otherwise): re-run the
@@ -626,12 +663,14 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
         out->reducedCount = reducedThirds;
         out->ceiling = ceilingThirds;
         out->bodyCount = count;
+        out->tagCount = tagThirds;
+        out->size = size;
     }
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, weight "
                   "{}/3 vs ceiling {} elites = {}/3 at {:.0f} hp/level, readiness: "
                   "tank {:.0f}% HP, healer {:.0f}% mana, lowest caster {:.0f}% mana, {} fighting, "
-                  "{} down, gate {} -> {}/3, edge margin {}) -> {}",
+                  "{} down, gate {} -> {}/3, edge margin {}, tag {}/3, avg lvl {}) -> {}",
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
                   assistRadius, weightThirds, maxLeeroy, fragileCeilingThirds, healthPerLevel,
@@ -639,7 +678,10 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                   ready.membersFighting, ready.membersDown,
                   ready.gateNotReady ? "NOT ready" : "ready", ceilingThirds,
                   DcRestFloorDecision::FullyReady(ready) ? "cleared" : "applies",
-                  advanced ? "ADVANCED" : "LEEROY");
+                  tagThirds, partyAverageLevel,
+                  size == DcRestFloorDecision::PullSize::TooBig ? "TOO BIG (never whole)"
+                  : size == DcRestFloorDecision::PullSize::Wait ? "WAIT (too big now)"
+                  : advanced ? "ADVANCED" : "LEEROY");
     // On the surprising verdict (Advanced), dump every hostile the estimate saw —
     // distance to the camp, its computed aggro reach, the eligibility gate, and
     // whether it was COUNTED — so a wrong count can be traced to the exact mobs and
@@ -915,10 +957,42 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             }
         }
 
+        // Size hold: a pack too big to pull whole now (Wait) is held out of aggro
+        // for PullOversizeWaitSec while the party rests and wanderers move, then
+        // pulled with the set-up maneuver; one too big ever (TooBig) is held for
+        // good. The forced-Advanced cases (room clear, a target inside another
+        // pack, the A/B lever) are someone else's decision and are never held.
+        bool const sizeWait = cls.size == DcRestFloorDecision::PullSize::Wait ||
+                              cls.size == DcRestFloorDecision::PullSize::TooBig;
+        if (sizeWait && !forceAdv)
+        {
+            uint32 const now = getMSTime();
+            if (pull.oversizeWaitSince == 0)
+                pull.oversizeWaitSince = now ? now : 1;
+            uint32 const waitMs =
+                uint32(DcSettings::GetFloat(bot, "PullOversizeWaitSec") * 1000.0f);
+            bool const expired = getMSTimeDiff(pull.oversizeWaitSince, now) >= waitMs;
+            obs.sizeHold = DcRestFloorDecision::PullSizeHolds(cls.size, expired);
+        }
+        else
+            pull.oversizeWaitSince = 0;
+
         DcPullDecision::PullVerdict const v = DcPullDecision::DecidePull(obs);
         record(obs, v);
         switch (v)
         {
+            case DcPullDecision::PullVerdict::OversizeHold:
+                // Log the edge into the hold only; the re-check runs every 800ms.
+                if (pull.decision != DcPullDecisionCode::OversizeHold)
+                    DC_PULL_INFO("[DC:{}] dynamic: pack {} {} (weight {}/3, tag {}/3 vs "
+                                 "ceiling {}/3) -> HOLDING out of aggro",
+                                 bot->GetName(), target->GetGUID().ToString(),
+                                 cls.size == DcRestFloorDecision::PullSize::TooBig
+                                     ? "is too big to pull whole at all"
+                                     : "is too big to pull whole now",
+                                 cls.fullCount, cls.tagCount, cls.ceiling);
+                apply(false, DcPullDecisionCode::OversizeHold);
+                break;
             case DcPullDecision::PullVerdict::PatrolWaitHold:
                 apply(false, DcPullDecisionCode::PatrolHold);  // hold at commit range; pull mode off, no tag
                 DC_PULL_INFO("[DC:{}] dynamic: pack {} patrol-contended (full {} > "
@@ -964,6 +1038,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
 
     // New pack: size it up fresh and stamp the latch + re-check clock.
     pull.patrolWaitSince = 0;
+    pull.oversizeWaitSince = 0;
     DcPullClassification cls;
     bool const advanced = ClassifyPullAdvanced(botAI, target, &cls) || forceAdv;
     pull.decisionTarget = target->GetGUID();
@@ -980,6 +1055,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {} (weight {}/3 vs ceiling {}/3)",
                  bot->GetName(), target->GetGUID().ToString(),
                  pull.decision == DcPullDecisionCode::PatrolHold ? "WAITING (patrol)"
+                     : pull.decision == DcPullDecisionCode::OversizeHold ? "HOLDING (too big)"
                      : pull.decision == DcPullDecisionCode::Advanced ? "ADVANCED" : "LEEROY",
                  cls.fullCount, cls.ceiling);
 }

@@ -160,6 +160,63 @@ namespace DcRestFloorDecision
     // a ceiling of 13/3 is accepted by a rested party and refused by one that is
     // short of mana or health.
     bool ShouldSetUp(unsigned weightThirds, unsigned ceilingThirds, Readiness const& r);
+
+    // ---- low-level ceiling: what the tank's body can hold ----------------------
+    //
+    // The fragility scale above reads the WHOLE party's health per level. At low
+    // levels the tank's own health is what a pull spends, and the elite count
+    // alone over-states what a level 16 to 20 tank in white gear holds. Live
+    // (wow-overseer#575, runs 190 to 211): Ragefire packs of 4 to 8 troggs and
+    // Wailing Caverns packs of 3 were pulled against ceilings of 10 to 11 thirds,
+    // and the tank or the warlocks died first.
+    //
+    // Below kLowLevelParty (party average level) the ceiling is also capped at
+    // 3 * tankMaxHp / (kTankHpPerEliteLevel * mobLevel) thirds: a tank with 16
+    // health per level of the mob holds one elite. A 650 health tank against
+    // level 19 elites holds two, a 350 health one holds one. Never below one elite
+    // and never above the ceiling it was given. Zero inputs (unknown) leave the
+    // ceiling alone, and so does a party at or above kLowLevelParty.
+    constexpr int   kLowLevelParty       = 30;
+    constexpr float kTankHpPerEliteLevel = 16.0f;
+
+    unsigned TankHpCeilingThirds(unsigned ceilingThirds, int partyAverageLevel,
+                                 unsigned tankMaxHp, int mobLevel);
+
+    // ---- pull size: the third verdict -----------------------------------------
+    //
+    // ShouldSetUp answers face-pull or set-up pull. A set-up (Advanced) pull of a
+    // pack far over the ceiling still drags the whole pack to camp: a human group
+    // at level 18 does not pull eight troggs at once at all. So a pack whose
+    // weight is over kOversizePct of the readiness-scaled ceiling is not pulled
+    // whole:
+    //
+    //   - SetUp when what a ranged tag actually brings (`tagThirds`: the target,
+    //     its formation, and one assist hop, without the proximity aggro of a
+    //     fight on top of the pack) fits the readiness-scaled ceiling. The set-up
+    //     pull tags the nearest mob from range, so that IS the split pull.
+    //   - Wait when the tag is still over the scaled ceiling: hold out of aggro
+    //     while the party rests (the scaled ceiling grows back) and wanderers move.
+    //   - TooBig when the tag is over `neverWholePct` of the UNSCALED ceiling:
+    //     never pulled, however long the wait. 0 disables the cap (TooBig reads
+    //     as Wait).
+    enum class PullSize
+    {
+        FacePull,  // Leeroy
+        SetUp,     // Advanced pull to camp
+        Wait,      // hold out of aggro; bounded by the caller's wait budget
+        TooBig,    // hold; never pulled whole
+    };
+
+    constexpr unsigned kOversizePct   = 150;
+    constexpr unsigned kNeverWholePct = 200;
+
+    PullSize ClassifyPullSize(unsigned weightThirds, unsigned tagThirds,
+                              unsigned ceilingThirds, Readiness const& r,
+                              unsigned neverWholePct);
+
+    // Whether the governor holds the pack this tick. Wait holds until its wait
+    // budget runs out and then becomes a set-up pull; TooBig always holds.
+    bool PullSizeHolds(PullSize size, bool waitExpired);
 }
 
 #endif  // _DC_REST_FLOOR_DECISION_H

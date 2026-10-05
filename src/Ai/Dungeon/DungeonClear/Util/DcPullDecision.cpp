@@ -47,6 +47,11 @@ namespace DcPullDecision
         //    (`patrolContended`), a human holds at commit range and waits it out,
         //    or — while still approaching — walks in as a provisional Leeroy rather
         //    than locking the heavier maneuver 35yd out.
+        // A pack too big to pull whole outranks the patrol gate: waiting a patrol
+        // out cannot make an eight-trogg pack a two-trogg one.
+        if (o.sizeHold)
+            return PullVerdict::OversizeHold;
+
         if (o.advanced && o.patrolWaitEnabled)
         {
             if (o.atCommitRange)

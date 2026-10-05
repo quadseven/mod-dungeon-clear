@@ -708,12 +708,13 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
     }
 
-    // Patrol-wait hold (dynamic pull decision == 3): the pull pipeline is holding
-    // the tank at commit range to let a patrol pass before committing the pull.
-    // Stand down unconditionally so the tank doesn't walk in and engage mid-wait.
-    if (AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold)
+    // Patrol-wait hold (dynamic pull decision == 3) or size hold (4): the pull
+    // pipeline is holding the tank short of the pack, to let a patrol pass or
+    // because the pack is too big to pull whole now. Stand down unconditionally
+    // so the tank doesn't walk in and engage mid-wait.
+    if (IsPullHoldDecision(AI_VALUE(DcPullContext&, DcKey::PullContext).decision))
     {
-        DC_PULL_DEBUG("[DC:{}] blocking-trash: patrol-wait hold -> stand down",
+        DC_PULL_DEBUG("[DC:{}] blocking-trash: patrol or size hold -> stand down",
                       bot->GetName());
         return false;
     }
@@ -788,7 +789,7 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     // hold (decision == 3) is pull-mode-off but likewise pull-pipeline-owned, so
     // stand down there too rather than Leeroy a room mob mid-wait.
     if (AI_VALUE(bool, DcKey::PullModeCurrent) ||
-        AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold)
+        IsPullHoldDecision(AI_VALUE(DcPullContext&, DcKey::PullContext).decision))
         return false;
 
     // Same between-pulls gating the other engage triggers use (loot, party
@@ -1236,7 +1237,7 @@ bool DungeonClearPullTrigger::IsActive()
     bool const eventOwnsTank = DungeonEventExecutor::IsPersistentAnchoredEventActive(context);
     bool const patrolWaiting =
         !eventOwnsTank &&
-        AI_VALUE(DcPullContext&, DcKey::PullContext).decision == DcPullDecisionCode::PatrolHold;
+        IsPullHoldDecision(AI_VALUE(DcPullContext&, DcKey::PullContext).decision);
     // A PULL-BACK boss (BossPullbackRegistry) runs the maneuver REGARDLESS of the
     // player's pull setting. It isn't a tactical preference there: Ghaz'an's home
     // is open water over a 47yd pit, so "pull Off" would mean the walk-in engage

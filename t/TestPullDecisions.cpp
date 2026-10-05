@@ -187,6 +187,56 @@ TEST(DcPullDecision, AdvancedApproachingNotContendedCommits)
     EXPECT_EQ(DecidePull(o), PullVerdict::Advanced);
 }
 
+// ---- Size hold (DcRestFloorDecision::ClassifyPullSize) ----------------------
+
+TEST(DcPullDecision, APackTooBigToPullWholeIsHeld)
+{
+    // wow-overseer#575: Ragefire packs of 4 to 8 troggs became ADVANCED pulls
+    // that dragged the whole pack to camp. The size hold keeps the pull off.
+    PullObservation o = Base();
+    o.advanced = true;
+    o.sizeHold = true;
+    EXPECT_EQ(DecidePull(o), PullVerdict::OversizeHold);
+}
+
+TEST(DcPullDecision, TheSizeHoldOutranksThePatrolGate)
+{
+    PullObservation o = Base();
+    o.advanced = true;
+    o.patrolWaitEnabled = true;
+    o.patrolContended = true;
+    o.atCommitRange = true;
+    o.sizeHold = true;
+    EXPECT_EQ(DecidePull(o), PullVerdict::OversizeHold);
+}
+
+TEST(DcPullDecision, TheSizeHoldNeverBreaksACommittedPull)
+{
+    PullObservation o = Base();
+    o.sameTarget = true;
+    o.currentlyAdvanced = true;
+    o.sizeHold = true;
+    EXPECT_EQ(DecidePull(o), PullVerdict::NoOp);
+
+    PullObservation c = Base();
+    c.inCombat = true;
+    c.sizeHold = true;
+    EXPECT_EQ(DecidePull(c), PullVerdict::NoOp);
+}
+
+TEST(DcPullDecision, AHeldPackIsReCheckedOnTheThrottle)
+{
+    // The hold is not a commit (pull mode stays off), so the same-pack re-check
+    // keeps running and lets the hold resolve once the party is rested.
+    PullObservation o = Base();
+    o.sameTarget = true;
+    o.currentlyAdvanced = false;
+    o.recheckElapsed = true;
+    o.advanced = true;
+    o.sizeHold = false;
+    EXPECT_EQ(DecidePull(o), PullVerdict::Advanced);
+}
+
 // ---------------------------------------------------------------------------
 // DcPullContext::SafetyRelease — the camp-safety valve's per-phase policy.
 // The valve wants "let them fight", not "abandon the maneuver": an in-flight
@@ -302,6 +352,20 @@ TEST(DcPullStandDown, ClearDynamicVerdictDropsAStandingAdvanced)
     // The no-target grace latch too: a stand-down that ends with the pack gone
     // must not hand the governor a countdown that started before the event.
     EXPECT_EQ(pull.targetLostSince, 0u);
+}
+
+TEST(DcPullStandDown, ClearDynamicVerdictDropsASizeHold)
+{
+    DcPullContext pull;
+    pull.decision = DcPullDecisionCode::OversizeHold;
+    pull.oversizeWaitSince = 4242;
+    EXPECT_TRUE(IsPullHoldDecision(pull.decision));
+    pull.ClearDynamicVerdict();
+    EXPECT_EQ(pull.decision, DcPullDecisionCode::None);
+    EXPECT_EQ(pull.oversizeWaitSince, 0u);
+    EXPECT_FALSE(IsPullHoldDecision(pull.decision));
+    EXPECT_TRUE(IsPullHoldDecision(DcPullDecisionCode::PatrolHold));
+    EXPECT_FALSE(IsPullHoldDecision(DcPullDecisionCode::Advanced));
 }
 
 TEST(DcPullStandDown, ClearDynamicVerdictIsIdempotentAndLeavesTheManeuverAlone)
