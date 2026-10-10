@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DCDOORPOLICY_H
 
 #include <cstddef>
+#include <vector>
 
 #include "SharedDefines.h"
 
@@ -117,6 +118,49 @@ namespace DcDoorPolicy
             }
         }
         return !requirementSeen;
+    }
+
+    // Does this lock name a key at all: a LOCK_KEY_ITEM slot with an item entry
+    // (Herod's Door's Scarlet Key, the Shadowforge Gates' Shadowforge Key, the
+    // Shadowforge Braziers' Shadowforge Torch). A KEYED object opens only for a
+    // party member who carries one of its keys or picks the lock: nobody else
+    // can open it for them, and nothing waives it.
+    inline bool LockNamesKey(LockSlot const* slots, std::size_t count)
+    {
+        for (std::size_t i = 0; i < count; ++i)
+            if (slots[i].keyType == LOCK_KEY_ITEM && slots[i].index)
+                return true;
+        return false;
+    }
+
+    // One party member as the opener choice reads it.
+    struct OpenerCandidate
+    {
+        bool self = false;     // the bot the run is driving (the one at the door)
+        bool alive = false;    // alive and in the world, on the object's map
+        bool inReach = false;  // within interaction reach of the object
+        bool canOpen = false;  // CanOpenSlots with this member's own keys and skill
+    };
+
+    // WHO OPENS A KEYED OBJECT: the member who can, the way a player at that
+    // member's keyboard would: alive, within reach of it, and carrying one of
+    // its keys or the lockpicking it asks. The bot itself first, so a door the
+    // tank holds the key for opens as it always did; otherwise the first other
+    // member who qualifies. -1 when nobody does, and the object stays shut.
+    inline int PickOpener(std::vector<OpenerCandidate> const& party)
+    {
+        int other = -1;
+        for (std::size_t i = 0; i < party.size(); ++i)
+        {
+            OpenerCandidate const& c = party[i];
+            if (!c.alive || !c.inReach || !c.canOpen)
+                continue;
+            if (c.self)
+                return static_cast<int>(i);
+            if (other < 0)
+                other = static_cast<int>(i);
+        }
+        return other;
     }
 }
 

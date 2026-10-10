@@ -492,7 +492,7 @@ TEST(DungeonEventVioletHoldTest, SaboteurIsNeverAClearTargetButWaveMobsAre)
 TEST(DungeonEventVioletHoldTest, CellsAndPrisonSealAreScriptOnly)
 {
     // All thirteen are GAMEOBJECT_TYPE_DOOR with lockId 0, so
-    // BotCanOpenDoorLikePlayer reads them as freely clickable. Opening a cell does
+    // DoorOpenerFor reads them as freely clickable. Opening a cell does
     // NOT release its boss (the release rides StartBossEncounter, which clears the
     // unit flags), so a bot click only exposes an inert NON_ATTACKABLE creature
     // the clear would then try to route to; toggling the Prison Seal breaks the

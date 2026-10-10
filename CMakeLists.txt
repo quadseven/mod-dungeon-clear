@@ -888,3 +888,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    IMMUNE_TO_PC and she is NOT_SELECTABLE), and the encounter is won by clicking
 #    a Harpoon Launcher three times, each shot landing 35% of the drake's maximum
 #    health from a World Trigger creature rather than from a player.)
+
+# New files added: Util/DcDoorOpener.{h,cpp}
+#   (who in the party opens a KEYED object: the member who carries its key or
+#    picks its lock, within reach, the bot first. The door-blocked action and
+#    the event executor's UseGO step both ask it; DcEventDoorRegistry's party
+#    key doors no longer open as if the tank held the key. Pure kernel in
+#    DcDoorPolicy.h (LockNamesKey, PickOpener), gtested in t/TestDoorPolicy.cpp.)

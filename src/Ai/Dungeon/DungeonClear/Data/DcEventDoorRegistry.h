@@ -11,7 +11,7 @@
 // Per-ENTRY list of door gameobjects that are SCRIPT-ONLY: the live client
 // refuses a direct player open and ONLY an in-game event opens them, even though
 // their template (an empty lock-85, the same template as plenty of plainly
-// clickable doors) reads as openable to BotCanOpenDoorLikePlayer / DcDoorPolicy.
+// clickable doors) reads as openable to DoorOpenerFor / DcDoorPolicy.
 // A bot generic-Use()ing one of these toggles the server GO state while the
 // client still treats the door as shut — a desync — and it also skips the
 // intended event (e.g. Shadowfang Keep's courtyard door, which only opens when a
@@ -61,7 +61,7 @@ namespace DcEventDoorRegistry
             // DOOR_TYPE_PASSAGE on DATA_PRINCE_TALDARAM, so the script opens it
             // on his death and nothing else ever does — the Arugal's Lair shape.
             // It is lock 0 / startOpen 0 like the rest of this map's doors, so
-            // BotCanOpenDoorLikePlayer reads it as freely clickable, and a bot
+            // DoorOpenerFor reads it as freely clickable, and a bot
             // that force-opened it would unlock the whole lower half of the
             // dungeon (Jedoga, Amanitar, Volazj) with Taldaram still hovering
             // immune in his prison behind it.
@@ -74,7 +74,7 @@ namespace DcEventDoorRegistry
             case 192236:  // Ahn'kahet — Taldaram Door (opens on Taldaram's death)
             // The Violet Hold (map 608) — the Prison Seal and all twelve Cells.
             // Every one of them is GAMEOBJECT_TYPE_DOOR with lockId 0, so
-            // BotCanOpenDoorLikePlayer reads the whole set as freely clickable,
+            // DoorOpenerFor reads the whole set as freely clickable,
             // and every one of them is driven ONLY by instance_violet_hold:
             //
             //   191723 PRISON SEAL — the main door, and the only one spawned
@@ -116,7 +116,7 @@ namespace DcEventDoorRegistry
             // 191296 SJONNIR DOOR is the whole reason map 599 needs automation and
             // the one object here a bot might plausibly try to click: it is
             // GAMEOBJECT_TYPE_DOOR with lockId 0 and template Data0 = 0, so
-            // BotCanOpenDoorLikePlayer reads it as freely clickable, and it is the
+            // DoorOpenerFor reads it as freely clickable, and it is the
             // ONLY closed door on the map — five runs of tp-20260831-205458-3 ended
             // parked in front of it. It is opened by exactly one code path
             // (instance_halls_of_stone's SetData(BRANN_DOOR, DONE), called 3.2s
@@ -161,7 +161,7 @@ namespace DcEventDoorRegistry
             //
             // Both are GAMEOBJECT_TYPE_DOOR, both spawn `state 1` (shut) with
             // Data0 = 0 (startOpen), and both are lockId 0 — so
-            // BotCanOpenDoorLikePlayer reads an empty lock as "any player can
+            // DoorOpenerFor reads an empty lock as "any player can
             // click this" and a door-blocked bot would GameObject::Use() either
             // one. The ONLY thing that legitimately opens them is
             // instance_halls_of_lightning's DoorData firing on
@@ -214,7 +214,7 @@ namespace DcEventDoorRegistry
             // and there is no IsSelfClearing case to consider.
             //
             // A bot must never click either. Both are lock-free
-            // GAMEOBJECT_TYPE_DOORs, so BotCanOpenDoorLikePlayer would happily
+            // GAMEOBJECT_TYPE_DOORs, so DoorOpenerFor would happily
             // open one — and force-opening 192173 hands the party Ymiron's room
             // with Skadi alive (he stays UNIT_FLAG_NOT_SELECTABLE regardless, so
             // the reward is a walk to a boss that cannot be attacked), while
@@ -233,6 +233,28 @@ namespace DcEventDoorRegistry
             // would mask that instead of preventing it.
             case 192173:  // Utgarde Pinnacle — Skadi's Door (opens on Skadi's death)
             case 192174:  // Utgarde Pinnacle — Ymiron's Door (opens on Ymiron's death)
+                return true;
+
+            // BLACKROCK DEPTHS (230): the five doors instance_blackrock_depths
+            // caches and drives. All five ride the empty lock 85 that
+            // CanOpenSlots rates "opens for anyone", so a door-blocked tank
+            // force-opened them and walked past the encounter each one waits
+            // on:
+            //
+            //   170573 / 170574 Golem Room North / South, opened by
+            //     SetData(TYPE_LYCEUM, DONE), which go_shadowforge_brazier
+            //     sets when both Shadowforge Braziers are lit (map-230 event 4).
+            //     Magmus stands behind them.
+            //   170575 Throne Room Doors, opened by SetData(TYPE_IRON_HALL,
+            //     DONE) on Magmus' death. The Emperor stands behind them.
+            //   170576 / 170577 Tomb of the Seven, in and out, shut by
+            //     TYPE_TOMB_OF_SEVEN IN_PROGRESS (Doom'rel's challenge, map-230
+            //     event 3) and opened again on DONE, the seventh dwarf's death.
+            case 170573:  // Blackrock Depths, Golem Room North (the braziers)
+            case 170574:  // Blackrock Depths, Golem Room South (the braziers)
+            case 170575:  // Blackrock Depths, Throne Room Doors (Magmus' death)
+            case 170576:  // Blackrock Depths, Tomb of the Seven, entrance
+            case 170577:  // Blackrock Depths, Tomb of the Seven, exit
                 return true;
             default:
                 return false;
@@ -271,7 +293,7 @@ namespace DcEventDoorRegistry
             //     -> ChromaggusCageDue is false (it waits on muster Ready)
             //     -> the door-blocked trigger's due-event yield never fires
             //     -> lock-free and not IsLockFreeClickable, so
-            //        BotCanOpenDoorLikePlayer refuses -> "can't open ... ->
+            //        DoorOpenerFor refuses -> "can't open ... ->
             //        auto-pausing", and a paused run cannot drive the event
             //        that pulls the lever.
             //
@@ -374,7 +396,7 @@ namespace DcEventDoorRegistry
                 return true;
             // Blackrock Depths — the Giant Doors apparatus (map 230). Four
             // GAMEOBJECT_TYPE_DOOR entries make up one machine, and only the
-            // lever (161460, key-exempt below) is ever meant to be clicked. The
+            // lever (161460, a party key door below) is ever meant to be clicked. The
             // other three are the machine's moving parts: they carry no lock, no
             // ScriptName and no gossip, and their GO state is driven ENTIRELY by
             // the lever's SmartAI (161460 source_type 1: on GO state changed ->
@@ -405,7 +427,7 @@ namespace DcEventDoorRegistry
             // is navigation-invisible; the lever alone drives it.
             case 157923:  // Giant Doors (startOpen=1; closed by the lever)
             case 161461:  // Giant Door Mechanism (the winding wheel, 3.3yd from
-                          // the lever — lock-free, so BotCanOpenDoorLikePlayer
+                          // the lever — lock-free, so DoorOpenerFor
                           // refuses it and it would auto-pause the run standing
                           // AT the objective it is part of)
             case 161462:  // Giant Door Fake Collision (open-state collision hull)
@@ -535,7 +557,7 @@ namespace DcEventDoorRegistry
             //     actually moved. The door-blocked watchdog would fire them
             //     opportunistically, out of order, off a corridor heuristic,
             //     with no verification and no objective row to show for it.
-            //     Both are lock-free, so BotCanOpenDoorLikePlayer would happily
+            //     Both are lock-free, so DoorOpenerFor would happily
             //     let it.
             //
             // As everywhere else on this list, invisibility to navigation is not
@@ -563,7 +585,7 @@ namespace DcEventDoorRegistry
             //
             // A bot must never click one — it has no key and the crystals are
             // not a gate the party solves — so they are correctly NOT
-            // IsKeyExempt. But nothing else stops the blocking-door value reading
+            // IsPartyKeyDoor. But nothing else stops the blocking-door value reading
             // one of the four as a shut gate straddling the route into the
             // chamber and auto-pausing the run at it. That is the Utgarde Keep
             // forge-fire failure exactly: an inverted-state DOOR_TYPE_ROOM lying
@@ -699,7 +721,7 @@ namespace DcEventDoorRegistry
     // cooldown, so a run meets it at most once per side.
     //
     // Nothing about that shape fits the pause machinery: the gates are
-    // lock-free with startOpen=1 (so BotCanOpenDoorLikePlayer already refuses
+    // lock-free with startOpen=1 (so DoorOpenerFor already refuses
     // them, and a bare Use() would fight the script's own DoUseDoorOrButton
     // toggle), and they are shut for a bounded 20s. Run tr-20260816-151006-14
     // walked its tank over the Scarlet-side trigger at Crusaders' Square and
@@ -725,28 +747,39 @@ namespace DcEventDoorRegistry
         }
     }
 
-    // Doors whose KEY requirement we deliberately waive: the bot opens them as
-    // if it held the key, no item in inventory needed.
+    // THE KEYED TRAVERSAL DOORS. Each opens for the party member who carries
+    // its key or picks its lock (DoorOpenerFor -> DcDoorOpener::PartyOpener),
+    // and for nobody else. Until 2026-10 this list WAIVED the key: the bot
+    // opened these doors as if it held one, which a party without the key
+    // cannot do, and broke the operator's natural-play rule (a fix may change
+    // what a character does, never what the game gives it). The list stays as
+    // the record of which keyed doors are plain traversal gates a player opens
+    // by clicking with the key in its bags; the key itself is now required.
+    // A listed door whose lock names no key at all (Stratholme's Scarlet-side
+    // doors, lock 1634, a lone Quick Open slot under GO_FLAG_LOCKED) keeps the
+    // old waiver, because there is no key for anybody to carry.
+    //
+    // Where each key comes from, naturally: the Scarlet Key from Doan's
+    // Strongbox in the Library, the Workshop Key from Electrocutioner 6000,
+    // the Crescent Key from Pusillin in Dire Maul East, the Shadowforge Key
+    // from the quest Dark Iron Legacy, the Key to the City from Magistrate
+    // Barthilas, the Prison Cell Key from High Interrogator Gerstahn, and the
+    // two Gordok keys from Fengus's Chest and Guard Mol'dar inside the run.
     //
     // Scarlet Monastery's Armory (Herod's Door) and Cathedral (Chapel Door)
-    // both sit on lock 299 — Scarlet Key (7146) or lockpicking 175. A tank bot
-    // carries neither, so an autonomous SM run parked at the wing entrance and
-    // auto-paused every time, making those two wings unclearable without a
-    // human handing the key over first. The doors are otherwise ordinary
-    // traversal gates: no ScriptName, no AIName, no instance-script GO-state
-    // control, and nothing behind them the key is meant to gate beyond the
-    // wing itself (the key is a convenience item players farm from the
-    // Graveyard/Library side, not an encounter lock).
+    // both sit on lock 299: the Scarlet Key (7146) or lockpicking 175. The doors
+    // are ordinary traversal gates: no ScriptName, no AIName, no
+    // instance-script GO-state control.
     //
     // Keyed by GO ENTRY, not by lock id, for the same reason as the lists
     // above: a lock id is shared across dungeons (299 covers both the SM wing
     // gates and the Stratholme Scarlet-side doors), so only an entry list can
-    // waive one door without waiving another that happens to share its lock.
+    // name one door without naming another that happens to share its lock.
     //
     // The same argument extends to Dire Maul North, Scholomance and Stratholme
     // (added 2026-08-08): every entry below is a plain traversal gate whose key
-    // is a farmed convenience item, not an encounter lock. Each was verified in
-    // the world DB before being listed, against the checklist this list demands:
+    // is a farmed item, not an encounter lock. Each was verified in the world
+    // DB before being listed, against the checklist this list demands:
     //
     //   * GAMEOBJECT_TYPE_DOOR with a real lock whose only slots are a key item
     //     and/or lockpicking — never a lock-free script seal (see the
@@ -754,8 +787,8 @@ namespace DcEventDoorRegistry
     //   * gameobject_template_addon.flags == 34 (GO_FLAG_LOCKED | NODESPAWN):
     //     no GO_FLAG_NOT_SELECTABLE and no GO_FLAG_INTERACT_COND, so a player
     //     at the keyboard really can click them. (GO_FLAG_LOCKED is exactly
-    //     what DcDoorPolicy suppresses bare-hands opening on, which is why
-    //     these needed an exemption rather than just working.)
+    //     what DcDoorPolicy suppresses bare-hands opening on: only the key
+    //     or the lockpicking opens them.)
     //   * No ScriptName. Where an AIName exists it is SmartGameObjectAI whose
     //     only action is a gossip-hello SET_INST_DATA recording wing progress —
     //     and GameObject::Use() runs that GossipHello BEFORE the lock check, so
@@ -777,7 +810,8 @@ namespace DcEventDoorRegistry
     // by instance_blackrock_depths, so they are script territory whatever their
     // lock says; and the Relic Coffer Doors (lock 639, Relic Coffer Key) are the
     // Vault puzzle's loot cells, not a corridor the run has to walk through.
-    inline bool IsKeyExempt(uint32 goEntry)
+    // (The five BRD doors the instance script drives are on IsScriptOnly.)
+    inline bool IsPartyKeyDoor(uint32 goEntry)
     {
         switch (goEntry)
         {
@@ -800,8 +834,7 @@ namespace DcEventDoorRegistry
 
             // --- Stratholme (map 329) ------------------------------------
             // Scarlet side — lock 299, The Scarlet Key (7146). This is the same
-            // lock as the SM wing gates above; both dungeons are now exempt, but
-            // still one entry at a time.
+            // lock as the SM wing gates above, listed one entry at a time.
             case 175967:  // The Bastion Door
             case 175968:  // Hoard Door
             case 176194:  // Hall of the High Command
@@ -831,15 +864,17 @@ namespace DcEventDoorRegistry
             // the Gordok Brute/Mastiff/Mage-Lord packs. Dire Maul's other two
             // lock-1562 doors (177221, 179550) are West-wing and already open
             // via map-429 events 9 and 10; this one has no event because it sits
-            // off the West boss path — the exemption is its only opener.
+            // off the West boss path: the door-blocked action is its only
+            // opener, for a member carrying the Crescent Key.
             case 179549:  // Dire Maul North — Door (lock 1562, Crescent Key)
 
             // --- Blackrock Depths (map 230) ------------------------------
             // Lock 680 — the Shadowforge Key (11000), or lockpicking 250. The
-            // key drops from Fineous Darkvire, so a party that killed him could
-            // in principle hold it; a bot party never does, and GO_FLAG_LOCKED
-            // (addon flags 34 on every entry below) makes DcDoorPolicy suppress
-            // the lockpicking slots as well. All five are plain traversal gates:
+            // key is the reward of the quest Dark Iron Legacy (3802), for
+            // Fineous Darkvire's hammer laid at the Shrine of Thaurissan.
+            // GO_FLAG_LOCKED (addon flags 34 on every entry below) makes
+            // DcDoorPolicy suppress the bare-hands slots, so only the key or the
+            // lockpicking opens them. All five are plain traversal gates:
             // no ScriptName, no autoCloseTime, no SmartAI (bar the lever's), and
             // instance_blackrock_depths only caches two of their GUIDs — the
             // lever's (GoShadowLockGUID) and the Lyceum's (GoLyceumGUID) — and
@@ -862,8 +897,7 @@ namespace DcEventDoorRegistry
             //   * The Lyceum (x 1312, z ~ -92) is the single door out of the
             //     Shadowforge City side into the back half of the dungeon. Every
             //     boss from Ambassador Flamelash and The Seven through Magmus and
-            //     Emperor Dagran Thaurissan is behind it. No run has reached it
-            //     yet only because 170560 stopped them first.
+            //     Emperor Dagran Thaurissan is behind it.
             //
             // The lever is listed for the same reason the two Gordok doors above
             // are: map-230 event 2 clicks it (UseGO, which bypasses DcDoorPolicy),
@@ -914,11 +948,37 @@ namespace DcEventDoorRegistry
         }
     }
 
+    // THE KEYED OBJECTS A DUNGEON EVENT CLICKS ONLY FOR A MEMBER WHO CARRIES
+    // THE KEY (DungeonEventExecutor's UseGO step). Every party key door above
+    // (map-230 event 2 clicks the Shadowforge Lock lever, map-429 events 2 and
+    // 3 the Gordok doors); Dire Maul West's two Crescent Key doors (177221
+    // after Tendris, 179550 before Immol'thar, lock 1562), which map-429
+    // events 9 and 10 click; and the two Shadowforge Braziers in the Lyceum,
+    // lock 799, the Shadowforge Torch the Shadowforge Flame Keepers drop
+    // (map-230 event 4).
+    //
+    // Not on it yet, and still clicked keyless: Uldaman's Keystone (124371,
+    // lock 359, the Staff of Prehistoria) and Zul'Farrak's Troll Cage (141073,
+    // lock 420, the Executioner's Key). Each needs its key's own way in first.
+    inline bool EventClickNeedsKey(uint32 goEntry)
+    {
+        switch (goEntry)
+        {
+            case 177221:  // Dire Maul West, Crescent Key door after Tendris
+            case 179550:  // Dire Maul West, Crescent Key door before Immol'thar
+            case 174744:  // Blackrock Depths, Shadowforge Brazier, south
+            case 174745:  // Blackrock Depths, Shadowforge Brazier, north
+                return true;
+            default:
+                return IsPartyKeyDoor(goEntry);
+        }
+    }
+
     // The MIRROR-IMAGE special case: door gameobjects carrying NO lock at all
     // (template lockId 0) that a player nonetheless opens by simply clicking
     // them — ordinary traversal gates the dungeon expects you to walk through.
     //
-    // BotCanOpenDoorLikePlayer otherwise refuses every lock-free door, because
+    // DoorOpenerFor otherwise refuses every lock-free door, because
     // lockId 0 is ALSO the shape of script/event seals the bot must not pop
     // (Uldaman's Seal of Khaz'Mul, lock-free and only opened by the keystone
     // event, isn't flagged GO_FLAG_NOT_SELECTABLE until its encounter is done,

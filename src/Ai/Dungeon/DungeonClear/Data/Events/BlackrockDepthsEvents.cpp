@@ -105,6 +105,42 @@ namespace
     // read, not a proximity gate.
     constexpr float BRD_GIANT_DOOR_SCAN = 200.0f;
     constexpr uint32 BRD_GIANT_DOOR_TIMEOUT_MS = 30000;
+
+    // --- The Tomb of the Seven (event 3) ---------------------------------
+    // Doom'rel's spawn point, where his challenge is taken and where the party
+    // holds while the seven dwarves come at it one by one.
+    constexpr uint32 BRD_TYPE_TOMB_OF_SEVEN = 4;  // DataTypes::TYPE_TOMB_OF_SEVEN
+    constexpr uint32 BRD_TOMB_DONE = 3;           // EncounterState::DONE
+    constexpr float BRD_DOOMREL_X = 1281.1f;
+    constexpr float BRD_DOOMREL_Y = -282.2f;
+    constexpr float BRD_DOOMREL_Z = -78.1f;
+    constexpr float BRD_TOMB_RADIUS = 6.0f;
+    // EnsureTombStarted (ObjectiveHookRegistry id 29): takes Doom'rel's
+    // challenge, and takes it again after the tomb resets itself.
+    constexpr uint32 BRD_ENSURE_TOMB_STARTED_HOOK = 29;
+    // Seven dwarves released 30 seconds apart, each fought to the death: a
+    // quarter of an hour is ample, and a stalled tomb resets well inside it.
+    constexpr uint32 BRD_TOMB_TIMEOUT_MS = 900000;
+
+    // --- The Shadowforge Braziers (event 4) ------------------------------
+    // The two braziers in the Lyceum (gameobject 174744 south, 174745 north;
+    // GAMEOBJECT_TYPE_BUTTON, lock 799: the Shadowforge Torch, which the
+    // Shadowforge Flame Keepers in the same hall drop), and the Golem Room door
+    // they open (170573, GO_STATE_ACTIVE = 0 once open). The anchor is the
+    // midpoint between them on the hall's floor; each brazier stands about 50
+    // yards to either side of it, raised on its stand.
+    constexpr uint32 BRD_GO_BRAZIER_SOUTH = 174744;
+    constexpr uint32 BRD_GO_BRAZIER_NORTH = 174745;
+    constexpr uint32 BRD_GO_GOLEM_ROOM_NORTH = 170573;
+    constexpr uint32 BRD_GO_STATE_ACTIVE = 0;
+    constexpr float BRD_BRAZIER_SOUTH_X = 1330.1f;
+    constexpr float BRD_BRAZIER_NORTH_X = 1431.1f;
+    constexpr float BRD_BRAZIER_Y = -508.9f;
+    constexpr float BRD_LYCEUM_FLOOR_Z = -92.0f;
+    constexpr float BRD_BRAZIER_RADIUS = 6.0f;
+    constexpr float BRD_BRAZIER_SEARCH = 15.0f;
+    constexpr float BRD_GOLEM_DOOR_SCAN = 80.0f;
+    constexpr uint32 BRD_GOLEM_DOOR_TIMEOUT_MS = 30000;
 }
 
 void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
@@ -136,7 +172,7 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
     // The Giant Doors at (723.1,-105.9,-71.5) spawn OPEN, and the lower passage
     // they stand in is the way north to Bael'Gar. Closing them is a separate,
     // deliberate act: you walk back to the East Garrison — through the East
-    // Garrison Door (170570, lock 680, waived in DcEventDoorRegistry) — and pull
+    // Garrison Door (170570, lock 680, a party key door in DcEventDoorRegistry), and pull
     // the lever at the far end of the room. That is the whole event.
     //
     // OFF-PATH OPENER, so it is ANCHORED rather than Conditional: the lever is
@@ -145,11 +181,12 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
     // rule). Boss-nav has to deliver the tank to the lever, which is what an
     // objective anchor is for.
     //
-    // The lever needs no key logic here: EventStepKind::UseGameObject calls
-    // GameObject::Use() directly, and the DOOR branch of Use() has no lock check
-    // at all (locks are adjudicated client-side and, for bots, by
-    // BotCanOpenDoorLikePlayer — which the exemption covers for the walk-in
-    // case). Use() -> UseDoorOrButton -> SetLootState(GO_ACTIVATED) fires the
+    // The lever is lock 680, the Shadowforge Key, and GameObject::Use()'s DOOR
+    // branch checks no lock at all (locks are adjudicated client-side), so the
+    // UseGO step hands the click to the party member who carries the key or
+    // picks the lock (DcEventDoorRegistry::EventClickNeedsKey, DcDoorOpener),
+    // and waits while nobody does; DoorOpenerFor holds the walk-in to the same
+    // key. Use() -> UseDoorOrButton -> SetLootState(GO_ACTIVATED) fires the
     // lever's SmartAI chain SYNCHRONOUSLY, which activates the mechanism, the
     // Giant Doors, and the two collision hulls in one go.
     //
@@ -172,6 +209,67 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
             //    visibly instead of latching the objective on a no-op.
             .WaitForGOState(BRD_GO_GIANT_DOORS, BRD_GO_STATE_READY,
                             BRD_GIANT_DOOR_TIMEOUT_MS, BRD_GIANT_DOOR_SCAN)
+            .Build());
+
+    // --- THE TOMB OF THE SEVEN, ANCHORED at Doom'rel ---------------------
+    // The Seven (DungeonEncounter bit 16, credited to Anger'rel) are friendly
+    // and immune until a player takes Doom'rel's challenge (gossip 1947, then
+    // 1950: SelectGossip drills the submenu). instance_blackrock_depths then
+    // shuts the tomb (170576 in, 170577 out), releases a dwarf every 30
+    // seconds to attack the nearest player, and opens both doors again once
+    // the seventh is dead (TYPE_TOMB_OF_SEVEN DONE). Nothing the party pulls:
+    // like the Ring of Law it is come-to-you, so the tank holds at Doom'rel
+    // and the combat engine fights each dwarf as it arrives.
+    //
+    // The state is not monotonic (CheckTombReset puts it back to NOT_STARTED
+    // when a released dwarf stands 15 seconds out of combat), so the start
+    // hook also runs inside the hold, as the Ring of Law's does.
+    //
+    // Both tomb doors are IsScriptOnly: the door-blocked action never opens
+    // them for the party, the encounter does.
+    out.push_back(
+        EventBuilder(230, 3, "The Tomb of the Seven")
+            .Anchored(/*encounterIndex*/ 16)
+            .Persistent()
+            // 1. Stand at Doom'rel.
+            .MoveTo(BRD_DOOMREL_X, BRD_DOOMREL_Y, BRD_DOOMREL_Z, BRD_TOMB_RADIUS)
+            // 2. Take his challenge (Done once TYPE_TOMB_OF_SEVEN is underway).
+            .Custom(BRD_ENSURE_TOMB_STARTED_HOOK)
+            // 3. Hold there until the seventh dwarf is dead, taking the
+            //    challenge again if the tomb resets.
+            .MoveToHoldUntilInstanceData(BRD_DOOMREL_X, BRD_DOOMREL_Y, BRD_DOOMREL_Z,
+                                         BRD_TOMB_RADIUS, BRD_TYPE_TOMB_OF_SEVEN,
+                                         /*minValue*/ BRD_TOMB_DONE)
+            .WhileHolding(BRD_ENSURE_TOMB_STARTED_HOOK)
+            .Timeout(BRD_TOMB_TIMEOUT_MS)
+            .Build());
+
+    // --- THE SHADOWFORGE BRAZIERS, ANCHORED before Magmus ----------------
+    // Magmus waits behind the Golem Room doors (170573 north, 170574 south),
+    // and nothing opens them but both braziers lit: go_shadowforge_brazier
+    // sets TYPE_LYCEUM IN_PROGRESS on the first and DONE on the second, and
+    // DONE opens the doors. Magmus' death then opens the Throne Room for the
+    // Emperor (TYPE_IRON_HALL). All three doors are IsScriptOnly, so before
+    // this the door-blocked action force-opened them and the run walked past
+    // the braziers and Magmus both.
+    //
+    // A brazier is lock 799, the Shadowforge Torch: it lights for the party
+    // member who carries one (DcEventDoorRegistry::EventClickNeedsKey), the
+    // way a player lights it. The Shadowforge Flame Keepers in this hall drop
+    // the torch; a party that has none waits at the brazier until the step
+    // times out, and the Optional event degrades to the door-blocked pause at
+    // the Golem Room doors.
+    out.push_back(
+        EventBuilder(230, 4, "Light the Shadowforge Braziers")
+            .Anchored(/*encounterIndex*/ 17)
+            .Persistent()
+            .Optional()
+            .MoveTo(BRD_BRAZIER_SOUTH_X, BRD_BRAZIER_Y, BRD_LYCEUM_FLOOR_Z, BRD_BRAZIER_RADIUS)
+            .UseGO(BRD_GO_BRAZIER_SOUTH, BRD_BRAZIER_SEARCH)
+            .MoveTo(BRD_BRAZIER_NORTH_X, BRD_BRAZIER_Y, BRD_LYCEUM_FLOOR_Z, BRD_BRAZIER_RADIUS)
+            .UseGO(BRD_GO_BRAZIER_NORTH, BRD_BRAZIER_SEARCH)
+            .WaitForGOState(BRD_GO_GOLEM_ROOM_NORTH, BRD_GO_STATE_ACTIVE,
+                            BRD_GOLEM_DOOR_TIMEOUT_MS, BRD_GOLEM_DOOR_SCAN)
             .Build());
 }
 
@@ -218,7 +316,34 @@ void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
             MakeObjective(OBJ(2), /*encounterIndex*/ 9, 230, "Shadowforge Lock",
                           615.61f, -49.78f, -59.82f, /*arriveRadius*/ 8.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2),
+            // --- Blackrock Depths: the Tomb of the Seven ----------------
+            // Doom'rel's challenge, carrying map-230 event 3. encounterIndex
+            // 16 is the Seven's own bit (credited to Anger'rel), so the
+            // objective-before-boss tie-break sends the tank to Doom'rel
+            // before the Anger'rel anchor, which the challenge makes killable.
+            MakeObjective(OBJ(3), /*encounterIndex*/ 16, 230, "The Tomb of the Seven",
+                          1281.1f, -282.2f, -78.1f, /*arriveRadius*/ 10.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 3),
+            // --- Blackrock Depths: the Shadowforge Braziers -------------
+            // The two braziers that open the Golem Room, carrying map-230
+            // event 4. encounterIndex 17 is Magmus' bit, so the braziers come
+            // before him. Anchored at the midpoint between them; arriveRadius
+            // 60 keeps the tank "arrived" while the event walks it the 50
+            // yards to each brazier and back (the Dire Maul pylon rule).
+            MakeObjective(OBJ(4), /*encounterIndex*/ 17, 230, "Shadowforge Braziers",
+                          1380.6f, -508.9f, -92.0f, /*arriveRadius*/ 60.0f,
+                          /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 4),
         };
+        // THE GRIM GUZZLER'S THREE ARE NOT FOUGHT. Phalanx (9502, bit 12) and
+        // Ribbly Screwspigot (9543, bit 13) stand friendly (factions 35 and
+        // 735) and Plugger Spazzring (9499, bit 14) neutral (674), the bar's
+        // bartender. Phalanx turns hostile only when Private Rocknot, given
+        // three Dark Iron Ales bought from Plugger, breaks the bar door
+        // (npc_rocknot); Ribbly only when a player denounces him (gossip
+        // 1970). Left in the roster each is an anchor the clear can never
+        // satisfy, and the run parks on it as it did on Dire Maul's Cho'Rush
+        // and Maraudon's Rotgrip. The bar's events are a pass of their own.
+        p.remove = {9502, 9543, 9499};
         t.push_back(std::move(p));
     }
 }

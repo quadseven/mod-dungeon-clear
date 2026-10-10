@@ -34,7 +34,7 @@
 //   * GameObject::Use(bot) fires that GOSSIP_HELLO chain server-side with NO lock
 //     check (the gossip-hello path runs before the type switch), so a plain
 //     UseGO(124371) triggers everything — the staff is not functionally required.
-//   * The seal (124372) is already excluded from BotCanOpenDoorLikePlayer's
+//   * The seal (124372) is already excluded from DoorOpenerFor's
 //     force-open (lock-free, not allowlisted in DcEventDoorRegistry), so only
 //     this event opens it.
 //

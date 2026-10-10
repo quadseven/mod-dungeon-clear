@@ -6,6 +6,7 @@
 #include "DungeonEventExecutor.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iterator>
 #include <list>
@@ -24,6 +25,7 @@
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorOpener.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
@@ -35,6 +37,7 @@
 #include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -56,6 +59,13 @@ namespace
     // Range from which a GameObject may legitimately be Use()d (it has no range
     // check of its own — same rule the door system enforces).
     constexpr float DC_EVENT_GO_USE_RANGE = 5.0f;
+    // How near the clicking bot the party member who carries a KEYED object's
+    // key (DcDoorPolicy::LockNamesKey) must stand for the click to be theirs.
+    // The bot walks to DC_EVENT_GO_USE_RANGE of the object; the key holder is
+    // a party member at its side.
+    constexpr float DC_EVENT_KEY_REACH = 15.0f;
+    // One "nobody carries the key" line per this long, while a step waits on it.
+    constexpr uint32 DC_EVENT_KEY_LOG_MS = 30000;
     // Absolute floor for the "the event lapsed" gap (see EventStaleGapMs). Never
     // below a few ticks of headroom even if the playerbots delays are configured
     // down to nothing.
@@ -556,6 +566,43 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                           bot->GetName(), go->GetGUID().ToString(), go->GetName());
                 return StepResult::Running;
             }
+            // A KEYED OBJECT IS CLICKED BY THE MEMBER WHO CARRIES ITS KEY.
+            // GameObject::Use() opens a door or a button with no lock check at
+            // all (the key is the client's gate), so this step used to open the
+            // Shadowforge Lock and the Gordok and Crescent doors for a party
+            // that held no key. For the objects on
+            // DcEventDoorRegistry::EventClickNeedsKey the click is now the key
+            // holder's, or the step waits: its timeout escalates it into the
+            // event's own failure, which is what a party without the key meets.
+            Player* user = bot;
+            DcDoorPolicy::LockSlot slots[DcDoorPolicy::LOCK_SLOT_COUNT];
+            if (DcEventDoorRegistry::EventClickNeedsKey(go->GetEntry()) &&
+                DcDoorOpener::ReadLock(go, slots) &&
+                DcDoorPolicy::LockNamesKey(slots, DcDoorPolicy::LOCK_SLOT_COUNT))
+            {
+                user = DcDoorOpener::PartyOpener(bot, go, slots,
+                                                 go->HasGameObjectFlag(GO_FLAG_LOCKED),
+                                                 DC_EVENT_KEY_REACH);
+                if (!user)
+                {
+                    static std::atomic<uint32> lastKeyLog{0};
+                    uint32 const nowLog = getMSTime();
+                    if (getMSTimeDiff(lastKeyLog.load(), nowLog) >= DC_EVENT_KEY_LOG_MS)
+                    {
+                        lastKeyLog = nowLog;
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[dungeon-clear] {} event-step Use GO {} '{}' is keyed and nobody "
+                                 "in the party within {:.0f}yd carries its key or picks its lock "
+                                 "- holding",
+                                 bot->GetName(), go->GetGUID().ToString(), go->GetName(),
+                                 DC_EVENT_KEY_REACH);
+                    }
+                    return StepResult::Running;
+                }
+                LOG_INFO("playerbots.dungeonclear",
+                         "[dungeon-clear] {} event-step Use GO {} '{}' with the key '{}' carries",
+                         bot->GetName(), go->GetGUID().ToString(), go->GetName(), user->GetName());
+            }
             // REPORT-USE variant: hand the click to the GO's script the way the
             // report-use opcode does, and do NOT also call Use(). GameObject::Use()
             // passes reportUse=false, which for a script that keys its work off the
@@ -568,13 +615,13 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 LOG_DEBUG("playerbots.dungeonclear",
                           "[dungeon-clear] {} event-step ReportUse GO {} '{}'",
                           bot->GetName(), go->GetGUID().ToString(), go->GetName());
-                go->AI()->GossipHello(bot, /*reportUse*/ true);
+                go->AI()->GossipHello(user, /*reportUse*/ true);
                 return StepResult::Done;
             }
             LOG_DEBUG("playerbots.dungeonclear",
                       "[dungeon-clear] {} event-step Use GO {} '{}'",
                       bot->GetName(), go->GetGUID().ToString(), go->GetName());
-            go->Use(bot);
+            go->Use(user);
             return StepResult::Done;
         }
 

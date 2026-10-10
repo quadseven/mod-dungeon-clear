@@ -34,6 +34,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 namespace
 {
@@ -89,6 +90,46 @@ namespace
                      "[DC:{}] Ring of Law started by forged areatrigger {} at ({:.1f},{:.1f},{:.1f})",
                      bot->GetName(), BRD_RING_OF_LAW_TRIGGER, bot->GetPositionX(),
                      bot->GetPositionY(), bot->GetPositionZ());
+        return ObjectiveArriveResult::Running;
+    }
+
+    // --- Blackrock Depths Tomb of the Seven: EnsureTombStarted (hook id 29) ---
+    // The Seven (DungeonEncounter bit 16, credited to Anger'rel) stand friendly
+    // and immune until a player takes Doom'rel's challenge: gossip menu 1947
+    // option 0, then 1950 option 0 (boss_doomrel::sGossipSelect), which sets
+    // TYPE_TOMB_OF_SEVEN IN_PROGRESS and shuts the tomb. Each dwarf then turns
+    // hostile in turn, 30 seconds apart, and attacks the nearest player.
+    //
+    // Like the Ring of Law, the state is not monotonic: instance_blackrock_
+    // depths' CheckTombReset puts it back to NOT_STARTED (every dwarf friendly
+    // and whole again, Doom'rel's gossip back) once 15 seconds pass with a
+    // released dwarf alive and none in combat. Run inside the event's hold
+    // (.WhileHolding), this takes the challenge again from Doom'rel's side
+    // whenever that has happened, and does nothing while the fight is on.
+    constexpr uint32 BRD_TYPE_TOMB_OF_SEVEN = 4;  // DataTypes::TYPE_TOMB_OF_SEVEN
+    constexpr uint32 BRD_TOMB_IN_PROGRESS = 1;     // EncounterState::IN_PROGRESS
+    constexpr uint32 BRD_NPC_DOOMREL = 9039;
+    constexpr float BRD_DOOMREL_SCAN = 40.0f;
+    constexpr float BRD_DOOMREL_TALK_REACH = 10.0f;
+
+    ObjectiveArriveResult EnsureTombStarted(Player* bot, AiObjectContext* /*context*/,
+                                            DungeonBossInfo const& /*info*/)
+    {
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (!inst)
+            return ObjectiveArriveResult::Running;  // not in the instance yet
+        // Started (or the Seven are already dead): the hold takes over.
+        if (inst->GetData(BRD_TYPE_TOMB_OF_SEVEN) >= BRD_TOMB_IN_PROGRESS)
+            return ObjectiveArriveResult::Done;
+        Creature* doomrel = bot->FindNearestCreature(BRD_NPC_DOOMREL, BRD_DOOMREL_SCAN, true);
+        if (!doomrel || !doomrel->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP) ||
+            !bot->IsWithinDistInMap(doomrel, BRD_DOOMREL_TALK_REACH))
+            return ObjectiveArriveResult::Running;  // the hold walks the tank back to him
+        if (DungeonEventExecutor::SelectGossip(bot, doomrel, 0) &&
+            inst->GetData(BRD_TYPE_TOMB_OF_SEVEN) >= BRD_TOMB_IN_PROGRESS)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] the Tomb of the Seven is challenged again at Doom'rel",
+                     bot->GetName());
         return ObjectiveArriveResult::Running;
     }
 
@@ -808,6 +849,7 @@ namespace
             Reg::AddHook(t, 10, &SendGhazanToPlatform);  // The Underbog — send Ghaz'an up his ramp (AT 4302)
             Reg::AddHook(t, 13, &HadronoxHasWebbedTheDoors);  // Azjol-Nerub — hold until Hadronox webs the doors
             Reg::AddHook(t, 14, &HoldNovosCamp);         // Drak'Tharon Keep — hold the Novos camp through phase 1
+            Reg::AddHook(t, 29, &EnsureTombStarted);     // BRD Tomb of the Seven: retake Doom'rel's challenge after a reset
 
             // Controllers, one TU each. Called explicitly (not self-registering)
             // because this module is a static lib: a TU whose only output is
