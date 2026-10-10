@@ -3,6 +3,8 @@
  * and/or modify it under version 3 of the License, or (at your option), any later version.
  */
 
+#include <array>   // std::array must be complete before GridTerrainData.h (core header omits it)
+
 #include "DcBreath.h"
 
 #include "Optional.h"          // Optional<> used (unguarded) by GridTerrainData.h
