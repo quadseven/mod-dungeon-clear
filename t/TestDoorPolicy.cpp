@@ -9,6 +9,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "DcDoorPolicy.h"
+#include "DcLootPolicy.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
 // doors that drove the door-handling overhaul:
@@ -545,4 +546,15 @@ TEST(DcDoorPolicyTest, BlackrockDepthsEncounterDoorsAreScriptOnly)
     EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170577));  // Tomb of the Seven, out
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558)); // the Lyceum: a key door
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170560)); // a Shadowforge Gate
+}
+
+// The chests that hold a door key are looted even with IgnoreChests on: the
+// Scarlet Key comes from Doan's Strongbox in the Library, the Gordok Courtyard
+// Key from Fengus's Chest. Any other chest is still skipped.
+TEST(DcDoorPolicyTest, TheChestsThatHoldADoorKeyAreOpened)
+{
+    EXPECT_TRUE(DcLootPolicy::IsDoorKeyChest(103821));   // Doan's Strongbox
+    EXPECT_TRUE(DcLootPolicy::IsDoorKeyChest(179516));   // Fengus's Chest
+    EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(0));
+    EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(174554));  // BRD Relic Coffer Door
 }

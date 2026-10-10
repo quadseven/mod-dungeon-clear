@@ -32,6 +32,18 @@ public:
     // loot. Sticky entries clear only with the whole list (DisableDungeonClear).
     static constexpr uint32 LOOT_SKIP_STICKY = 0u;
 
+    // THE CHESTS THAT HOLD A DOOR KEY are opened even with
+    // DungeonClear.IgnoreChests on, because the key is the natural way through
+    // a keyed door: Doan's Strongbox (103821) beside Arcanist Doan in the
+    // Library holds the Scarlet Key for the Armory and the Cathedral, every
+    // time, and Fengus's Chest (179516) in Dire Maul North the Gordok
+    // Courtyard Key. A party of players opens both on the way past; a bot
+    // party that skipped them could never earn the key it now needs.
+    static constexpr bool IsDoorKeyChest(uint32 goEntry)
+    {
+        return goEntry == 103821 || goEntry == 179516;
+    }
+
     // --- Per-corpse loot give-up list ---------------------------------------
     // Prunes expired give-up entries and strips the still-live ones from the
     // stock "available loot" stack, additionally clearing "loot target" when it
