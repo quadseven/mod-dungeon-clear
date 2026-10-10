@@ -1010,6 +1010,65 @@ TEST(DungeonEventIntegrityTest, RingOfLawGarrisonsTheCentreAndCanRestartItself)
         << "the Ring of Law hold references unregistered hook " << hold->hookId;
 }
 
+// The BRD Tomb of the Seven (event 3): Doom'rel's challenge taken at his
+// spawn, then a come-to-you hold until TYPE_TOMB_OF_SEVEN (4) reads DONE (3),
+// with the start hook running inside the hold because CheckTombReset puts the
+// tomb back to NOT_STARTED when a released dwarf idles 15 seconds.
+TEST(DungeonEventIntegrityTest, TombOfTheSevenIsChallengedAndHeldUntilDone)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 230, /*eventId*/ 3);
+    ASSERT_NE(ev, nullptr) << "Blackrock Depths (230) event 3 (Tomb of the Seven) is missing";
+    EXPECT_EQ(ev->activation, EventActivation::Anchored);
+    EXPECT_TRUE(ev->persistent) << "a dwarf fight is a combat gap; it must not rewind the event";
+
+    bool challenged = false;
+    EventStep const* hold = nullptr;
+    for (EventStep const& s : ev->steps)
+    {
+        if (s.kind == EventStepKind::Custom && s.hookId == 29u)
+            challenged = true;
+        if (s.kind == EventStepKind::MoveTo && s.instanceDataId >= 0)
+            hold = &s;
+    }
+    EXPECT_TRUE(challenged) << "the event must take Doom'rel's challenge (hook 29)";
+    ASSERT_NE(hold, nullptr) << "the tomb must hold on TYPE_TOMB_OF_SEVEN";
+    EXPECT_EQ(hold->instanceDataId, 4) << "TYPE_TOMB_OF_SEVEN";
+    EXPECT_EQ(hold->instanceDataMin, 3u) << "DONE: the seventh dwarf dead";
+    EXPECT_EQ(hold->hookId, 29u) << "a reset tomb must be challenged again from inside the hold";
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(29));
+}
+
+// The BRD Shadowforge Braziers (event 4): both braziers lit, then the Golem
+// Room door open, before Magmus. The braziers ride lock 799, so the click is a
+// torch holder's (EventClickNeedsKey).
+TEST(DungeonEventIntegrityTest, ShadowforgeBraziersAreLitBeforeTheGolemRoom)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 230, /*eventId*/ 4);
+    ASSERT_NE(ev, nullptr) << "Blackrock Depths (230) event 4 (Shadowforge Braziers) is missing";
+    EXPECT_EQ(ev->activation, EventActivation::Anchored);
+    EXPECT_TRUE(ev->persistent);
+
+    int south = -1, north = -1, door = -1;
+    for (int i = 0; i < static_cast<int>(ev->steps.size()); ++i)
+    {
+        EventStep const& s = ev->steps[i];
+        if (s.kind == EventStepKind::UseGameObject && s.goEntry == 174744u)
+            south = i;
+        if (s.kind == EventStepKind::UseGameObject && s.goEntry == 174745u)
+            north = i;
+        if (s.kind == EventStepKind::WaitForGameObjectState && s.goEntry == 170573u)
+            door = i;
+    }
+    ASSERT_GE(south, 0) << "the south brazier must be lit";
+    ASSERT_GE(north, 0) << "the north brazier must be lit";
+    ASSERT_GE(door, 0) << "the event must wait for the Golem Room door to open";
+    EXPECT_LT(south, door);
+    EXPECT_LT(north, door);
+    EXPECT_EQ(ev->steps[door].wantState, 0u) << "GO_STATE_ACTIVE: open";
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174744u));
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174745u));
+}
+
 // The Black Morass wave driver, pinned to its exact shape. Every one of these
 // properties was a live failure before it was set, so a future edit that drops
 // one should fail loudly with intent rather than as a silent behaviour change.
@@ -1289,6 +1348,7 @@ TEST(DungeonEventIntegrityTest, EveryAuthoredObjectiveHookIdIsRegistered)
         { 10, "The Underbog — SendGhazanToPlatform" },
         { 12, "Black Morass — BmDriveWave (BlackMorassDriver.cpp)" },
         { 13, "Azjol-Nerub — HadronoxHasWebbedTheDoors" },
+        { 29, "BRD Tomb of the Seven: EnsureTombStarted" },
     };
 
     for (Expected const& e : kHooks)
@@ -1955,9 +2015,9 @@ TEST(DungeonEventIntegrityTest, DrakTharonRitualCrystalsAreNavigationInvisible)
         EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(crystal))
             << "Ritual Crystal " << crystal << " left flagged reads as a shut gate on "
                "the route into the Novos chamber and auto-pauses the run there";
-        // NOT key-exempt: the crystals are not a gate the party solves, and a bot
+        // NOT a party key door: the crystals are not a gate the party solves, and a bot
         // clicking one would fight the instance script for the GO state.
-        EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(crystal))
+        EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(crystal))
             << "Ritual Crystal " << crystal << " must never be clicked by a bot";
     }
 }

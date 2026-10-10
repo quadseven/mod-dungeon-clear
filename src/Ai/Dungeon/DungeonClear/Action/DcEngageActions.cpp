@@ -53,6 +53,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorOpener.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
@@ -108,7 +109,7 @@ namespace
 
     // Once parked at a blocking door, open it with GameObject::Use (the exact
     // path a client right-click takes) — but ONLY when the bot is actually
-    // entitled to, as decided by BotCanOpenDoorLikePlayer (a faithful mirror
+    // entitled to, as decided by DoorOpenerFor (a faithful mirror
     // of the core's lock adjudication; see DcDoorPolicy.h for the rules). The
     // raw GameObject::Use door branch toggles the GO state with no lock and no
     // script/event check, so calling it on the wrong door desyncs the
@@ -152,9 +153,9 @@ namespace
     // engage-trash target is a separate value, reset alongside OnBossChange at the
     // call site in Execute.
 
-    // True only when the bot is genuinely ENTITLED to open this door — i.e. a
-    // human player at this keyboard could open it by clicking. The slot
-    // adjudication mirrors the core's Spell::CanOpenLock and lives in
+    // WHO IN THE PARTY IS ENTITLED TO OPEN THIS DOOR, or nullptr when nobody
+    // is: a human player at that member's keyboard could open it by clicking.
+    // The slot adjudication mirrors the core's Spell::CanOpenLock and lives in
     // DcDoorPolicy::CanOpenSlots (pure, unit-tested); see that header for the
     // full rules. The short version:
     //
@@ -166,39 +167,35 @@ namespace
     //     a bare-hands locktype slot (Quick/Slow Open, e.g. lock 86) opens for
     //     anyone — these were wrongly refused before, which is why the tank
     //     paused at every plain Deadmines door.
-    //   - Key items (Scarlet Key, Key to the City) and lockpicking open their
-    //     locks exactly as a player would — EXCEPT for the doors on
-    //     DcEventDoorRegistry::IsKeyExempt (the SM Armory/Cathedral wing gates
-    //     plus every keyed door in Scholomance, Stratholme and Dire Maul
-    //     North), where the key requirement is deliberately waived so a keyless
-    //     tank can still clear the dungeon.
+    //   - A KEYED lock (DcDoorPolicy::LockNamesKey: the Scarlet Key, the
+    //     Workshop Key, the Crescent Key, the Shadowforge Key, the Key to the
+    //     City) opens for the party member who carries one of its keys or has
+    //     the lockpicking it asks, at the bot's side (within DC_DOOR_USE_RANGE
+    //     of it), and that member is the one who opens it
+    //     (DcDoorOpener::PartyOpener, the bot first). Nothing waives a key: the doors on
+    //     DcEventDoorRegistry::IsPartyKeyDoor used to open as if the tank held
+    //     it, which a party without the key cannot do.
     //   - GO_FLAG_LOCKED suppresses the bare-hands slots: flagged gates demand
     //     the real key/skill (Strat's King's Square Gate carries a Quick Open
-    //     slot yet requires the Key to the City — that gate is now key-exempt,
-    //     but the rule still governs every flagged gate not on the list).
+    //     slot yet requires the Key to the City).
     //
     // This remains the gate that keeps the tank from force-opening doors it
     // has no business opening: GameObject::Use's door branch toggles the GO
     // state with NO lock and NO script/event check, so it must only ever be
-    // called on a door this returns true for.
-    bool BotCanOpenDoorLikePlayer(Player* bot, GameObject* go)
+    // called on a door this names an opener for, by that opener.
+    Player* DoorOpenerFor(Player* bot, GameObject* go)
     {
         if (!bot || !go)
-            return false;
+            return nullptr;
         GameObjectTemplate const* info = go->GetGOInfo();
         if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
-            return false;
+            return nullptr;
         // Not-selectable / can't-interact doors are driven purely by the
         // instance/boss scripting (encounter gates, "kill the boss" doors).
         // A player can't click them; never force them.
         if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE) ||
             go->HasGameObjectFlag(GO_FLAG_INTERACT_COND))
-            return false;
-
-        // Key-exempt traversal gates (SM Armory/Cathedral): treated as if the
-        // bot held the key. See DcEventDoorRegistry::IsKeyExempt.
-        if (DcEventDoorRegistry::IsKeyExempt(go->GetEntry()))
-            return true;
+            return nullptr;
 
         uint32 const lockId = info->GetLockId();
         if (!lockId)
@@ -207,30 +204,23 @@ namespace
             // script/event seals (Uldaman's Seal of Khaz'Mul) the bot must not
             // pop. Default to refusing; open only entries the registry verifies
             // are ordinary player-clickable doors (Scholomance's Iron Gates).
-            return DcEventDoorRegistry::IsLockFreeClickable(go->GetEntry());
+            return DcEventDoorRegistry::IsLockFreeClickable(go->GetEntry()) ? bot : nullptr;
         }
-
-        LockEntry const* lock = sLockStore.LookupEntry(lockId);
-        if (!lock)
-            return false;           // unknown lock — don't force it open
 
         DcDoorPolicy::LockSlot slots[DcDoorPolicy::LOCK_SLOT_COUNT];
-        for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
-        {
-            slots[i].keyType = lock->Type[i];
-            slots[i].index = lock->Index[i];
-            slots[i].requiredSkill = lock->Skill[i];
-        }
+        if (!DcDoorOpener::ReadLock(go, slots))
+            return nullptr;  // unknown lock: don't force it open
 
-        int32 const lockpick = bot->HasSkill(SKILL_LOCKPICKING)
-                                   ? static_cast<int32>(bot->GetSkillValue(SKILL_LOCKPICKING))
-                                   : -1;
-        return DcDoorPolicy::CanOpenSlots(
-            slots, DcDoorPolicy::LOCK_SLOT_COUNT,
-            go->HasGameObjectFlag(GO_FLAG_LOCKED),
-            // Keys aren't consumed by opening, so possession is the requirement.
-            [bot](uint32 itemEntry) { return bot->HasItemCount(itemEntry, 1); },
-            lockpick);
+        // A listed traversal door whose lock names no key at all (Stratholme's
+        // Scarlet-side doors, lock 1634, a lone Quick Open slot under
+        // GO_FLAG_LOCKED) keeps its old waiver: there is no key for anybody to
+        // carry. Every listed door that does name one is held to it below.
+        if (DcEventDoorRegistry::IsPartyKeyDoor(go->GetEntry()) &&
+            !DcDoorPolicy::LockNamesKey(slots, DcDoorPolicy::LOCK_SLOT_COUNT))
+            return bot;
+
+        return DcDoorOpener::PartyOpener(bot, go, slots, go->HasGameObjectFlag(GO_FLAG_LOCKED),
+                                         DC_DOOR_USE_RANGE);
     }
 
     // Returns the stored sticky engage-trash target if it's still a valid pull
@@ -2473,9 +2463,14 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // via their event — a generic Use() here desyncs the client and skips
         // the event. Never auto-open a listed door; fall through to the pause /
         // (preferably) let the dungeon-event free the prisoner that opens it.
-        bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
-                             !DcEventDoorRegistry::IsScriptOnly(door->GetEntry()) &&
-                             BotCanOpenDoorLikePlayer(bot, door);
+        // The member who opens it: the bot, or the party member who carries
+        // the key (DoorOpenerFor). None means the door stays shut for this
+        // party, whatever its lock asks.
+        Player* const opener = DC_ATTEMPT_DOOR_OPEN && door &&
+                                       !DcEventDoorRegistry::IsScriptOnly(door->GetEntry())
+                                   ? DoorOpenerFor(bot, door)
+                                   : nullptr;
+        bool const canOpen = opener != nullptr;
         bool timedOut = false;
 
         if (canOpen)
@@ -2559,9 +2554,10 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                     getMSTimeDiff(doorAppr.lastDoorUseMs, now) >= DC_DOOR_REUSE_MS)
                 {
                     LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] door-blocked: opening {} '{}' as a player would (entitled)",
-                             bot->GetName(), door->GetGUID().ToString(), door->GetName());
-                    door->Use(bot);
+                             "[DC:{}] door-blocked: '{}' opens {} '{}' as a player would (entitled)",
+                             bot->GetName(), opener->GetName(), door->GetGUID().ToString(),
+                             door->GetName());
+                    door->Use(opener);
                     doorAppr.lastDoorUseGuid = door->GetGUID();
                     doorAppr.lastDoorUseMs = now;
                 }

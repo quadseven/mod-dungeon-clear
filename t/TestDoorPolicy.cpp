@@ -9,6 +9,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "DcDoorPolicy.h"
+#include "DcLootPolicy.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
 // doors that drove the door-handling overhaul:
@@ -56,6 +57,32 @@ namespace
                                            {LOCK_KEY_SKILL, LOCKTYPE_QUICK_OPEN, 0},
                                            {LOCK_KEY_SKILL, LOCKTYPE_QUICK_CLOSE, 0},
                                            {LOCK_KEY_SKILL, LOCKTYPE_BLASTING, 300}});
+    // lock 680: BRD Shadowforge Gates / Lyceum / lever: Shadowforge Key
+    //              (11000) or picklock 250 (+ bare-hands and blasting slots).
+    LockFixture const LOCK_680 = MakeLock({{LOCK_KEY_ITEM, 11000, 0},
+                                           {LOCK_KEY_SKILL, LOCKTYPE_PICKLOCK, 250},
+                                           {LOCK_KEY_SKILL, LOCKTYPE_QUICK_OPEN, 0},
+                                           {LOCK_KEY_SKILL, LOCKTYPE_QUICK_CLOSE, 0},
+                                           {LOCK_KEY_SKILL, LOCKTYPE_BLASTING, 250}});
+    // lock 799: BRD Shadowforge Braziers: the Shadowforge Torch (11885) only.
+    LockFixture const LOCK_799 = MakeLock({{LOCK_KEY_ITEM, 11885, 0}});
+    // lock 1634: Strat Scarlet-side doors: a lone Quick Open slot, no key.
+    LockFixture const LOCK_1634 = MakeLock({{LOCK_KEY_SKILL, LOCKTYPE_QUICK_OPEN, 0}});
+
+    bool NamesKey(LockFixture const& f)
+    {
+        return DcDoorPolicy::LockNamesKey(f.slots, DcDoorPolicy::LOCK_SLOT_COUNT);
+    }
+
+    DcDoorPolicy::OpenerCandidate Member(bool self, bool alive, bool inReach, bool canOpen)
+    {
+        DcDoorPolicy::OpenerCandidate c;
+        c.self = self;
+        c.alive = alive;
+        c.inReach = inReach;
+        c.canOpen = canOpen;
+        return c;
+    }
 
     bool CanOpen(LockFixture const& f, bool lockEnforced,
                  uint32 heldItem = 0, int32 lockpick = -1)
@@ -135,87 +162,84 @@ TEST(DcDoorPolicyTest, ZeroItemIndexStillARequirement)
     EXPECT_FALSE(CanOpen(oddLock, /*lockEnforced*/ false));
 }
 
-// --- Key-exempt allowlist ---------------------------------------------------
+// --- Party key doors ----------------------------------------------------------
 //
 // SM's Armory (Herod's Door) and Cathedral (Chapel Door) both ride lock 299,
 // which the policy above correctly refuses for a keyless, non-rogue tank. The
-// registry waives that requirement per GO ENTRY so those wings stay clearable.
-TEST(DcDoorPolicyTest, ScarletMonasteryWingDoorsAreKeyExempt)
+// registry names them per GO ENTRY as keyed traversal gates a party member
+// carrying the Scarlet Key opens; it no longer waives the key.
+TEST(DcDoorPolicyTest, ScarletMonasteryWingDoorsArePartyKeyDoors)
 {
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(101854));   // Herod's Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(104591));   // Chapel Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(101854));   // Herod's Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(104591));   // Chapel Door
 
     // Not a blanket amnesty: everything else still goes through CanOpenSlots.
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(104600));  // High Inquisitor's (lock 85 already)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(18895));   // SFK courtyard (script-only)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175611));  // Scholomance Iron Gate
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(0));
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(104600));  // High Inquisitor's (lock 85 already)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(18895));   // SFK courtyard (script-only)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(175611));  // Scholomance Iron Gate
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(0));
 }
 
-// Every keyed DOOR in Dire Maul North, Scholomance and Stratholme is exempt too
+// Every keyed DOOR in Dire Maul North, Scholomance and Stratholme is listed too
 // (2026-08-08). All are plain traversal gates on a key/lockpicking lock with
-// GO_FLAG_LOCKED set — which is precisely what CanOpenSlots refuses — and none
-// is driven by an instance script; see the registry header for the per-door
-// verification. Without the waiver a keyless party auto-paused at each of them.
-TEST(DcDoorPolicyTest, ScholomanceStratholmeAndDireMaulNorthKeyedDoorsAreExempt)
+// GO_FLAG_LOCKED set, and none is driven by an instance script; see the
+// registry header for the per-door verification.
+TEST(DcDoorPolicyTest, ScholomanceStratholmeAndDireMaulNorthKeyedDoorsArePartyKeyDoors)
 {
     // Scholomance: the one keyed door inside, plus Caer Darrow's entrance door.
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175167));   // Viewing Room Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(174626));   // Scholomance Door (map 0)
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175167));   // Viewing Room Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(174626));   // Scholomance Door (map 0)
 
     // Stratholme, Scarlet side (lock 299, The Scarlet Key) — these used to be
-    // the reason the exemption was kept per-entry rather than per-lock.
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175967));   // The Bastion Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175968));   // Hoard Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(176194));   // Hall of the High Command
+    // the reason the list is kept per-entry rather than per-lock.
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175967));   // The Bastion Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175968));   // Hoard Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(176194));   // Hall of the High Command
 
     // Stratholme, undead side (lock 879, Key to the City).
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175352));   // King's Square Gate
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175353));   // King's Square Gate
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175356));   // Gauntlet Gate
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175357));   // Gauntlet Gate
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(175368));   // Service Entrance Gate
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175352));   // King's Square Gate
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175353));   // King's Square Gate
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175356));   // Gauntlet Gate
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175357));   // Gauntlet Gate
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(175368));   // Service Entrance Gate
 
     // Dire Maul North: the two Gordok doors (also covered by map-429 events 2/3)
     // and the North wing's Crescent Key door, which has no event.
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(177219));   // Gordok Courtyard Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(177217));   // Gordok Inner Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(179549));   // DM North Crescent Key door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(177219));   // Gordok Courtyard Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(177217));   // Gordok Inner Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(179549));   // DM North Crescent Key door
 
     // Still scoped to DOORS in those dungeons, and still not a lock-level rule:
     // the script-driven gates and the keyed non-door objects stay untouched.
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175570));  // Scholo Kirtonos gate (script)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(177371));  // Scholo Gandling gate (script)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175564));  // Scholo Brazier of the Herald (button)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175380));  // Strat ziggurat door (instance script)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(176346));  // Strat Market Row Postbox (button)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(176216));  // Strat Scarlet Cannon (goober)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(124372));  // Uldaman Ironaya seal
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(175570));  // Scholo Kirtonos gate (script)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(177371));  // Scholo Gandling gate (script)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(175564));  // Scholo Brazier of the Herald (button)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(175380));  // Strat ziggurat door (instance script)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(176346));  // Strat Market Row Postbox (button)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(176216));  // Strat Scarlet Cannon (goober)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(124372));  // Uldaman Ironaya seal
 }
 
 // Every lock-680 (Shadowforge Key 11000 / lockpicking 250) door in Blackrock
-// Depths, not just the two on the lever's doorstep. Waiving them one at a time
-// only walks the auto-pause down the corridor: test plan tp-20260817-171356-1
-// shipped with 170570 + 161460 exempt and still lost 6 of 10 runs at 10/20
-// bosses to "can't open ... 170560" — the Shadowforge Gate one room earlier.
-// The Lyceum is the same gate again for the back half of the dungeon: Flamelash,
-// The Seven, Magmus and the Emperor are all behind it.
-TEST(DcDoorPolicyTest, BlackrockLock680TraversalGatesAreKeyExempt)
+// Depths, not just the two on the lever's doorstep: the Shadowforge Gates, the
+// East Garrison Door, the Lyceum and the lever. A party that carries the key
+// opens the whole set; one that does not opens none of them.
+TEST(DcDoorPolicyTest, BlackrockLock680TraversalGatesArePartyKeyDoors)
 {
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(170559));   // Shadowforge Gate (west)
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(170560));   // Shadowforge Gate (east)
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(170570));   // East Garrison Door
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(170558));   // The Lyceum
-    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(161460));   // The Shadowforge Lock
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170559));   // Shadowforge Gate (west)
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170560));   // Shadowforge Gate (east)
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170570));   // East Garrison Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));   // The Lyceum
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(161460));   // The Shadowforge Lock
 
     // Still not a lock-level amnesty, and still not a map-level one: the doors
     // instance_blackrock_depths caches AND drives stay script territory whatever
     // lock they ride, and the Vault's loot cells are not a corridor at all.
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(170571));  // Bar Door (GO_BAR_DOOR)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(170573));  // Golem Room North
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(170575));  // Throne Room Doors (Magmus)
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(170576));  // Tomb of the Seven, in
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(174554));  // Relic Coffer Door
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170571));  // Bar Door (GO_BAR_DOOR)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170573));  // Golem Room North
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170575));  // Throne Room Doors (Magmus)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170576));  // Tomb of the Seven, in
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(174554));  // Relic Coffer Door
 }
 
 // The Detention Block's eight cell doors, lock 699 (Prison Cell Key 11140 /
@@ -225,13 +249,13 @@ TEST(DcDoorPolicyTest, BlackrockLock680TraversalGatesAreKeyExempt)
 // The boss route runs through the cells, so a shut one is a hard stop: 170567
 // auto-paused a tp-20260817-171356-1 run at 2/20 bosses, parked 0.0yd inside the
 // doorway on a route the diag still called ok/1seg dev=0.5.
-TEST(DcDoorPolicyTest, BlackrockDetentionBlockCellDoorsAreKeyExempt)
+TEST(DcDoorPolicyTest, BlackrockDetentionBlockCellDoorsArePartyKeyDoors)
 {
     for (uint32 cellDoor = 170562; cellDoor <= 170569; ++cellDoor)
-        EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(cellDoor)) << "cell door " << cellDoor;
+        EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(cellDoor)) << "cell door " << cellDoor;
 
     // The entries bracketing the cell-door run are unrelated and stay put.
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(170561));  // Supply Room Door (lock-free)
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170561));  // Supply Room Door (lock-free)
 }
 
 // --- Script-only denylist ---------------------------------------------------
@@ -334,7 +358,7 @@ TEST(DcDoorPolicyTest, UtgardeKeepForgeFlameWallsAreNavigationIgnored)
     {
         EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(entry));
         EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(entry));
-        EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(entry));
+        EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(entry));
         EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(entry));
     }
 }
@@ -363,7 +387,7 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     {
         EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(entry));
         EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(entry));
-        EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(entry));
+        EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(entry));
         EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(entry));
     }
 }
@@ -372,7 +396,7 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
 // the Lever (179148) 65yd away on the raid's side of it: go_chromaggus_lever's
 // GossipHello clears his IMMUNE_TO_PC, walks him out and calls HandleGameObject
 // on the gate. It is not in instance_blackwing_lair's doorData, so no encounter
-// state opens it either — and it is lock-free, so BotCanOpenDoorLikePlayer
+// state opens it either — and it is lock-free, so DoorOpenerFor
 // refuses to force it.
 //
 // Left flagged it DEADLOCKS the run rather than merely mis-parking it: the flag
@@ -400,7 +424,7 @@ TEST(DcDoorPolicyTest, ChromaggusCagePortcullisIsNavigationIgnored)
     // run — fully armed.
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(179116));
     EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(179116));
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(179116));
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(179116));
     EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(179116));
 }
 
@@ -432,7 +456,105 @@ TEST(DcDoorPolicyTest, StratholmeGateTrapPortcullisesAreSelfClearing)
 
     // The trap gates ride the other lists' exclusions too: they are lock-free
     // and script-driven, so nothing else in the registry claims them either.
-    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175351));
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(175351));
     EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(175351));
     EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(175351));
+}
+
+// --- Keyed doors want a key in the party (2026-10) ----------------------------
+//
+// Lock.dbc rows read off the dev realm's client data. A KEYED lock names a key
+// item; the empty, bare-hands and lockpick-only locks do not.
+TEST(DcDoorPolicyTest, AKeyedLockNamesItsKey)
+{
+    EXPECT_TRUE(NamesKey(LOCK_299));   // the Scarlet Key
+    EXPECT_TRUE(NamesKey(LOCK_879));   // the Key to the City
+    EXPECT_TRUE(NamesKey(LOCK_680));   // the Shadowforge Key
+    EXPECT_TRUE(NamesKey(LOCK_799));   // the Shadowforge Torch
+    EXPECT_FALSE(NamesKey(LOCK_85));   // empty
+    EXPECT_FALSE(NamesKey(LOCK_86));   // Quick Open
+    EXPECT_FALSE(NamesKey(LOCK_202));  // picklock, Quick Open, blasting
+    EXPECT_FALSE(NamesKey(LOCK_1634)); // Quick Open under GO_FLAG_LOCKED
+}
+
+// The Shadowforge Gates open for the Shadowforge Key or lockpicking 250, never
+// bare-handed, and the braziers only for a torch.
+TEST(DcDoorPolicyTest, ShadowforgeGatesAndBraziersWantTheirKey)
+{
+    EXPECT_FALSE(CanOpen(LOCK_680, /*lockEnforced*/ true));
+    EXPECT_TRUE(CanOpen(LOCK_680, /*lockEnforced*/ true, /*heldItem*/ 11000));
+    EXPECT_TRUE(CanOpen(LOCK_680, /*lockEnforced*/ true, 0, /*lockpick*/ 250));
+    EXPECT_FALSE(CanOpen(LOCK_680, /*lockEnforced*/ true, /*heldItem*/ 7146));
+    EXPECT_FALSE(CanOpen(LOCK_799, /*lockEnforced*/ false));
+    EXPECT_TRUE(CanOpen(LOCK_799, /*lockEnforced*/ false, /*heldItem*/ 11885));
+}
+
+// WHO OPENS IT. The tank opens a door it holds the key for, as it always did;
+// a door only another member holds the key for is that member's to open; a
+// party with no key in reach opens nothing. A key holder who is dead or out of
+// reach does not count.
+TEST(DcDoorPolicyTest, TheKeyHolderInReachOpensIt)
+{
+    using DcDoorPolicy::PickOpener;
+    // tank, healer, three damage
+    EXPECT_EQ(PickOpener({Member(true, true, true, true), Member(false, true, true, true)}), 0)
+        << "the tank with the key opens it itself";
+    EXPECT_EQ(PickOpener({Member(true, true, true, false), Member(false, true, true, false),
+                          Member(false, true, true, true)}),
+              2)
+        << "the member carrying the key opens it for the party";
+    EXPECT_EQ(PickOpener({Member(true, true, true, false), Member(false, true, true, false),
+                          Member(false, true, true, false), Member(false, true, true, false),
+                          Member(false, true, true, false)}),
+              -1)
+        << "a party without the key opens nothing: nothing waives a key";
+    EXPECT_EQ(PickOpener({Member(true, true, true, false), Member(false, false, true, true)}), -1)
+        << "a dead key holder opens nothing";
+    EXPECT_EQ(PickOpener({Member(true, true, true, false), Member(false, true, false, true)}), -1)
+        << "a key holder out of reach opens nothing";
+    EXPECT_EQ(PickOpener({}), -1);
+}
+
+// The keyed objects a dungeon event clicks only for a key holder: every party
+// key door (the Shadowforge Lock lever, the Gordok and Crescent doors are
+// clicked by events) and the Shadowforge Braziers.
+TEST(DcDoorPolicyTest, EventClicksOnKeyedObjectsWantAKeyHolder)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(161460));  // the Shadowforge Lock
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(177219));  // Gordok Courtyard Door
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(177217));  // Gordok Inner Door
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(177221));  // DM West Crescent door
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(179550));  // DM West Crescent door
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174744));  // Shadowforge Brazier, south
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174745));  // Shadowforge Brazier, north
+    EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(101854));  // Herod's Door
+    // Lock-free event objects stay as they were.
+    EXPECT_FALSE(DcEventDoorRegistry::EventClickNeedsKey(177259)); // DM West crystal generator
+    EXPECT_FALSE(DcEventDoorRegistry::EventClickNeedsKey(18900));  // Deadmines lever
+}
+
+// The five Blackrock Depths doors instance_blackrock_depths drives ride the
+// empty lock 85, which CanOpenSlots rates "opens for anyone", so a door-blocked
+// tank force-opened them: the Golem Room doors without the braziers lit, the
+// Throne Room without Magmus dead, the tomb mid-challenge.
+TEST(DcDoorPolicyTest, BlackrockDepthsEncounterDoorsAreScriptOnly)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170573));  // Golem Room North
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170574));  // Golem Room South
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170575));  // Throne Room Doors
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170576));  // Tomb of the Seven, in
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170577));  // Tomb of the Seven, out
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558)); // the Lyceum: a key door
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170560)); // a Shadowforge Gate
+}
+
+// The chests that hold a door key are looted even with IgnoreChests on: the
+// Scarlet Key comes from Doan's Strongbox in the Library, the Gordok Courtyard
+// Key from Fengus's Chest. Any other chest is still skipped.
+TEST(DcDoorPolicyTest, TheChestsThatHoldADoorKeyAreOpened)
+{
+    EXPECT_TRUE(DcLootPolicy::IsDoorKeyChest(103821));   // Doan's Strongbox
+    EXPECT_TRUE(DcLootPolicy::IsDoorKeyChest(179516));   // Fengus's Chest
+    EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(0));
+    EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(174554));  // BRD Relic Coffer Door
 }

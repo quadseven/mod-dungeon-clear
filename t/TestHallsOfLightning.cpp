@@ -381,7 +381,7 @@ TEST(DungeonEventHallsOfLightningTest, ThePitFloorIsInsideVolkhansLeashButTheGal
 
 // --- the doors -------------------------------------------------------------
 
-// Both progression doors are lockId 0, which BotCanOpenDoorLikePlayer reads as
+// Both progression doors are lockId 0, which DoorOpenerFor reads as
 // "any player can click this". Only instance_halls_of_lightning's DoorData opens
 // them, on SetBossState(..., DONE).
 TEST(DungeonEventHallsOfLightningTest, BothPassageDoorsAreScriptOnlyAndStillNavigationVisible)

@@ -274,7 +274,10 @@ bool DcLootPolicy::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
             // skill lock — skillId carries that profession — so exclude them;
             // every non-chest gameobject (fishing hole, lever, quest object) is
             // excluded by type.
-            keep = !ignoreChests && go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
+            // A chest that holds a door key (IsDoorKeyChest) is a stop
+            // whatever IgnoreChests says.
+            keep = (!ignoreChests || IsDoorKeyChest(go->GetEntry())) &&
+                   go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
                    target.skillId != SKILL_HERBALISM && target.skillId != SKILL_MINING;
         }
         // else: loose item loot or an unresolvable guid -> not a corpse or chest.
