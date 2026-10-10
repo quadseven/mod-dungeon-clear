@@ -72,6 +72,14 @@ namespace DcEventDoorRegistry
             // that true when the order is perturbed — a `dc skip`, a wing
             // filter, a future reorder.
             case 192236:  // Ahn'kahet — Taldaram Door (opens on Taldaram's death)
+            // Blackfathom Deeps (map 48) - Portal of Aku'Mai (21117, guid 32682).
+            // GAMEOBJECT_TYPE_DOOR on lock 85, so BotCanOpenDoorLikePlayer reads
+            // it as freely clickable. instance_blackfathom_deeps opens it, and
+            // only once all four Fires of Aku'mai are lit and every summoned
+            // wave is dead. A click would skip that whole event and leave the
+            // instance's fire state undone. The "Light the Fires of Aku'mai"
+            // event (map 48 id 1) drives the real sequence.
+            case 21117:   // Blackfathom Deeps — Portal of Aku'Mai (fires event)
             // The Violet Hold (map 608) — the Prison Seal and all twelve Cells.
             // Every one of them is GAMEOBJECT_TYPE_DOOR with lockId 0, so
             // BotCanOpenDoorLikePlayer reads the whole set as freely clickable,

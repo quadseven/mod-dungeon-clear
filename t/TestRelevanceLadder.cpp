@@ -202,6 +202,22 @@ TEST(DungeonClearRelevanceTest, CombatLadderStrictlyDescends)
 // driving ladder (so a bot leaves the Destroyed Sentinel's pulse instead of
 // looting/resting/advancing on the death spot) but stay below the terminal death/
 // chat bailouts.
+// Swimming up for air outranks every fight and every driver: a bot that stays
+// under to finish a pull drowns, and the party drowns with it (Blackfathom
+// Deeps, 2026-10-09). It stays under the terminal bailouts and the door reopen.
+TEST(DungeonClearRelevanceTest, SurfaceForBreathOutranksEveryFightAndDriver)
+{
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::BreakStuckCombat);
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::HakkarSuppressorCombat);
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::PullManeuver);
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::HazardVacate);
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::AllCleared);
+    EXPECT_GT(DcRel::SurfaceForBreath, DcRel::StrandedRecovery);
+    EXPECT_LT(DcRel::SurfaceForBreath, DcRel::DoorReopened);
+    EXPECT_LT(DcRel::SurfaceForBreath, DcRel::LootRollPending);
+    EXPECT_LT(DcRel::SurfaceForBreath, DcRel::PartyDied);
+}
+
 TEST(DungeonClearRelevanceTest, HazardVacateOutranksNonCombatDrivers)
 {
     EXPECT_GT(DcRel::HazardVacate, DcRel::AllCleared);

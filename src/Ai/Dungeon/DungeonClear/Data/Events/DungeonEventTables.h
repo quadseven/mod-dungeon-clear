@@ -66,6 +66,7 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out);
 void RegisterWailingCavernsEvents(std::vector<DungeonEvent>& out);
 void RegisterStratholmeEvents(std::vector<DungeonEvent>& out);
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
+void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out);
 void RegisterScholomanceEvents(std::vector<DungeonEvent>& out);
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out);
 // Hellfire Ramparts (map 543) final-approach gate — see HellfireRampartsEvents.cpp
@@ -2434,6 +2435,7 @@ void RegisterWailingCavernsRoster(std::vector<BossRosterPatch>& t);
 void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t);
 void RegisterDireMaulRoster(std::vector<BossRosterPatch>& t);
 void RegisterUldamanRoster(std::vector<BossRosterPatch>& t);
+void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t);
 void RegisterHellfireRampartsRoster(std::vector<BossRosterPatch>& t);
 void RegisterSlavePensRoster(std::vector<BossRosterPatch>& t);
 void RegisterUnderbogRoster(std::vector<BossRosterPatch>& t);

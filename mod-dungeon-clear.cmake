@@ -84,6 +84,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestMoltenCore.cpp"
             "${MOD_PATH}/t/TestEventRegistry.cpp"
             "${MOD_PATH}/t/TestBlackfathomDeeps.cpp"
+            "${MOD_PATH}/t/TestBreathDecision.cpp"
             "${MOD_PATH}/t/TestVioletHold.cpp"
             "${MOD_PATH}/t/TestHallsOfStone.cpp"
             "${MOD_PATH}/t/TestHallsOfLightning.cpp"

@@ -304,6 +304,13 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
 
+    // Swim up for air before the breath bar runs out. Any role, any dungeon map,
+    // BOTH engines (the bar drains the same in a fight). See
+    // DungeonClearSurfaceForBreathTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear surface for breath",
+        { NextAction("dungeon clear surface for breath", DcRel::SurfaceForBreath) }));
+
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has
     // to survive the pull, and the click itself can land either side of the combat
@@ -536,6 +543,13 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
+
+    // Swim up for air before the breath bar runs out. Any role, any dungeon map,
+    // BOTH engines (the bar drains the same in a fight). See
+    // DungeonClearSurfaceForBreathTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear surface for breath",
+        { NextAction("dungeon clear surface for breath", DcRel::SurfaceForBreath) }));
 
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has

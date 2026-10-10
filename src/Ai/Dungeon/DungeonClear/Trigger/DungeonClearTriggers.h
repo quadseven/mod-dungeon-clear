@@ -601,6 +601,23 @@ public:
     bool IsActive() override;
 };
 
+// ANY role, BOTH engines, any dungeon map. Keeps the bot's breath bar
+// (DcBreath::Model, ticked here every evaluation with the core's own drain and
+// refill rules) and fires when the bot must swim for air: under water with no
+// more breath than the swim back to its last breath needs, doubled, plus a
+// reserve. Stays active until the bot is up and has refilled (most of the bar
+// out of combat, less in a fight). Drives DungeonClearSurfaceForBreathAction.
+// See DcBreathDecision.h for why: the Blackfathom Deeps drownings.
+class DungeonClearSurfaceForBreathTrigger : public Trigger
+{
+public:
+    DungeonClearSurfaceForBreathTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear surface for breath", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 // BLACKWING LAIR ONLY, and only for ONE member of the raid: the bot the leader's
 // Razorgore driver elected to take the Orb of Domination.
 //
