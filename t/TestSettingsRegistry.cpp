@@ -255,12 +255,19 @@ TEST(DcSettingsRegistryTest, TrashBandClampedToHeroicCap)
 #ifdef DC_FIXTURE_DIR
 namespace
 {
+    std::string ShippedConfPath()
+    {
+        return std::string(DC_FIXTURE_DIR) + "/../../conf/mod_dungeon_clear.conf.dist";
+    }
+
     // "DungeonClear.Key = value" lines of the shipped conf, keyed by full name.
-    // Comments and blank lines are skipped; the value is trimmed.
+    // Comments and blank lines are skipped; the value is trimmed. An unopenable
+    // file yields an empty map; each test asserts on that with the path, so a
+    // moved file fails as "cannot open <path>", not as a missing key.
     std::map<std::string, std::string> ShippedConf()
     {
         std::map<std::string, std::string> out;
-        std::ifstream in(std::string(DC_FIXTURE_DIR) + "/../../conf/mod_dungeon_clear.conf.dist");
+        std::ifstream in(ShippedConfPath());
         std::string line;
         auto const trim = [](std::string s)
         {
@@ -286,7 +293,9 @@ TEST(DcSettingsRegistryTest, ShippedConfIsReadable)
 {
     // Guards the two tests below: an unreadable file would make every lookup
     // miss and the assertions fail for the wrong reason.
-    EXPECT_GT(ShippedConf().size(), 50u);
+    std::ifstream in(ShippedConfPath());
+    ASSERT_TRUE(in.is_open()) << "cannot open " << ShippedConfPath();
+    EXPECT_GT(ShippedConf().size(), 50u) << ShippedConfPath();
 }
 
 TEST(DcSettingsRegistryTest, StrandedRecoveryNeverTeleportsByDefault)
@@ -296,6 +305,7 @@ TEST(DcSettingsRegistryTest, StrandedRecoveryNeverTeleportsByDefault)
     // shipped conf AND in the compiled-in default, so a missing conf line
     // cannot turn it back on.
     std::map<std::string, std::string> const conf = ShippedConf();
+    ASSERT_FALSE(conf.empty()) << "cannot open " << ShippedConfPath();
     auto const it = conf.find("DungeonClear.StrandedRecovery");
     ASSERT_NE(it, conf.end());
     EXPECT_EQ(it->second, "0");
@@ -314,6 +324,7 @@ TEST(DcSettingsRegistryTest, RoomClearGivesACarefulGroupTwoMinutes)
     // Gilnid, 8 left) and pulled the boss with the room up. Conf and registry
     // agree so the conf's "Default:" line is the truth.
     std::map<std::string, std::string> const conf = ShippedConf();
+    ASSERT_FALSE(conf.empty()) << "cannot open " << ShippedConfPath();
     auto const it = conf.find("DungeonClear.RoomClearTimeout");
     ASSERT_NE(it, conf.end());
     EXPECT_EQ(it->second, "120");
