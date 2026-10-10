@@ -750,6 +750,23 @@ private:
     uint32   _fleeSetAtMs = 0;
 };
 
+// ANY role, BOTH engines. Swims the bot to air: straight up when open water is
+// above it, otherwise back along its own swim since its last breath. At the
+// surface it treads water until DungeonClearSurfaceForBreathTrigger releases it.
+// Drops the bot's own swim leg on the way up, so the leg's progress watchdog
+// cannot read the climb as a wedge and stall the run; the leg is rebuilt from
+// the surface. Moves the bot only, as a player swimming up would: nothing here
+// touches the breath bar.
+class DungeonClearSurfaceForBreathAction : public DcMovementAction
+{
+public:
+    DungeonClearSurfaceForBreathAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear surface for breath")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // BLACKWING LAIR ONLY, one member, both engines. The orb runner's half of
 // Razorgore's egg run: walk to the Orb of Domination and take it.
 //

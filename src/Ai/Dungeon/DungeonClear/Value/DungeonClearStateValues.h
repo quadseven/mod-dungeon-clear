@@ -18,6 +18,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBreathDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -478,6 +479,26 @@ public:
 
 private:
     DungeonClearSwimState data;
+};
+
+// --- Surface for breath ---------------------------------------------------
+// The bot's own copy of its breath bar and the way back to its last breath
+// (DcBreath::Model; the core's bar is private to Player). Ticked by
+// DungeonClearSurfaceForBreathTrigger every tick the bot is in a dungeon.
+// Reset() is deliberately a no-op: the bar follows the body, not the run, so a
+// `dc skip` or a run reset mid-swim must not refill it.
+class DungeonClearBreathStateValue : public ManualSetValue<DcBreath::Model&>
+{
+public:
+    DungeonClearBreathStateValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcBreath::Model&>(botAI, data, DcKey::BreathState)
+    {
+    }
+
+    void Reset() override {}
+
+private:
+    DcBreath::Model data;
 };
 
 // Cursor into the cached long-path's flattened polyline plus the

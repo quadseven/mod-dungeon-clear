@@ -5,6 +5,8 @@
 
 #include "DungeonClearTriggers.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBreath.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBreathDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
@@ -2170,6 +2172,49 @@ bool DungeonClearHazardVacateTrigger::IsActive()
     // combat has dropped) and no role exemption (there is nothing to tank — it is
     // NOT_SELECTABLE). Every bot in the pulse leaves.
     return DcHazard::NearestVacate(bot).ok;
+}
+
+bool DungeonClearSurfaceForBreathTrigger::IsActive()
+{
+    if (!bot)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    // The bar is kept on EVERY evaluation, active or not: it is the bot's only
+    // copy of the core's private breath timer, and a tick skipped under water
+    // would be air it does not have.
+    DcBreath::Model& m = context->GetValue<DcBreath::Model&>(DcKey::BreathState)->Get();
+    bool const under = DcBreathGame::IsUnderWater(bot);
+    DcBreath::Tick(m, under, DcBreathGame::MaxMs(bot), getMSTime());
+    DcBreath::Point const here = DcBreathGame::Here(bot);
+    DcBreath::RecordTrail(m, under, here);
+
+    if (!bot->IsAlive())
+    {
+        m.surfacing = false;
+        m.routeIssuedMs = 0;
+        return false;
+    }
+
+    if (m.surfacing)
+    {
+        if (!DcBreath::DoneSurfacing(m, under, bot->IsInCombat()))
+            return true;
+        m.surfacing = false;
+        m.routeIssuedMs = 0;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] breathed at the surface: {}s of {}s of air -> carrying on",
+                 bot->GetName(), m.remainingMs / 1000, m.maxMs / 1000);
+        return false;
+    }
+
+    // Judged on the way BACK along the bot's own swim: never shorter than a
+    // straight climb, so this errs toward going up early. The action takes the
+    // straight climb when the water above is open.
+    return DcBreath::ShouldSurface(m, under, DcBreath::TrailYards(m, here),
+                                   bot->GetSpeed(MOVE_SWIM));
 }
 
 bool DungeonClearFilterLootTrigger::IsActive()

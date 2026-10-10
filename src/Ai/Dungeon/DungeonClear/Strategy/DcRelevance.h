@@ -220,6 +220,14 @@ namespace DcRel
     // summon isn't a fight; different map than Hakkar), and BELOW the terminal
     // death/chat bailouts (100). See DungeonClearHazardVacate{Trigger,Action}.
     inline constexpr float HazardVacate           = 55.0f; // any role: clear an unfightable hazard's pulse
+    // Survival above every fight: swim up for air before the breath bar runs
+    // out. Drowning kills the whole party at once wherever a swim leg wedges
+    // (Blackfathom Deeps, 2026-10-09: 19 of 25 deaths on the map). Registered in
+    // BOTH engines: the bar drains the same in a fight. Outranks every combat
+    // rung (BreakStuckCombat 65 is the highest), stays BELOW the door reopen
+    // (90), the loot-roll window (95) and the death/chat bailouts (100). See
+    // DungeonClearSurfaceForBreath{Trigger,Action}.
+    inline constexpr float SurfaceForBreath       = 70.0f; // any role: swim up for air
     inline constexpr float AssistCampCombat       = 35.0f; // follower: onto the leader's pack
     // Leader-only, combat side of the KillCreature-engage objective. A stealthed
     // sapper (Shattered Halls' Shattered Hand Assassins) flags the party into combat

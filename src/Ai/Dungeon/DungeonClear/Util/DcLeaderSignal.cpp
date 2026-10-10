@@ -76,6 +76,33 @@ namespace
         return DcEngageGeometry::IsNavReachable(bot, p);
     }
 
+    // A SWIM entry onto the tank's trail. The mmaps keep only a surface sheet
+    // over liquid (no mesh under it), so a crumb the tank laid on a swim leg
+    // (SwimPathfinder) is never nav-reachable, and a follower in the water was
+    // left to MoveFollow, which cannot route under water either: it hung at the
+    // tunnel mouth, and with stranded teleports off the tank held at the spread
+    // gate until the run timed out. A player swims after the tank. So when the
+    // follower or the crumb is in water and only water lies between them (VMAP
+    // line of sight; liquid is transparent to it), the entry leg is accepted.
+    // The rest of the window is the tank's own swim, crumb by crumb.
+    bool IsSwimReachable(Player* bot, Position const& p)
+    {
+        Map* map = bot ? bot->GetMap() : nullptr;
+        if (!map)
+            return false;
+        uint32 const phase = bot->GetPhaseMask();
+        float const coll = bot->GetCollisionHeight();
+        bool const wet = bot->IsInWater() ||
+                         map->IsInWater(phase, p.GetPositionX(), p.GetPositionY(),
+                                        p.GetPositionZ(), coll);
+        if (!wet)
+            return false;
+        return map->isInLineOfSight(bot->GetPositionX(), bot->GetPositionY(),
+                                    bot->GetPositionZ() + 0.5f, p.GetPositionX(),
+                                    p.GetPositionY(), p.GetPositionZ() + 0.5f, phase,
+                                    LINEOFSIGHT_CHECK_VMAP, VMAP::ModelIgnoreFlags::Nothing);
+    }
+
     // A trail hold point must clear the instance zone line, for the same reason a
     // pull camp must (DcZoneLine): the tank walked IN through the entrance, so
     // the oldest breadcrumbs of a run sit on the exit trigger, and a follower
@@ -1305,7 +1332,7 @@ bool DcLeaderSignal::GetLeaderScoutTrail(Player* bot, float lag, std::vector<Pos
     // is the tank's own contiguous walked ground. One PathGenerator build, the
     // same cost the point variant pays. A straight entry across a navmesh seam
     // would glide the follower under the map, so reject it here.
-    if (!IsNavReachable(bot, out[1]))
+    if (!IsNavReachable(bot, out[1]) && !IsSwimReachable(bot, out[1]))
     {
         out.clear();
         return false;
