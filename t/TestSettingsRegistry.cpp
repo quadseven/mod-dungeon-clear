@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -244,3 +246,93 @@ TEST(DcSettingsRegistryTest, TrashBandClampedToHeroicCap)
     ASSERT_TRUE(DcHasHeroicDefault(*d));
     EXPECT_EQ(d->heroicVal, 42);
 }
+
+// The shipped conf, not just the table. The worldserver copies
+// mod_dungeon_clear.conf.dist to mod_dungeon_clear.conf on every start, so a
+// value written in the .dist is the value the realm runs, and it outranks the
+// registry default above. These pin the conf lines an operator decision set,
+// read from the source tree (DC_FIXTURE_DIR is <module>/t/fixtures).
+#ifdef DC_FIXTURE_DIR
+namespace
+{
+    std::string ShippedConfPath()
+    {
+        return std::string(DC_FIXTURE_DIR) + "/../../conf/mod_dungeon_clear.conf.dist";
+    }
+
+    // "DungeonClear.Key = value" lines of the shipped conf, keyed by full name.
+    // Comments and blank lines are skipped; the value is trimmed. An unopenable
+    // file yields an empty map; each test asserts on that with the path, so a
+    // moved file fails as "cannot open <path>", not as a missing key.
+    std::map<std::string, std::string> ShippedConf()
+    {
+        std::map<std::string, std::string> out;
+        std::ifstream in(ShippedConfPath());
+        std::string line;
+        auto const trim = [](std::string s)
+        {
+            std::size_t const b = s.find_first_not_of(" \t\r");
+            std::size_t const e = s.find_last_not_of(" \t\r");
+            return b == std::string::npos ? std::string() : s.substr(b, e - b + 1);
+        };
+        while (std::getline(in, line))
+        {
+            std::string const t = trim(line);
+            if (t.empty() || t[0] == '#')
+                continue;
+            std::size_t const eq = t.find('=');
+            if (eq == std::string::npos)
+                continue;
+            out[trim(t.substr(0, eq))] = trim(t.substr(eq + 1));
+        }
+        return out;
+    }
+}
+
+TEST(DcSettingsRegistryTest, ShippedConfIsReadable)
+{
+    // Guards the two tests below: an unreadable file would make every lookup
+    // miss and the assertions fail for the wrong reason.
+    std::ifstream in(ShippedConfPath());
+    ASSERT_TRUE(in.is_open()) << "cannot open " << ShippedConfPath();
+    EXPECT_GT(ShippedConf().size(), 50u) << ShippedConfPath();
+}
+
+TEST(DcSettingsRegistryTest, StrandedRecoveryNeverTeleportsByDefault)
+{
+    // Operator decision 2026-10-10: a stuck member is not teleported to the
+    // tank. A teleport is not something a human party can do. Off in the
+    // shipped conf AND in the compiled-in default, so a missing conf line
+    // cannot turn it back on.
+    std::map<std::string, std::string> const conf = ShippedConf();
+    ASSERT_FALSE(conf.empty()) << "cannot open " << ShippedConfPath();
+    auto const it = conf.find("DungeonClear.StrandedRecovery");
+    ASSERT_NE(it, conf.end());
+    EXPECT_EQ(it->second, "0");
+
+    DcSettingDef const* d = FindDcSetting("StrandedRecovery");
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->defVal, 0);
+    EXPECT_FALSE(DcHasHeroicDefault(*d));
+    EXPECT_FALSE(DcHasRaidDefault(*d));
+}
+
+TEST(DcSettingsRegistryTest, RoomClearGivesACarefulGroupTwoMinutes)
+{
+    // Operator decision 2026-10-10: a careful group keeps clearing trash before
+    // it pulls the boss. 30s gave up while packs were still dying (run 507,
+    // Gilnid, 8 left) and pulled the boss with the room up. Conf and registry
+    // agree so the conf's "Default:" line is the truth.
+    std::map<std::string, std::string> const conf = ShippedConf();
+    ASSERT_FALSE(conf.empty()) << "cannot open " << ShippedConfPath();
+    auto const it = conf.find("DungeonClear.RoomClearTimeout");
+    ASSERT_NE(it, conf.end());
+    EXPECT_EQ(it->second, "120");
+
+    DcSettingDef const* d = FindDcSetting("RoomClearTimeout");
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->defVal, 120);
+    EXPECT_GE(d->defVal, d->minVal);
+    EXPECT_LE(d->defVal, d->maxVal);
+}
+#endif

@@ -330,13 +330,15 @@ DungeonClear.PostCombatRezTimeoutSecs = 90
 #        PartyMaxSpread of the tank teleports that member to the tank (bots only;
 #        a human is never relocated). Combat re-arms the clock (a fight is
 #        progress) so a long boss fight never trips it.
+#        Off by default: a teleport is not something a human party can do, so a
+#        stuck member has to find its own way back, as a player would.
 #            0 = off (a stuck member stalls the run until you intervene)
 #            1 = on
 #
-#        Default: 1
+#        Default: 0
 #
 
-DungeonClear.StrandedRecovery = 1
+DungeonClear.StrandedRecovery = 0
 
 #
 #    DungeonClear.StrandedRecoveryNoProgressSecs
@@ -569,13 +571,15 @@ DungeonClear.ClearRoomBeforeBoss = 1
 #        ClearRoomBeforeBoss) without the remaining count dropping, before it
 #        gives up and pulls the boss anyway (noting it in chat). Stops a livelock
 #        on an unreachable straggler or a respawn that keeps the count flat. Any
-#        real progress re-arms the clock.
+#        real progress re-arms the clock. Long enough for a careful group to
+#        kill a pack, rest, and pull the next one before the boss: a short value
+#        pulls the boss with the room still up.
 #            0 = never give up (not recommended — can livelock)
 #
-#        Default: 30
+#        Default: 120
 #
 
-DungeonClear.RoomClearTimeout = 30
+DungeonClear.RoomClearTimeout = 120
 
 #
 #    DungeonClear.ClearBossNeighbours

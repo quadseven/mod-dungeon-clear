@@ -186,9 +186,11 @@ inline constexpr DcSettingDef kDcSettings[] =
     // only; a human is never relocated). The long clock is deliberate: it must
     // never fire during a legitimately slow pull/rest, only a true freeze, and
     // combat re-arms it (a fight is progress) so a long boss fight never trips it.
-    // OFF disables the failsafe entirely. See Util/DcStrandedDecision.h +
+    // OFF disables the failsafe entirely, and OFF is the default: a teleport is
+    // not human-like play, so the compiled-in value must not turn it back on
+    // when the conf line is missing. See Util/DcStrandedDecision.h +
     // DcStrandedRecovery.
-    { "StrandedRecovery",              DcType::Bool,   1,   0,    1,  true  },
+    { "StrandedRecovery",              DcType::Bool,   0,   0,    1,  true  },
     { "StrandedRecoveryNoProgressSecs", DcType::UInt,  60,  60, 3600,  true  },
 
     // Unreachable-holder combat purge. The other half of "the run has frozen":
@@ -364,9 +366,10 @@ inline constexpr DcSettingDef kDcSettings[] =
     // straggler or respawn churn — not the time to clear. It must therefore
     // tolerate a slow pack plus a between-pulls drink/rest, hence the generous
     // default. 0 = never give up. Max 600s. (Old 30s default tripped before the
-    // tank even reached the room.)
+    // tank even reached the room, and still gave up mid-clear while packs were
+    // dying; 120s matches the shipped conf.)
     { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
-    { "RoomClearTimeout",      DcType::UInt, 180,   0,  600,  true  },
+    { "RoomClearTimeout",      DcType::UInt, 120,   0,  600,  true  },
     // Boss neighbours (RoomAggroRegistry::NeighbourRoom). A boss with no authored
     // room row still has elites beside it; with this on, the elites within
     // BossNeighbourRadius of the live boss are cleared first by set-up pulls,
