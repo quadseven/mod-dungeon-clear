@@ -79,7 +79,7 @@ namespace DcEventDoorRegistry
             // wave is dead. A click would skip that whole event and leave the
             // instance's fire state undone. The "Light the Fires of Aku'mai"
             // event (map 48 id 1) drives the real sequence.
-            case 21117:   // Blackfathom Deeps — Portal of Aku'Mai (fires event)
+            case 21117:   // Blackfathom Deeps - Portal of Aku'Mai (fires event)
             // The Violet Hold (map 608) — the Prison Seal and all twelve Cells.
             // Every one of them is GAMEOBJECT_TYPE_DOOR with lockId 0, so
             // BotCanOpenDoorLikePlayer reads the whole set as freely clickable,
