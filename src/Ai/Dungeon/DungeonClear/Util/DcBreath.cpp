@@ -71,6 +71,8 @@ namespace DcBreathGame
 
     DcBreath::Point Here(Player* bot)
     {
+        if (!bot)
+            return DcBreath::Point{};
         return DcBreath::Point{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
     }
 }
