@@ -17,6 +17,8 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
+# New files added: Util/DcDefiasGunpowder.h (header-only: the Deadmines cannon
+#   step's engine-free decision kernel; loot the gunpowder, never grant it)
 # New files added: Util/DcBotProvisioning.{h,cpp}
 #   (the order-sensitive PlayerbotFactory sequence — strip, Randomize at the
 #    wanted level, force the spec and re-gear/re-glyph/re-enchant for it, pet,

@@ -46,6 +46,7 @@ enum class DcThrottle : uint8
     RazorgoreOrbIssue,   // the BWL egg runner's walk between eggs
     DtkCampIssue,        // the Drak'Tharon camp-return point move (time only)
     HosTravelIssue,      // HosTravelTo — the Halls of Stone Tribunal arena
+    DmGunpowderIssue,    // the Deadmines walk to the gunpowder chest / the cannon
 
     // --- log throttles (time only) -----------------------------------------
     TransitLog,          // BwlTransitLog — one crossing telemetry line per 3s
@@ -64,6 +65,8 @@ enum class DcThrottle : uint8
     RezManaWaitLog,      // DungeonClearRezPartyAction — waiting on mana to afford the rez
     UpHarpoonLog,        // the Utgarde Pinnacle harpoon driver's telemetry line
     UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
+    DmGunpowderLog,      // the Deadmines cannon step's "why it is waiting" line
+    OhBombsLog,          // "no Pack of Incendiary Bombs" (Old Hillsbrad hook 3)
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

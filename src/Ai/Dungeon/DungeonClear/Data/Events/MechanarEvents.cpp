@@ -17,16 +17,16 @@
 //      Cache of the Legion Key (item 30438). Blizzard forms that key by combining
 //      the two Jagged Crystals the Gatewatchers drop (Gyro-Kill 19218 -> Blue
 //      30436, Iron-Hand 19710 -> Red 30437) via the crystals' on-use spell 36565.
-//      A bot never right-clicks a crystal and the two crystals can split across
-//      bags, so (per the design decision) we GRANT the key to the leader at the
-//      cache and then USE it ON the chest (the Deadmines-cannon / Durnholde-barrel
-//      item-use path): only the key ITEM as the cast item satisfies the KEY_ITEM
+//      Nothing grants the key: when the leader CARRIES one it USES it ON the
+//      chest (the Deadmines-cannon / Durnholde-barrel item-use path), and without
+//      one the objective is Done and the cache is left to a player who has the
+//      key. Only the key ITEM as the cast item satisfies the KEY_ITEM
 //      lock (core Spell::CanOpenLock), and the resulting Player::SendLoot fires the
 //      loot-response that the stock "store loot" handler auto-drains. The stock
 //      loot pipeline can NOT do this itself (IgnoreChests blacklists the chest and
 //      OpenLootAction has no LOCK_KEY_ITEM handling), so the hook owns the open.
 //      The chest is consumable (leaves GO_READY once used). All of that is hook 4
-//      (GrantCacheKeyAndLoot, ObjectiveHookRegistry).
+//      (OpenCacheWithCarriedKey, ObjectiveHookRegistry).
 //
 //   2. RIDE THE FACTORY ELEVATOR (floor 1 -> floor 2). The elevator (GO 183788,
 //      a type-11 timer-driven transport) lifts the party ~25 yd from the Mo'arg
@@ -102,13 +102,13 @@ namespace
 
     // --- (1) Cache of the Legion -----------------------------------------
     // Anchored ON the chest so boss-nav delivers the tank into interaction range;
-    // the Custom step (hook 4) grants the key and holds until the consumable chest
-    // is looted + gone. Chest spawn (both difficulty rows share the spot):
+    // the Custom step (hook 4) opens it with a key the leader carries and holds
+    // until the consumable chest is looted + gone. Chest spawn (both difficulty rows share the spot):
     constexpr float MECH_CACHE_X = 222.54f;
     constexpr float MECH_CACHE_Y = 70.61f;
     constexpr float MECH_CACHE_Z = 0.0f;
-    constexpr uint32 MECH_HOOK_GRANT_CACHE_KEY = 4;  // ObjectiveHookRegistry id
-    // Generous: the loot pipeline may take a few seconds after the key is granted;
+    constexpr uint32 MECH_HOOK_OPEN_CACHE = 4;  // ObjectiveHookRegistry id
+    // Generous: the loot pipeline may take a few seconds after the key is used;
     // only a genuinely stuck loot escalates to a stall for the human.
     constexpr uint32 MECH_CACHE_TIMEOUT = 120000;  // 2 min
 
@@ -189,13 +189,14 @@ void RegisterMechanarEvents(std::vector<DungeonEvent>& out)
 {
     // (1) LOOT THE CACHE OF THE LEGION.
     // Non-persistent anchored: the objective navigates the tank onto the chest,
-    // then hook 4 grants key 30438 and holds Running until the stock loot pipeline
-    // consumes the chest (gone from range) — see GrantCacheKeyAndLoot. A combat gap
-    // that rewinds a non-persistent event just re-runs the idempotent grant.
+    // then hook 4 uses a carried key 30438 on it and holds Running until the stock
+    // loot pipeline consumes the chest (gone from range); see
+    // OpenCacheWithCarriedKey. A combat gap that rewinds a non-persistent event
+    // just re-runs the idempotent open.
     out.push_back(
         EventBuilder(554, 1, "Loot the Cache of the Legion")
             .Anchored(/*orderIndex (doc)*/ 10)
-            .Custom(MECH_HOOK_GRANT_CACHE_KEY)
+            .Custom(MECH_HOOK_OPEN_CACHE)
                 .Timeout(MECH_CACHE_TIMEOUT)
             .Build());
 

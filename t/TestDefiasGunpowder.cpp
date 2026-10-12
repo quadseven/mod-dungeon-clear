@@ -1,0 +1,335 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#include "gtest/gtest.h"
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
+
+// The Deadmines cannon step earns the Defias Gunpowder from its chest
+// (DcDefiasGunpowder::Decide), and the module grants nothing a player could not
+// earn: no AddItem anywhere in the event hooks.
+
+namespace
+{
+    using namespace DcDefiasGunpowder;
+
+    // At the cannon, nobody carrying the gunpowder, the chest untouched up on
+    // its ledge: the state the step starts in on a fresh run.
+    Inputs AtTheCannonEmptyHanded()
+    {
+        Inputs in;
+        in.doorOpen = false;
+        in.cannonFound = true;
+        in.carrier = Carrier::None;
+        in.actorCasting = false;
+        in.actorToCannon = 2.0f;
+        in.chest = Chest::Lootable;
+        in.botToChest = 42.4f;
+        in.lootWindowOnChest = false;
+        in.hasOpeningSpell = true;
+        return in;
+    }
+}
+
+TEST(DcDefiasGunpowder, TheChestIsTheOneAPlayerLoots)
+{
+    EXPECT_EQ(GO_GUNPOWDER, 17155u);
+    EXPECT_EQ(ITEM_GUNPOWDER, 5397u);
+    EXPECT_EQ(GO_CANNON, 16398u);
+    EXPECT_EQ(GO_IRON_CLAD_DOOR, 16397u);
+    // The chest is ~42yd from the cannon; the event area must reach it.
+    EXPECT_GT(EVENT_AREA_RADIUS, 42.4f);
+}
+
+// The acceptance case: no member carries the gunpowder, so the plan goes to
+// GO 17155 and loots it (walk, open, take), and never reaches the cannon
+// empty-handed.
+TEST(DcDefiasGunpowder, NoGunpowderInThePartyLootsTheChest)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+
+    Plan p = Decide(in);
+    EXPECT_EQ(p.action, Action::WalkToChest);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    in.botToChest = 3.0f;  // arrived at the chest
+    p = Decide(in);
+    EXPECT_EQ(p.action, Action::OpenChest);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    in.actorCasting = true;  // the Opening cast is in flight
+    p = Decide(in);
+    EXPECT_EQ(p.action, Action::WaitForCast);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    in.actorCasting = false;
+    in.lootWindowOnChest = true;  // the open landed: the loot window is up
+    p = Decide(in);
+    EXPECT_EQ(p.action, Action::TakeFromChest);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    // Taken: the bot now carries it, walks back down and fires the cannon.
+    in.lootWindowOnChest = false;
+    in.carrier = Carrier::Self;
+    in.actorToCannon = 42.4f;
+    p = Decide(in);
+    EXPECT_EQ(p.action, Action::WalkToCannon);
+    EXPECT_EQ(p.goEntry, GO_CANNON);
+
+    in.actorToCannon = 2.0f;
+    p = Decide(in);
+    EXPECT_EQ(p.action, Action::UseOnCannon);
+    EXPECT_EQ(p.goEntry, GO_CANNON);
+
+    in.doorOpen = true;
+    EXPECT_EQ(Decide(in).action, Action::Done);
+}
+
+// Never grants: across every input with nobody carrying the gunpowder, the plan
+// never uses it on the cannon (there is nothing to use) and only ever aims at
+// the chest; when it cannot loot, it reports why.
+TEST(DcDefiasGunpowder, WithoutACarrierThePlanNeverReachesTheCannon)
+{
+    Chest const chests[] = {Chest::Missing, Chest::Lootable, Chest::Spent};
+    float const dists[] = {0.0f, CHEST_REACH, CHEST_REACH + 0.5f, 42.4f};
+    for (bool cannon : {false, true})
+        for (bool casting : {false, true})
+            for (Chest chest : chests)
+                for (float d : dists)
+                    for (bool window : {false, true})
+                        for (bool spell : {false, true})
+                        {
+                            Inputs in;
+                            in.cannonFound = cannon;
+                            in.carrier = Carrier::None;
+                            in.actorCasting = casting;
+                            in.chest = chest;
+                            in.botToChest = d;
+                            in.lootWindowOnChest = window;
+                            in.hasOpeningSpell = spell;
+                            Plan const p = Decide(in);
+                            EXPECT_NE(p.action, Action::UseOnCannon);
+                            EXPECT_NE(p.action, Action::WalkToCannon);
+                            EXPECT_NE(p.action, Action::Done)
+                                << "the door is shut: only the cannon opens it";
+                            EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+                        }
+}
+
+TEST(DcDefiasGunpowder, NoChestReportsTheReason)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.chest = Chest::Missing;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoChest);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_NE(std::string(Describe(p.action)).find("no Defias Gunpowder chest"),
+              std::string::npos);
+}
+
+TEST(DcDefiasGunpowder, AnEmptiedChestReportsTheReason)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.chest = Chest::Spent;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::ChestSpent);
+    EXPECT_TRUE(IsReport(p.action));
+}
+
+TEST(DcDefiasGunpowder, NoOpeningSpellReportsTheReason)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.botToChest = 2.0f;
+    in.hasOpeningSpell = false;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoOpeningSpell);
+    EXPECT_TRUE(IsReport(p.action));
+}
+
+// A loot window already up on the chest is emptied before anything else, even
+// if the chest reads as spent by now (the window holds the roll).
+TEST(DcDefiasGunpowder, AnOpenLootWindowIsTakenFirst)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.lootWindowOnChest = true;
+    in.chest = Chest::Spent;
+    in.botToChest = 50.0f;
+    EXPECT_EQ(Decide(in).action, Action::TakeFromChest);
+}
+
+// Someone in the party already carries it: no trip to the chest.
+TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.chest = Chest::Missing;  // already looted by the carrier
+
+    in.carrier = Carrier::Self;
+    EXPECT_EQ(Decide(in).action, Action::UseOnCannon);
+
+    in.carrier = Carrier::PartyBot;
+    in.actorToCannon = 12.0f;
+    EXPECT_EQ(Decide(in).action, Action::WalkToCannon);
+    in.actorToCannon = 2.0f;
+    EXPECT_EQ(Decide(in).action, Action::UseOnCannon);
+
+    // A player's gunpowder is theirs to use.
+    in.carrier = Carrier::PartyHuman;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::WaitForPlayer);
+    EXPECT_TRUE(IsReport(p.action));
+}
+
+TEST(DcDefiasGunpowder, TheGunpowderCastIsNotInterrupted)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.carrier = Carrier::Self;
+    in.actorCasting = true;
+    EXPECT_EQ(Decide(in).action, Action::WaitForCast);
+}
+
+TEST(DcDefiasGunpowder, AnOpenDoorIsDoneWhateverElseIsTrue)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.doorOpen = true;
+    for (Carrier c : {Carrier::None, Carrier::Self, Carrier::PartyBot, Carrier::PartyHuman})
+    {
+        in.carrier = c;
+        EXPECT_EQ(Decide(in).action, Action::Done);
+    }
+}
+
+// --- the module grants nothing ------------------------------------------------
+
+namespace
+{
+    std::filesystem::path ModuleSrc()
+    {
+        return std::filesystem::path(DC_FIXTURE_DIR) / ".." / ".." / "src";
+    }
+
+    std::string ReadFile(std::filesystem::path const& p)
+    {
+        std::ifstream in(p);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    }
+
+    // Source with comments blanked out (so prose may still name AddItem) and
+    // string literals left alone. Newlines survive, so line numbers hold.
+    std::string StripComments(std::string const& src)
+    {
+        std::string out;
+        out.reserve(src.size());
+        enum { Code, Line, Block, Str, Chr } st = Code;
+        for (std::size_t i = 0; i < src.size(); ++i)
+        {
+            char const c = src[i];
+            char const n = i + 1 < src.size() ? src[i + 1] : '\0';
+            switch (st)
+            {
+                case Code:
+                    if (c == '/' && n == '/') { st = Line; ++i; continue; }
+                    if (c == '/' && n == '*') { st = Block; ++i; continue; }
+                    if (c == '"') st = Str;
+                    else if (c == '\'') st = Chr;
+                    out += c;
+                    break;
+                case Line:
+                    if (c == '\n') { st = Code; out += c; }
+                    break;
+                case Block:
+                    if (c == '*' && n == '/') { st = Code; ++i; }
+                    else if (c == '\n') out += c;
+                    break;
+                case Str:
+                case Chr:
+                    out += c;
+                    if (c == '\\' && i + 1 < src.size()) { out += n; ++i; }
+                    else if ((st == Str && c == '"') || (st == Chr && c == '\''))
+                        st = Code;
+                    break;
+            }
+        }
+        return out;
+    }
+
+    // "file:line" of every AddItem( call in `p`.
+    std::vector<std::string> AddItemCalls(std::filesystem::path const& p)
+    {
+        std::vector<std::string> hits;
+        std::istringstream code(StripComments(ReadFile(p)));
+        std::string line;
+        for (int n = 1; std::getline(code, line); ++n)
+            if (line.find("AddItem(") != std::string::npos)
+                hits.push_back(p.filename().string() + ":" + std::to_string(n));
+        return hits;
+    }
+
+    bool IsSource(std::filesystem::path const& p)
+    {
+        std::string const ext = p.extension().string();
+        return ext == ".cpp" || ext == ".h";
+    }
+}
+
+TEST(DcNoGrant, TheStripperKeepsCodeAndDropsComments)
+{
+    std::string const s = StripComments("a(); // AddItem(1)\n/* AddItem(2) */ b(\"//x\");\n");
+    EXPECT_EQ(s.find("AddItem("), std::string::npos);
+    EXPECT_NE(s.find("a();"), std::string::npos);
+    EXPECT_NE(s.find("b(\"//x\");"), std::string::npos);
+}
+
+// The event hooks: every scripted-event hook and driver, every event table, and
+// the event executor that runs their steps. None may create an item.
+TEST(DcNoGrant, TheEventHooksNeverCallAddItem)
+{
+    std::filesystem::path const dc = ModuleSrc() / "Ai" / "Dungeon" / "DungeonClear";
+    std::filesystem::path const hookFile = dc / "Overrides" / "ObjectiveHookRegistry.cpp";
+    std::filesystem::path const executor = dc / "Util" / "DungeonEventExecutor.cpp";
+    ASSERT_TRUE(std::filesystem::exists(hookFile)) << "cannot find " << hookFile;
+    ASSERT_TRUE(std::filesystem::exists(executor)) << "cannot find " << executor;
+
+    std::vector<std::filesystem::path> files = {executor};
+    for (char const* dir : {"Overrides", "Data/Events"})
+        for (auto const& e : std::filesystem::directory_iterator(dc / dir))
+            if (e.is_regular_file() && IsSource(e.path()))
+                files.push_back(e.path());
+
+    std::size_t scanned = 0;
+    for (auto const& f : files)
+    {
+        ++scanned;
+        for (std::string const& hit : AddItemCalls(f))
+            ADD_FAILURE() << hit << " calls AddItem: an event hook must earn the item "
+                                    "(loot it, or use one a member carries), never create it";
+    }
+    EXPECT_GT(scanned, 20u) << "the hook directories moved; the scan is not looking anywhere";
+}
+
+// And the rest of the module: no AddItem anywhere under src/.
+TEST(DcNoGrant, TheModuleNeverCallsAddItem)
+{
+    std::filesystem::path const src = ModuleSrc();
+    ASSERT_TRUE(std::filesystem::exists(src)) << "cannot find " << src;
+    std::size_t scanned = 0;
+    for (auto const& e : std::filesystem::recursive_directory_iterator(src))
+    {
+        if (!e.is_regular_file() || !IsSource(e.path()))
+            continue;
+        ++scanned;
+        for (std::string const& hit : AddItemCalls(e.path()))
+            ADD_FAILURE() << hit << " calls AddItem: the module grants nothing a player "
+                                    "could not earn";
+    }
+    EXPECT_GT(scanned, 100u);
+}

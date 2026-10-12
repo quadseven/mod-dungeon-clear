@@ -121,9 +121,10 @@ enum class EventStepKind : uint8
                              // Done immediately if the leader is already on the landing,
                              // so a tick-gap restart never re-teleports. Anchored only
                              // (one-way — the bot can't path back up).
-    UseItemOnGO,             // USE a quest item ON a positioned GameObject: grant the
-                             // item (itemId) if the bags lack it, then USE it (the full
-                             // CastItemUseSpell path) AT the GO of goEntry nearest
+    UseItemOnGO,             // USE a carried quest item ON a positioned GameObject:
+                             // the leader USES item itemId (the full CastItemUseSpell
+                             // path; never granted, the step fails without it) AT the
+                             // GO of goEntry nearest
                              // (x,y,z), so the GO's SmartAI SMART_EVENT_SPELLHIT
                              // fires. This is the "plant a bomb on a barrel" mechanic
                              // (Old Hillsbrad's Durnholde barrels — item 25853, spell
@@ -605,10 +606,11 @@ public:
     // instance + event-not-started, so a direct triggered cast summons the Shade
     // without the quest item (and no-ops if the event already started).
     EventBuilder& CastSpell(uint32 spellId);
-    // Leader USES `itemId` (granted first if not in bags), via the full item-use
-    // cast path. For a scripted "use a quest item" the bot never earned — Sunken
-    // Temple's Egg of Hakkar (10465), which fires Awaken the Soulflayer to summon
-    // the Shade ONLY when used as an item (a bare CastSpell is rejected).
+    // Leader USES `itemId`, which it must carry (never granted: the step fails
+    // without it), via the full item-use cast path. For a scripted "use a quest
+    // item": Sunken Temple's Egg of Hakkar (10465), which fires Awaken the
+    // Soulflayer to summon the Shade ONLY when used as an item (a bare CastSpell
+    // is rejected).
     EventBuilder& UseItem(uint32 itemId);
     EventBuilder& Gossip(uint32 creatureEntry, int32 option, float searchRadius = 0.0f);
     EventBuilder& WaitForSpawn(uint32 creatureEntry, bool wantAlive = true,
@@ -662,8 +664,9 @@ public:
                                  int32 doneDataId = -1, uint32 doneDataMin = 0);
     // Use a quest item ON a positioned GameObject (see EventStepKind::UseItemOnGO):
     // approach the `goEntry` GO nearest (x,y,z), then USE `itemId` on it via the
-    // full item-use cast path (granting the item first if the bags lack it;
-    // `spellId` is the item's use-spell, kept for validation and logging), so its
+    // full item-use cast path (the leader must carry it, it is never granted and
+    // the step fails without it; `spellId` is the item's use-spell, kept for
+    // validation and logging), so its
     // SmartAI SPELLHIT fires (the Durnholde barrel-bomb). `radius` is the CAST
     // REACH (0 => 3.5yd STRICT world distance — the landed OPEN_LOCK range-checks
     // the GO's interact box, live-measured failing at 6yd; arrival additionally
