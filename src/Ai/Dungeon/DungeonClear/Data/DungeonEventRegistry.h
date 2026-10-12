@@ -237,6 +237,14 @@ struct EventStep
 
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
+    // How many times a timeout on this step REWINDS the event to the nearest
+    // preceding MoveTo (step 0 if none) and runs it again, before the timeout
+    // fails the event as usual. 0 => fail on the first timeout. For a step that
+    // keeps returning Running with no gate of its own to give up on (a Custom
+    // hook), so a stuck attempt is retried from a fresh position a bounded
+    // number of times and then reported, never held. See EventBuilder::
+    // RetryOnTimeout and DungeonEventExecutor::Advance.
+    uint32 timeoutRetries{0};
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry; on a garrison MoveTo,
                              // the hook to re-run each tick WHILE it holds (see
                              // EventBuilder::WhileHolding). 0 => none.
@@ -535,6 +543,12 @@ public:
     // EventStepTimeout config default). Chain it right after the step it tunes:
     //   .WaitForSpawn(entry).Timeout(900000)
     EventBuilder& Timeout(uint32 ms);
+
+    // On a timeout of the LAST-added step, rewind to the nearest preceding MoveTo
+    // and retry, up to `retries` times per activation, then fail the event (see
+    // EventStep::timeoutRetries). Chain after the step:
+    //   .MoveTo(x, y, z, 5).Custom(hook).Timeout(30000).RetryOnTimeout(2)
+    EventBuilder& RetryOnTimeout(uint32 retries);
 
     // Mark the LAST-added step's target as optional: a Gossip step whose creature
     // is dead/gone is skipped rather than waited on. Chain after the step:

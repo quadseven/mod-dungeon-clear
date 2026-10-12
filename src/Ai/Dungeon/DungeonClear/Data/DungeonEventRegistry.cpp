@@ -119,6 +119,13 @@ EventBuilder& EventBuilder::Timeout(uint32 ms)
     return *this;
 }
 
+EventBuilder& EventBuilder::RetryOnTimeout(uint32 retries)
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().timeoutRetries = retries;
+    return *this;
+}
+
 EventBuilder& EventBuilder::SkipIfTargetMissing()
 {
     if (!_ev.steps.empty())

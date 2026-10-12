@@ -641,12 +641,133 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     // 2. fire it (Custom -> FireDefiasCannon hook id 2).
     EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
     EXPECT_EQ(e->steps[1].hookId, 2u);
+    EXPECT_EQ(e->steps[1].timeoutMs, 30000u);
+    EXPECT_EQ(e->steps[1].timeoutRetries, 2u);  // rewind to step 1, twice, then fail
 
     // 3. hold until the Iron Clad Door opens (GO_STATE_ACTIVE_ALTERNATIVE).
     EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForGameObjectState);
     EXPECT_EQ(e->steps[2].goEntry, 16397u);
     EXPECT_EQ(e->steps[2].wantState, 2u);
     EXPECT_EQ(e->steps[2].timeoutMs, 30000u);
+}
+
+// Deadmines Defias Cannon, live regression: the Custom step (FireDefiasCannon)
+// returns Running on every path that has not fired the cannon, and the realm
+// logged it "result 0 elapsed 1266400ms timeout 30000ms" for 21 minutes at the
+// Iron Clad Door. Its timeout must rewind the event to the MoveTo onto the
+// cannon and retry, a bounded number of times, and then fail the event.
+TEST(DungeonEventAdvance, DeadminesCannonCustomTimeoutRewindsThenFails)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(e->steps.size(), 3u);
+    ASSERT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    ASSERT_EQ(e->steps[1].kind, EventStepKind::Custom);
+
+    constexpr uint32 kDefaultTimeout = 30000;
+    uint32 const timeout = e->steps[1].timeoutMs ? e->steps[1].timeoutMs : kDefaultTimeout;
+
+    // On the Custom step: the MoveTo onto the cannon is already done.
+    uint32 now = 1000;
+    DungeonEventProgress p = Prog(1, 1, now);
+
+    // Inside its timeout the hook's Running holds.
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now + timeout - 1,
+                                            kDefaultTimeout),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 1u);
+
+    // Past it: rewind to the MoveTo (step 0), not a stall.
+    now += timeout;
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now, kDefaultTimeout),
+              EventDriveOutcome::Running)
+        << "the first timeout of the cannon step must retry, not stall the run";
+    EXPECT_EQ(p.stepIndex, 0u) << "the retry starts from the MoveTo onto the cannon";
+
+    // Keep the hook stuck: MoveTo re-arrives, the Custom step times out again.
+    // Bounded: the event must fail within a handful of retries, never hold.
+    int rewinds = 1;
+    EventDriveOutcome out = EventDriveOutcome::Running;
+    for (int i = 0; i < 10 && out == EventDriveOutcome::Running; ++i)
+    {
+        now += 1000;
+        ASSERT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Done, now, kDefaultTimeout),
+                  EventDriveOutcome::Running);
+        ASSERT_EQ(p.stepIndex, 1u);
+        now += timeout;
+        out = DungeonEventExecutor::Advance(*e, p, StepResult::Running, now, kDefaultTimeout);
+        if (out == EventDriveOutcome::Running)
+        {
+            EXPECT_EQ(p.stepIndex, 0u);
+            ++rewinds;
+        }
+    }
+    EXPECT_EQ(out, EventDriveOutcome::Stalled)
+        << "once the retries are spent the required event fails (stalls with a reason)";
+    EXPECT_EQ(rewinds, 2) << "two retries from the MoveTo, then the failure";
+    EXPECT_EQ(p.stepIndex, 1u) << "the failure reports the step that timed out";
+
+    // And it stays failed: a later tick does not quietly start another retry.
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now + 5000,
+                                            kDefaultTimeout),
+              EventDriveOutcome::Stalled);
+}
+
+TEST(EventBuilderTest, RetryOnTimeoutTagsOnlyTheStepItFollows)
+{
+    DungeonEvent e = EventBuilder(0, 1, "e")
+                         .MoveTo(1.0f, 2.0f, 3.0f, 5.0f)
+                         .Custom(7)
+                         .Timeout(20000)
+                         .RetryOnTimeout(3)
+                         .WaitForGOState(100, 2, 8000)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 3u);
+    EXPECT_EQ(e.steps[0].timeoutRetries, 0u);
+    EXPECT_EQ(e.steps[1].timeoutRetries, 3u);
+    EXPECT_EQ(e.steps[1].timeoutMs, 20000u);
+    EXPECT_EQ(e.steps[2].timeoutRetries, 0u);
+}
+
+TEST(DungeonEventAdvance, TimeoutRewindGoesToNearestPrecedingMoveTo)
+{
+    // Two MoveTos ahead of the Custom step: the retry re-walks only the last one,
+    // the leg that actually puts the bot where the hook works.
+    DungeonEvent ev = EventBuilder(0, 1, "e")
+                          .MoveTo(0.0f, 0.0f, 0.0f, 5.0f)
+                          .UseGO(100, 10.0f)
+                          .MoveTo(1.0f, 0.0f, 0.0f, 5.0f)
+                          .Custom(7)
+                          .Timeout(5000)
+                          .RetryOnTimeout(1)
+                          .Build();
+    DungeonEventProgress p = Prog(1, 3, 0);
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 5000, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 2u);
+    EXPECT_EQ(p.stepStartMs, 5000u);
+
+    // No MoveTo before it at all: the retry restarts the event from step 0.
+    DungeonEvent lone = EventBuilder(0, 2, "e").Custom(7).Timeout(5000).RetryOnTimeout(1).Build();
+    DungeonEventProgress q = Prog(2, 0, 0);
+    EXPECT_EQ(DungeonEventExecutor::Advance(lone, q, StepResult::Running, 5000, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(q.stepIndex, 0u);
+    EXPECT_EQ(DungeonEventExecutor::Advance(lone, q, StepResult::Running, 10000, 30000),
+              EventDriveOutcome::Stalled);
+}
+
+TEST(DungeonEventAdvance, CustomStepWithoutRetriesStillFailsOnFirstTimeout)
+{
+    // The rewind is opt-in: every other Custom step keeps its old behaviour.
+    DungeonEvent ev = EventBuilder(0, 1, "e")
+                          .MoveTo(0.0f, 0.0f, 0.0f, 5.0f)
+                          .Custom(7)
+                          .Build();
+    DungeonEventProgress p = Prog(1, 1, 0);
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 30000, 30000),
+              EventDriveOutcome::Stalled);
+    EXPECT_EQ(p.stepIndex, 1u);
 }
 
 // Wailing Caverns drop to Lord Serpentis: settle on the lip, then jump the

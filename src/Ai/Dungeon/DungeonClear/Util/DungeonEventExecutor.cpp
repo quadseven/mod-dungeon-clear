@@ -1222,7 +1222,37 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
         // wrap-safe for an elapsed interval.
         if (!watchdogOwned && timeout > 0 &&
             static_cast<uint32>(nowMs - prog.stepStartMs) >= timeout)
+        {
+            // A step with a rewind budget left goes back to the nearest MoveTo
+            // before it (step 0 if none) and runs again, instead of failing. The
+            // Deadmines cannon hook is why: it returns Running on every path that
+            // has not fired the cannon, and the first timeout stalled the run on
+            // the spot for good (21 minutes live, "result 0" every heartbeat).
+            // Bounded by the per-activation counter, so a rewind loop still ends
+            // in a failure.
+            if (prog.timeoutRewinds < step.timeoutRetries)
+            {
+                uint32 back = 0;
+                for (uint32 i = prog.stepIndex; i-- > 0;)
+                {
+                    if (ev.steps[i].kind == EventStepKind::MoveTo)
+                    {
+                        back = i;
+                        break;
+                    }
+                }
+                ++prog.timeoutRewinds;
+                prog.stepIndex = back;
+                prog.attempts = 0;
+                prog.stepStartMs = nowMs;
+                // The rewind is deliberate and bounded, so it re-bases the
+                // forward-progress watchdog too; otherwise that 3x backstop would
+                // fail the event before the retries it was given could run.
+                prog.progressMs = nowMs;
+                return EventDriveOutcome::Running;
+            }
             result = StepResult::Failed;
+        }
         else
             return EventDriveOutcome::Running;
     }
@@ -1287,6 +1317,8 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         prog.stepStartMs = now;
         prog.maxStepIndex = 0;
         prog.progressMs = now;
+        prog.timeoutRewinds = 0;
+        prog.timeoutFailLogged = false;
     }
     // A gap since the last drive means this is a FRESH activation — a new run /
     // re-enter, or the event lapsed (condition went false) and re-fired — NOT a
@@ -1320,6 +1352,8 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
             prog.stepIndex = 0;
             prog.attempts = 0;
             prog.maxStepIndex = 0;
+            prog.timeoutRewinds = 0;
+            prog.timeoutFailLogged = false;
         }
     }
     prog.lastDriveMs = now;
@@ -1383,7 +1417,32 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         }
     }
 
-    return Advance(ev, prog, result, now, defaultTimeoutMs);
+    uint32 const stepBefore = prog.stepIndex;
+    uint32 const rewindsBefore = prog.timeoutRewinds;
+    EventDriveOutcome const outcome = Advance(ev, prog, result, now, defaultTimeoutMs);
+
+    // A timeout rewind or the failure that ends one is news, not a heartbeat:
+    // say it at INFO, once, so a held event never again reads as "result 0"
+    // with nothing else to go on.
+    if (bot && prog.timeoutRewinds != rewindsBefore)
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] event '{}' step {} kind {} timed out ({}ms) -> rewind to step {}, "
+                 "retry {}/{}",
+                 bot->GetName(), ev.name, stepBefore, static_cast<uint32>(active.kind),
+                 active.timeoutMs ? active.timeoutMs : defaultTimeoutMs, prog.stepIndex,
+                 prog.timeoutRewinds, active.timeoutRetries);
+    else if (bot && active.timeoutRetries > 0 && !prog.timeoutFailLogged &&
+             result == StepResult::Running &&
+             (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped))
+    {
+        prog.timeoutFailLogged = true;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] event '{}' step {} kind {} timed out after {} retries -> event failed",
+                 bot->GetName(), ev.name, stepBefore, static_cast<uint32>(active.kind),
+                 prog.timeoutRewinds);
+    }
+
+    return outcome;
 }
 
 DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,

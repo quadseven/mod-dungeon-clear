@@ -40,6 +40,9 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_DOOR_OPEN_STATE   = 2;  // GO_STATE_ACTIVE_ALTERNATIVE
     constexpr uint32 DM_FIRE_CANNON_HOOK  = 2;  // ObjectiveHookRegistry id
+    // Ample for a 2s cast; a cannon that has not fired in this long will not.
+    constexpr uint32 DM_FIRE_CANNON_TIMEOUT_MS = 30000;
+    constexpr uint32 DM_FIRE_CANNON_RETRIES    = 2;
 
     out.push_back(
         EventBuilder(36, 1, "Iron Clad Door (Defias Cannon)")
@@ -49,8 +52,13 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
             //    leave the tank ~10yd off; the cannon GO is at this spot).
             .MoveTo(-107.56f, -659.67f, 7.21f, /*radius*/ 5.0f)
             // 2. Fire it. The hook casts spell 6250 at the cannon GO -> its
-            //    SmartAI opens the door + summons the Squallshapers.
+            //    SmartAI opens the door + summons the Squallshapers. The hook
+            //    returns Running until the door opens, so its timeout is what
+            //    ends a stuck attempt: walk back onto the cannon and try again,
+            //    twice, then fail the event rather than hold at the door.
             .Custom(DM_FIRE_CANNON_HOOK)
+            .Timeout(DM_FIRE_CANNON_TIMEOUT_MS)
+            .RetryOnTimeout(DM_FIRE_CANNON_RETRIES)
             // 3. Hold until the Iron Clad Door is confirmed open, then the clear
             //    advances through it to Mr. Smite and the rest of the ship.
             .WaitForGOState(DM_GO_IRON_CLAD_DOOR, DM_DOOR_OPEN_STATE)

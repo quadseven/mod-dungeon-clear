@@ -64,6 +64,13 @@ struct DungeonEventProgress
     uint32 maxStepIndex{0};  // highest stepIndex reached this activation
     uint32 progressMs{0};    // ms-time maxStepIndex last increased (or activation)
 
+    // Timeout rewinds spent this activation (EventStep::timeoutRetries). Counted
+    // per activation, not per step visit, so a step that times out, rewinds and
+    // times out again is bounded: once this reaches the step's budget the next
+    // timeout fails the event.
+    uint32 timeoutRewinds{0};
+    bool   timeoutFailLogged{false};  // Drive said "retries spent" once already
+
     // EscortCreature watchdog: ms-time the escort last made genuine progress
     // (escortee moved, combat occurred, a reachable threat existed, or the final
     // boss is pending within grace). The escort step has no flat timeout (the
@@ -104,6 +111,8 @@ struct DungeonEventProgress
         instanceId = 0;
         maxStepIndex = 0;
         progressMs = 0;
+        timeoutRewinds = 0;
+        timeoutFailLogged = false;
         escortProgressMs = 0;
         escortCombatWedgeMs = 0;
         relocationCombatHoldMs = 0;
@@ -119,7 +128,9 @@ public:
     // PURE state transition: fold a step's `result` into `prog` and report what
     // the driver should do. Handles step advancement, the per-step timeout
     // (escalates a too-long Running to Failed using `nowMs - stepStartMs`), and
-    // the required/optional terminal mapping. No game state — unit-tested
+    // the required/optional terminal mapping, and the bounded timeout rewind
+    // (EventStep::timeoutRetries: a timed-out step with budget left rewinds to
+    // the nearest preceding MoveTo and reports Running). No game state; unit-tested
     // directly. `defaultTimeoutMs` is used when the step's own timeoutMs is 0.
     static EventDriveOutcome Advance(DungeonEvent const& ev, DungeonEventProgress& prog,
                                      StepResult result, uint32 nowMs, uint32 defaultTimeoutMs);

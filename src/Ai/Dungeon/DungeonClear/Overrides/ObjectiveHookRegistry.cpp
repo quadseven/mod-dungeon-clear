@@ -159,25 +159,88 @@ namespace
     //    and interrupt ourselves every tick);
     //  - otherwise grant + use the gunpowder. Returns Running; the event's
     //    door-state gate is what confirms the open and advances.
+    //
+    // Every Running path says which one it is, once per change (DmCannonReason,
+    // remembered on the bot's run state). A live realm logged this step Running
+    // for 21 minutes with nothing to say whether the cannon was out of range, a
+    // cast was stuck in flight, or the item use never started a cast at all.
     constexpr uint32 DM_GO_CANNON         = 16398;
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_ITEM_GUNPOWDER    = 5397;  // casts OPEN_LOCK spell 6250
+    constexpr float  DM_CANNON_SCAN       = 40.0f;
 
-    ObjectiveArriveResult FireDefiasCannon(Player* bot, AiObjectContext* /*context*/,
+    enum class DmCannonReason : uint8
+    {
+        None = 0,
+        DoorOpen,      // Done: the door is no longer READY
+        CastInFlight,  // someone else's cast (not our gunpowder) is running
+        NoCannon,      // no cannon GO within DM_CANNON_SCAN
+        NoGunpowder,   // the grant did not land (bags full)
+        CastStarted,   // used the gunpowder; the opening cast is running
+        CastAgain,     // our cast finished and the door is still shut; using it again
+        CastRefused,   // used the gunpowder; no cast started
+    };
+
+    // Log `reason` if it differs from the last one this bot reported. The cast
+    // cycle (CastStarted -> the 2s cast in flight -> CastStarted) is one state,
+    // so the in-flight tick after our own use is folded into CastStarted.
+    bool DmCannonReasonChanged(AiObjectContext* context, DmCannonReason reason)
+    {
+        if (!context)
+            return true;
+        uint8& last = DcRun::Of(context).dmCannonReason;
+        if (last == static_cast<uint8>(reason))
+            return false;
+        last = static_cast<uint8>(reason);
+        return true;
+    }
+
+    ObjectiveArriveResult FireDefiasCannon(Player* bot, AiObjectContext* context,
                                            DungeonBossInfo const& /*info*/)
     {
+        DmCannonReason const last = context
+            ? static_cast<DmCannonReason>(DcRun::Of(context).dmCannonReason)
+            : DmCannonReason::None;
+
         // Door already open (state != READY) -> the cannon has fired.
         if (GameObject* door = bot->FindNearestGameObject(DM_GO_IRON_CLAD_DOOR, 100.0f))
             if (door->GetGoState() != GO_STATE_READY)
+            {
+                if (DmCannonReasonChanged(context, DmCannonReason::DoorOpen))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Defias Cannon: Iron Clad Door is open (state {}) -> done",
+                             bot->GetName(), static_cast<uint32>(door->GetGoState()));
                 return ObjectiveArriveResult::Done;
+            }
 
         // The 2s gunpowder "Opening" cast is already running — let it complete.
         if (bot->IsNonMeleeSpellCast(false))
+        {
+            bool const ours = last == DmCannonReason::CastStarted ||
+                              last == DmCannonReason::CastAgain;
+            if (!ours && DmCannonReasonChanged(context, DmCannonReason::CastInFlight))
+            {
+                Spell* cur = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                if (!cur)
+                    cur = bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] Defias Cannon: running, waiting on a cast in flight (spell {})",
+                         bot->GetName(), cur ? cur->GetSpellInfo()->Id : 0u);
+            }
             return ObjectiveArriveResult::Running;
+        }
 
-        GameObject* cannon = bot->FindNearestGameObject(DM_GO_CANNON, 40.0f);
+        GameObject* cannon = bot->FindNearestGameObject(DM_GO_CANNON, DM_CANNON_SCAN);
         if (!cannon)
+        {
+            if (DmCannonReasonChanged(context, DmCannonReason::NoCannon))
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] Defias Cannon: running, no cannon (GO {}) within {:.0f}yd of "
+                         "({:.1f},{:.1f},{:.1f})",
+                         bot->GetName(), DM_GO_CANNON, DM_CANNON_SCAN, bot->GetPositionX(),
+                         bot->GetPositionY(), bot->GetPositionZ());
             return ObjectiveArriveResult::Running;  // not in range yet
+        }
 
         // Grant the gunpowder (bots never looted the chest) and use it on the
         // cannon: the item is the OPEN_LOCK key, so the spell hits and the
@@ -188,7 +251,14 @@ namespace
             bot->AddItem(DM_ITEM_GUNPOWDER, 1);
             gunpowder = bot->GetItemByEntry(DM_ITEM_GUNPOWDER);
             if (!gunpowder)
+            {
+                if (DmCannonReasonChanged(context, DmCannonReason::NoGunpowder))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Defias Cannon: running, could not grant the gunpowder "
+                             "(item {}; bags full?)",
+                             bot->GetName(), DM_ITEM_GUNPOWDER);
                 return ObjectiveArriveResult::Running;  // bags full this tick
+            }
         }
 
         // Feral-form druids can't cast the item spell at all — shift back first
@@ -197,6 +267,26 @@ namespace
         SpellCastTargets targets;
         targets.SetGOTarget(cannon);
         bot->CastItemUseSpell(gunpowder, targets, 0, 0);
+
+        // CastItemUseSpell returns nothing; its result is whether a cast is now
+        // running. A refused cast (lock, form, range, item) leaves none.
+        Spell* cast = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        uint32 const castId = cast ? cast->GetSpellInfo()->Id : 0u;
+        DmCannonReason const reason =
+            !cast ? DmCannonReason::CastRefused
+            : (last == DmCannonReason::CastStarted || last == DmCannonReason::CastAgain)
+                ? DmCannonReason::CastAgain
+                : DmCannonReason::CastStarted;
+        if (DmCannonReasonChanged(context, reason))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] Defias Cannon: running, used gunpowder on the cannon "
+                     "(dist {:.1f}yd): {} (cast spell {}, CanUseItem {}, form {}, door still shut)",
+                     bot->GetName(), bot->GetExactDist(cannon),
+                     reason == DmCannonReason::CastRefused ? "no cast started"
+                     : reason == DmCannonReason::CastAgain ? "previous cast ended, cast again"
+                                                           : "cast started",
+                     castId, static_cast<uint32>(bot->CanUseItem(gunpowder)),
+                     static_cast<uint32>(bot->GetShapeshiftForm()));
         return ObjectiveArriveResult::Running;  // door-state gate confirms it
     }
 
