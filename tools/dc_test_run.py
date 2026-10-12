@@ -89,6 +89,10 @@ SIGNALS = [
     # means the bots missed or that nothing kickable was cast, so the misses are grepped too.
     ("interrupt landed", ["interrupt: '"]),
     ("interrupt MISSED", ["interrupt MISS:"]),
+    # The at-boss gate (DcAtBoss::Evaluate): which gate held the tank at a boss,
+    # and when the valve engaged past it.
+    ("at-boss gate", ["at-boss gate down"]),
+    ("at-boss valve", ["at-boss valve:"]),
     ("door", ["door blocked", "door-blocked", "door stalled", "forcing door", "force-open"]),
     ("combat", ["phantom combat", "stuck in combat", "flip-early", "regroup"]),
     ("death / rez", ["post-combat rez", "died", "wipe", "resurrect"]),

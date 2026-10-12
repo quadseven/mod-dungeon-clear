@@ -36,6 +36,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/BossPullbackRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAtBoss.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLogThrottle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
@@ -607,70 +608,97 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
     if (next->kind != DungeonAnchorKind::Boss)
         return Step::Continue;
 
-    if (atBoss)
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+    if (!atBoss)
     {
-        ChunkedPathfinder::Result const& currentPath =
-            AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
-        DungeonFollowerState const& followerNow =
-            AI_VALUE(DungeonFollowerState&, DcKey::FollowerState);
-        bool anchoredHopsPending = false;
-        if (currentPath.reachable && !currentPath.segments.empty())
-        {
-            // Only inspect segments still ahead of the follower's cursor.
-            // Anchored segments already walked past don't need to gate
-            // the engage handoff.
-            //
-            // DungeonClearAtBossTrigger::IsActive runs the SAME test — it is the
-            // rung this hold is waiting for, so the two must agree or the tank
-            // parks at the boss forever (it did: the trigger's copy started at
-            // segment 0, see the note there). Keep them in step.
-            for (size_t i = followerNow.segmentIdx; i + 1 < currentPath.segments.size(); ++i)
-            {
-                PathSegment const& seg = currentPath.segments[i];
-                if (seg.anchored && bot->GetDistance(seg.ex, seg.ey, seg.ez) > seg.arriveRadius)
-                {
-                    anchoredHopsPending = true;
-                    break;
-                }
-            }
-        }
-        if (!anchoredHopsPending)
-        {
-            // Surface WHY we're holding: the at-boss trigger only pulls once the
-            // party is ready and no loot is pending. When it doesn't fire, this
-            // is the line that explains the otherwise-silent idle at the boss.
-            // AND WHICH MEMBER, when the party is the reason. A hold at Fenrus
-            // the Devourer on the dev realm (2026-10-04) logged partyReady=0
-            // for sixteen minutes and nothing else, so the stall was blind.
-            // Named with the gate's own thresholds, as the yield line does.
-            bool const partyReady = IsBetweenPullsReady(bot, context);
-            std::string notReady;
-            if (!partyReady)
-            {
-                DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
-                DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
-                notReady = DcPartyState::DescribePartyNotReady(
-                    bot, rest, gate.maxSpread, gate.anchor, gate.maxTankGap);
-                if (notReady.empty())
-                    notReady = "resting or a pending resurrection";
-            }
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
-                      "for at-boss [partyReady={} availLoot={} canLoot={} tankCombat={}]{}{}",
-                      bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
-                      partyReady ? 1 : 0,
-                      AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
-                      AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
-                      bot->IsInCombat() ? 1 : 0, notReady.empty() ? "" : " - ", notReady);
-            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
-            ClearStall(context);
-            // Parked at the boss waiting for the at-boss pull — not navigating,
-            // so clear the nav phase (status reads this as "idle / holding").
-            SetPhase(context, "");
-            return Step::ReturnFalse;
-        }
+        // Off the boss: the next hold's first line always goes out.
+        appr.atBossHoldLogged = 0;
+        appr.atBossHoldLogMs = 0;
+        return Step::Continue;
     }
-    return Step::Continue;
+
+    // THE TRIGGER'S OWN VERDICT. This hold waits for DungeonClearAtBossTrigger,
+    // and it used to re-derive that rung's test from its own copy, so the two
+    // could disagree and the tank park at the boss forever (they did: Azjol-Nerub's
+    // anchored-segment loop, then Blackfathom Deeps' Gelihast, whose trigger gate
+    // was down for reasons nothing logged). Both read DcAtBoss::Evaluate now.
+    DcAtBossGate::Verdict const verdict = DcAtBoss::Evaluate(bot, botAI, context, *next);
+
+    // Anchored route hops still ahead of the cursor: not a hold, keep walking the
+    // route (the trigger waits on the same anchors).
+    if (!verdict.fire && verdict.gate == DcAtBossGate::Gate::AnchoredHops)
+        return Step::Continue;
+
+    // ON CHANGE, OR ONCE PER INTERVAL, NOT EVERY TICK: at Gelihast the hold line
+    // was written 1,911 times in five minutes. See DcLogThrottle.h. A live
+    // trigger is its own key, so the switch between the two lines is news.
+    uint8 const logKey = verdict.fire ? 0xFF : static_cast<uint8>(verdict.gate);
+    uint32 const nowMs = getMSTime();
+    bool const logNow =
+        DcLogThrottle::ShouldLog(appr.atBossHoldLogMs == 0, logKey != appr.atBossHoldLogged,
+                                 getMSTimeDiff(appr.atBossHoldLogMs, nowMs),
+                                 DC_AT_BOSS_GATE_LOG_INTERVAL_MS);
+    if (logNow)
+    {
+        appr.atBossHoldLogged = logKey;
+        appr.atBossHoldLogMs = nowMs != 0 ? nowMs : 1u;
+    }
+
+    // The trigger is live, so the engage rung (30) had this tick and did not take
+    // it: its action refused (EngageDirect could not move, the boss is not
+    // present). Parking here would freeze the tank behind a gate that is open;
+    // fall through so the approach keeps closing and its own stall machinery
+    // sees a real wedge.
+    if (verdict.fire)
+    {
+        if (logNow)
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] within engage range of {} ({:.0f}yd, live={}) and the at-boss "
+                      "gate is {} - the engage did not take the tick, approaching",
+                      bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
+                      verdict.valveOpen ? "open via the valve" : "open");
+        return Step::Continue;
+    }
+
+    // Surface WHY we're holding: the gate that is down, by name, and the valve's
+    // progress when it is one the valve can open past.
+    // AND WHICH MEMBER, when the party is the reason. A hold at Fenrus
+    // the Devourer on the dev realm (2026-10-04) logged partyReady=0
+    // for sixteen minutes and nothing else, so the stall was blind.
+    // Named with the gate's own thresholds, as the yield line does.
+    if (logNow)
+    {
+        bool const partyReady = IsBetweenPullsReady(bot, context);
+        std::string notReady;
+        if (!partyReady)
+        {
+            DcPartyState::SpreadGate const spread = DcPartyState::GetSpreadGate(bot, context);
+            DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+            notReady = DcPartyState::DescribePartyNotReady(
+                bot, rest, spread.maxSpread, spread.anchor, spread.maxTankGap);
+            if (notReady.empty())
+                notReady = "resting or a pending resurrection";
+        }
+        std::string valve;
+        if (DcAtBossGate::ValveCanOverride(verdict.gate))
+            valve = " valve=" + std::to_string(verdict.heldMs) + "/" +
+                    std::to_string(DC_AT_BOSS_HOLD_VALVE_MS) + "ms";
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
+                  "for at-boss on '{}' [partyReady={} availLoot={} canLoot={} tankCombat={}{}]{}{}",
+                  bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
+                  DcAtBossGate::Name(verdict.gate), partyReady ? 1 : 0,
+                  AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
+                  AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
+                  bot->IsInCombat() ? 1 : 0, valve, notReady.empty() ? "" : " - ", notReady);
+    }
+    DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+    ClearStall(context);
+    // Parked at the boss waiting for the at-boss pull - not navigating,
+    // so clear the nav phase (status reads this as "idle / holding").
+    SetPhase(context, "");
+    return Step::ReturnFalse;
 }
 
 // Loot yield (with commit-timeout). Step aside through the WHOLE loot lifecycle

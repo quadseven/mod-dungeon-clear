@@ -17,6 +17,12 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
+# New files added: Util/DcAtBossGate.{h,cpp}, Util/DcAtBoss.{h,cpp}
+#   (the at-boss gate as ONE predicate: DungeonClearAtBossTrigger fires on it
+#    and the advance engage hold holds on it, so the two cannot disagree; the
+#    gate that is down is logged by name, a real door is required for the door
+#    veto, and a bounded valve engages a boss the tank has held at with the
+#    party ready. The kernel half is engine-free and gtested.)
 # New files added: Util/DcBotProvisioning.{h,cpp}
 #   (the order-sensitive PlayerbotFactory sequence — strip, Randomize at the
 #    wanted level, force the spec and re-gear/re-glyph/re-enchant for it, pet,

@@ -454,6 +454,17 @@ constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
 // throttled at all.
 constexpr uint32 DC_PARTY_YIELD_LOG_INTERVAL_MS = 30000;
 
+// The at-boss valve (DcAtBossGate): how long the tank may hold at a live boss,
+// party ready and no loot pending, on gates the valve may override, before the
+// engage runs anyway. Long enough that a working room clear (whose pulls drop
+// the hold through combat and rest) never reaches it; far shorter than the
+// minutes a wedged gate used to cost.
+constexpr uint32 DC_AT_BOSS_HOLD_VALVE_MS = 40000;
+
+// How often an UNCHANGED at-boss gate verdict is repeated in the log. A changed
+// gate is logged at once; see DcLogThrottle.h.
+constexpr uint32 DC_AT_BOSS_GATE_LOG_INTERVAL_MS = 30000;
+
 // Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
 // the cached route and forces a rebuild. Resnap only proves the bot's position
 // can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot

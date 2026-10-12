@@ -538,6 +538,15 @@ public:
     // blanket override rather than a registry exception.
     static bool OnlyEventGatesBetween(WorldObject* from, float tx, float ty, float tz);
 
+    // The attribution half of the two above, as counts: how many shut doors from
+    // the door index stand on the from->(tx,ty,tz) line (DC_EVENT_GATE_BAND, the
+    // chord's floor band), and how many of those are interact-through event
+    // gates. ClosedDoorBetween's ray is blocked by ANY GameObject with collision;
+    // these counts say whether a DOOR is what blocked it. See
+    // DcAtBossGate::DoorVetoes, which the at-boss gate decides the door on.
+    static void CountShutDoorsOnChord(WorldObject* from, float tx, float ty, float tz,
+                                      uint32& shutDoors, uint32& eventGates);
+
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits within `radius` (2D) of the
     // point (x,y,z) and on its floor (Z band). Companion to ClosedDoorBetween:
     // that one tests a door BETWEEN two points and deliberately ignores a door

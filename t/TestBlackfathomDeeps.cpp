@@ -5,12 +5,15 @@
 
 #include "gtest/gtest.h"
 
+#include <cstdint>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 // Blackfathom Deeps (map 48). Live, on the dev realm: 9 guild runs, 0 clears.
 // Five sat out the 7200 s ceiling at 1 to 4 of 7 bosses. The derived order sent
@@ -170,4 +173,234 @@ TEST(DungeonEventBlackfathomDeeps, WaveVolumeHoldsTheSummonsAndNoStaticSpawn)
 TEST(DungeonEventBlackfathomDeeps, PortalOfAkumaiIsScriptOnly)
 {
     EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(21117));
+}
+
+// ---------------------------------------------------------------------------
+// Gelihast: the tank holds at the boss and the at-boss engage never fires.
+//
+// Live (2026-10-12, 41 guild runs, 0 clears, 13 stopped at 2 bosses): two tanks
+// logged "within engage range of Gelihast (14yd, live=1) -> holding for at-boss
+// [partyReady=1 availLoot=0 canLoot=0 tankCombat=0]" 1,911 times in five
+// minutes. The hold and the trigger now read one verdict (DcAtBossGate), the
+// door gate needs a real door, and a valve opens past the gates that can wedge.
+// ---------------------------------------------------------------------------
+namespace
+{
+    using DcAtBossGate::Gate;
+
+    // The tank on Gelihast's spot, 14yd out: driving, on his floor, the party
+    // ready, nothing to loot, Gelihast alive.
+    DcAtBossGate::Inputs AtGelihast()
+    {
+        DcAtBossGate::Inputs in;
+        in.driving = true;
+        in.bossAnchor = true;
+        in.atEngage = true;
+        in.liveBoss = true;
+        in.partyReady = true;
+        in.valveMs = DC_AT_BOSS_HOLD_VALVE_MS;
+        return in;
+    }
+
+    constexpr uint32_t TICK_MS = 100;
+
+    // Ticks the gate from `startMs` the way the live caller does, carrying the
+    // valve clock, until it fires or `budgetMs` runs out. Returns the ms it took
+    // to fire, or UINT32_MAX.
+    uint32_t MsToFire(DcAtBossGate::Inputs in, uint32_t startMs, uint32_t budgetMs,
+                      DcAtBossGate::Verdict* last = nullptr)
+    {
+        in.heldSinceMs = 0;
+        for (uint32_t t = 0; t <= budgetMs; t += TICK_MS)
+        {
+            in.nowMs = startMs + t;
+            DcAtBossGate::Verdict const v = DcAtBossGate::Decide(in);
+            in.heldSinceMs = v.heldSinceMs;
+            if (last)
+                *last = v;
+            if (v.fire)
+                return t;
+        }
+        return UINT32_MAX;
+    }
+}
+
+// A GameObject that is not a door (a hut, the shrine) blocks the door ray on the
+// line to Gelihast, and the door index has no shut door there. That is not a
+// door, so the engage fires on the first tick.
+TEST(DungeonEventBlackfathomDeeps, GelihastEngagesPastAModelThatIsNotADoor)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.closedDoor = DcAtBossGate::DoorVetoes(/*losBlocked*/ true, /*shutDoors*/ 0,
+                                             /*eventGates*/ 0);
+    EXPECT_FALSE(in.closedDoor);
+
+    DcAtBossGate::Verdict v;
+    EXPECT_EQ(MsToFire(in, 50000, 0, &v), 0u);
+    EXPECT_EQ(v.gate, Gate::Open);
+    EXPECT_FALSE(v.valveOpen);
+}
+
+// The acceptance case: the tank at Gelihast's spot with the party ready, held by
+// room trash that never clears, reaches the engage within the valve and not
+// before it.
+TEST(DungeonEventBlackfathomDeeps, TankHeldAtGelihastWithThePartyReadyEngagesWithinTheValve)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+
+    DcAtBossGate::Verdict v;
+    uint32_t const took = MsToFire(in, 50000, 3 * DC_AT_BOSS_HOLD_VALVE_MS, &v);
+    ASSERT_NE(took, UINT32_MAX) << "the tank never engaged Gelihast";
+    EXPECT_LE(took, DC_AT_BOSS_HOLD_VALVE_MS);
+    EXPECT_GE(took, DC_AT_BOSS_HOLD_VALVE_MS - TICK_MS);
+    EXPECT_TRUE(v.valveOpen);
+    EXPECT_EQ(v.gate, Gate::RoomTrash);
+}
+
+// Same hold across the millisecond clock's wrap.
+TEST(DungeonEventBlackfathomDeeps, ValveSurvivesTheClockWrap)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    uint32_t const took =
+        MsToFire(in, UINT32_MAX - 1000, 3 * DC_AT_BOSS_HOLD_VALVE_MS);
+    EXPECT_LE(took, DC_AT_BOSS_HOLD_VALVE_MS);
+    EXPECT_GE(took, DC_AT_BOSS_HOLD_VALVE_MS - TICK_MS);
+}
+
+// The valve is for a party that is ready and a tank that is held. Anything else
+// keeps the gate shut and the clock at zero.
+TEST(DungeonEventBlackfathomDeeps, ValveStaysShutUnlessThePartyIsReadyAtALiveBoss)
+{
+    uint32_t const budget = 3 * DC_AT_BOSS_HOLD_VALVE_MS;
+    auto held = []() {
+        DcAtBossGate::Inputs in = AtGelihast();
+        in.roomTrash = true;
+        return in;
+    };
+
+    DcAtBossGate::Inputs in = held();
+    in.partyReady = false;
+    EXPECT_EQ(MsToFire(in, 1000, budget), UINT32_MAX) << "party not ready";
+
+    in = held();
+    in.lootPending = true;
+    EXPECT_EQ(MsToFire(in, 1000, budget), UINT32_MAX) << "loot pending";
+
+    in = held();
+    in.liveBoss = false;
+    EXPECT_EQ(MsToFire(in, 1000, budget), UINT32_MAX) << "boss not live";
+
+    in = held();
+    in.raid = true;
+    EXPECT_EQ(MsToFire(in, 1000, budget), UINT32_MAX) << "raid: the muster owns it";
+
+    in = held();
+    in.valveMs = 0;
+    EXPECT_EQ(MsToFire(in, 1000, budget), UINT32_MAX) << "valve off";
+}
+
+// Never past a real shut door, the anchored route, a pull, or out of range, even
+// when room trash is also down.
+TEST(DungeonEventBlackfathomDeeps, ValveNeverOpensPastAHardGate)
+{
+    uint32_t const budget = 3 * DC_AT_BOSS_HOLD_VALVE_MS;
+    struct Case { char const* name; void (*set)(DcAtBossGate::Inputs&); Gate want; };
+    Case const cases[] = {
+        { "door",     [](DcAtBossGate::Inputs& i) { i.closedDoor = true; },   Gate::RoomTrash },
+        { "hops",     [](DcAtBossGate::Inputs& i) { i.anchoredHops = true; }, Gate::RoomTrash },
+        { "pull",     [](DcAtBossGate::Inputs& i) { i.pullOwns = true; },     Gate::PullOwns },
+        { "range",    [](DcAtBossGate::Inputs& i) { i.atEngage = false; },    Gate::NotAtEngage },
+        { "encounter",[](DcAtBossGate::Inputs& i) { i.encounterHold = true; },Gate::EncounterHold },
+        { "drive",    [](DcAtBossGate::Inputs& i) { i.driving = false; },     Gate::NotDriving },
+    };
+    for (Case const& c : cases)
+    {
+        DcAtBossGate::Inputs in = AtGelihast();
+        in.roomTrash = true;
+        c.set(in);
+        DcAtBossGate::Verdict v;
+        EXPECT_EQ(MsToFire(in, 1000, budget, &v), UINT32_MAX) << c.name;
+        EXPECT_EQ(v.gate, c.want) << c.name;
+        EXPECT_EQ(v.heldSinceMs, 0u) << c.name;
+    }
+
+    // A real door alone is reported as the door.
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.closedDoor = true;
+    EXPECT_EQ(DcAtBossGate::Decide(in).gate, Gate::ClosedDoor);
+}
+
+// One tick that is not a valve hold (the party dips below ready) re-arms the
+// clock: the valve measures one continuous hold.
+TEST(DungeonEventBlackfathomDeeps, ANotReadyTickReArmsTheValve)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    in.nowMs = 10000;
+    DcAtBossGate::Verdict v = DcAtBossGate::Decide(in);
+    EXPECT_EQ(v.heldSinceMs, 10000u);
+    EXPECT_FALSE(v.fire);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.nowMs = 10000 + DC_AT_BOSS_HOLD_VALVE_MS - 1;
+    in.partyReady = false;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_EQ(v.heldSinceMs, 0u);
+    EXPECT_EQ(v.gate, Gate::RoomTrash);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.partyReady = true;
+    in.nowMs += 1;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_FALSE(v.fire);
+    EXPECT_EQ(v.heldSinceMs, in.nowMs);
+}
+
+// The door veto needs a shut door from the door index on the line, and one that
+// is not an interact-through event gate (the Blackwing Lair cage exception).
+TEST(DungeonEventBlackfathomDeeps, DoorVetoNeedsARealShutDoor)
+{
+    EXPECT_FALSE(DcAtBossGate::DoorVetoes(false, 0, 0));
+    EXPECT_FALSE(DcAtBossGate::DoorVetoes(false, 1, 0));  // ray clear: door is open/elsewhere
+    EXPECT_FALSE(DcAtBossGate::DoorVetoes(true, 0, 0));   // not a door (Gelihast)
+    EXPECT_TRUE(DcAtBossGate::DoorVetoes(true, 1, 0));    // a door
+    EXPECT_FALSE(DcAtBossGate::DoorVetoes(true, 1, 1));   // only an event gate
+    EXPECT_TRUE(DcAtBossGate::DoorVetoes(true, 2, 1));    // a gate and a door
+}
+
+// The gate's first-down order, which is what the logs report.
+TEST(DungeonEventBlackfathomDeeps, AtBossGateReportsTheFirstGateDown)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::Open);
+
+    in.partyReady = false;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::PartyNotReady);
+    in.sealedHolds = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::SealedMuster);
+    in.anchoredHops = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::AnchoredHops);
+    in.closedDoor = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::ClosedDoor);
+    in.roomTrash = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(in), Gate::RoomTrash);
+
+    // Raid: the muster and a pending rez gate it, not dungeon readiness.
+    DcAtBossGate::Inputs raid = AtGelihast();
+    raid.raid = true;
+    raid.partyReady = false;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(raid), Gate::Open);
+    raid.raidMusterHolds = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(raid), Gate::RaidMuster);
+    raid.rezPending = true;
+    EXPECT_EQ(DcAtBossGate::FirstClosed(raid), Gate::RezPending);
+
+    EXPECT_STREQ(DcAtBossGate::Name(Gate::RoomTrash), "room trash");
+    EXPECT_TRUE(DcAtBossGate::ValveCanOverride(Gate::RoomTrash));
+    EXPECT_TRUE(DcAtBossGate::ValveCanOverride(Gate::SealedMuster));
+    EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::ClosedDoor));
+    EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::AnchoredHops));
+    EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::PartyNotReady));
 }
