@@ -402,6 +402,56 @@ TEST(DungeonEventBlackfathomDeeps, ANotReadyTickReArmsTheValve)
     EXPECT_EQ(v.heldSinceMs, in.nowMs);
 }
 
+// Loot appearing mid-hold re-arms the clock the same way: the valve fires only
+// after a full, continuous valve-length hold with no loot pending.
+TEST(DungeonEventBlackfathomDeeps, ALootPendingTickReArmsTheValve)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    in.nowMs = 10000;
+    DcAtBossGate::Verdict v = DcAtBossGate::Decide(in);
+    EXPECT_EQ(v.heldSinceMs, 10000u);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.nowMs = 10000 + DC_AT_BOSS_HOLD_VALVE_MS - 1;
+    in.lootPending = true;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_FALSE(v.fire);
+    EXPECT_EQ(v.heldSinceMs, 0u);
+
+    // Loot cleared one tick later: the old hold's time does not count.
+    in.heldSinceMs = v.heldSinceMs;
+    in.lootPending = false;
+    in.nowMs += 1;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_FALSE(v.fire);
+    EXPECT_EQ(v.heldSinceMs, in.nowMs);
+    EXPECT_GE(MsToFire(in, in.nowMs, 3 * DC_AT_BOSS_HOLD_VALVE_MS),
+              DC_AT_BOSS_HOLD_VALVE_MS - TICK_MS);
+}
+
+// Both valve-overridable gates down together still open through the valve (the
+// first one down is the one reported), but either alongside a hard gate does not.
+TEST(DungeonEventBlackfathomDeeps, ValveOpensPastTrashAndMusterTogetherButNotWithADoor)
+{
+    uint32_t const budget = 3 * DC_AT_BOSS_HOLD_VALVE_MS;
+
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    in.sealedHolds = true;
+    DcAtBossGate::Verdict v;
+    uint32_t const took = MsToFire(in, 1000, budget, &v);
+    ASSERT_NE(took, UINT32_MAX);
+    EXPECT_TRUE(v.valveOpen);
+    EXPECT_EQ(v.gate, Gate::RoomTrash);
+
+    in = AtGelihast();
+    in.sealedHolds = true;
+    in.closedDoor = true;
+    EXPECT_EQ(MsToFire(in, 1000, budget, &v), UINT32_MAX);
+    EXPECT_EQ(v.gate, Gate::ClosedDoor);
+}
+
 // The door veto needs a shut door from the door index on the line, and one that
 // is not an interact-through event gate (the Blackwing Lair cage exception).
 TEST(DungeonEventBlackfathomDeeps, DoorVetoNeedsARealShutDoor)
