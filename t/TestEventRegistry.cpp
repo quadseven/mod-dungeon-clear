@@ -1217,6 +1217,12 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // twenty yards in the air, and a rung there that claimed every tick would
         // starve the rotation it exists to redirect.
         {575, 5},
+        // The Deadmines "Iron Clad Door (Defias Cannon)": hook 2 walks the tank
+        // ~42yd up to the Defias Gunpowder chest, opens and loots it, and walks
+        // back to the cannon, every metre on its own MovePoint. With the per-tick
+        // hold in place each walk is cancelled the tick after it is issued and
+        // the tank never reaches the chest.
+        {36, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1338,8 +1344,8 @@ TEST(DungeonEventIntegrityTest, EveryAuthoredObjectiveHookIdIsRegistered)
     constexpr Expected kHooks[] = {
         { 1, "BRD Ring of Law — EnsureRingStarted" },
         { 2, "Deadmines — FireDefiasCannon" },
-        { 3, "Old Hillsbrad — GrantIncendiaryBombs" },
-        { 4, "The Mechanar — GrantCacheKeyAndLoot" },
+        { 3, "Old Hillsbrad: CarryIncendiaryBombs" },
+        { 4, "The Mechanar: OpenCacheWithCarriedKey" },
         { 5, "ZulFarrak — WakeZumrah" },
         { 6, "Arcatraz — DriveMellicharWaves" },
         { 7, "Sethekk Halls — DriveAnzuSummon" },

@@ -1667,6 +1667,10 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
 {
     if (!bot || step.goEntry == 0)
         return false;
+    // Nothing to plant: no walk. Fall through to the executor, which fails the
+    // step and says the item is missing (it is never granted).
+    if (step.itemId && !bot->HasItemCount(step.itemId, 1))
+        return false;
 
     bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
     // Interaction reach (mirrors the executor's DC_EVENT_GO_PLANT_REACH — keep in

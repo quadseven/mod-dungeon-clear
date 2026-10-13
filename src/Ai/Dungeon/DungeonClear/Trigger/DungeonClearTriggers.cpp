@@ -251,6 +251,15 @@ bool DungeonClearAtBossTrigger::IsActive()
     // engage hold reads the very same verdict, so "holding for at-boss" can no
     // longer wait on a trigger that disagrees with it, and the gate that is down
     // is logged by name. See DcAtBoss::Evaluate / DcAtBossGate.
+    //
+    // Nothing is dropped by the move. Evaluate reads each gate fresh every call:
+    // drive is DcCombatFlag::MayDrive (Inputs::driving), then EggRunHoldsTheRaid,
+    // the pull context, AtBossEngage, room trash, the door ray, the anchored
+    // route, SealedMusterHolds, and on a raid DcRezRecovery / DcRaidMuster, else
+    // BetweenPullsReady. DcAtBossGate::Decide fires only with every one of them
+    // open; the valve may pass only room trash or a sealed muster, never drive,
+    // anchor, encounter, pull, range, door or route (pinned by
+    // ValveNeverOpensPastAHardGate in t/TestBlackfathomDeeps.cpp).
     return DcAtBoss::Evaluate(bot, botAI, context, *next).fire;
 }
 

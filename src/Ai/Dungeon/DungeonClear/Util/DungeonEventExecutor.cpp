@@ -1037,9 +1037,8 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
 
         case EventStepKind::UseItem:
         {
-            // Leader USES a quest item (granting it first if the bag lacks it —
-            // bots never ran the questline that awards it). This goes through the
-            // full item-use cast path (CastItemUseSpell), which supplies the
+            // Leader USES a quest item it CARRIES. This goes through the full
+            // item-use cast path (CastItemUseSpell), which supplies the
             // cast-item context the bare spell lacks: Sunken Temple's Egg of
             // Hakkar (10465) casts "Awaken the Soulflayer" (12346) ONLY when used
             // as an item — a direct CastSpell(12346) is rejected before its
@@ -1047,15 +1046,19 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // NOT_STARTED). The summon happens at a fixed position, but the egg
             // must be used FROM the encounter room, so the anchor sits at the room
             // centre. One-shot: use and report Done.
+            //
+            // The item is never granted. A leader without it fails the step and
+            // says so: an optional event is skipped, a required one stalls.
             if (step.itemId == 0)
                 return StepResult::Done;
             Item* item = bot->GetItemByEntry(step.itemId);
             if (!item)
             {
-                bot->AddItem(step.itemId, 1);
-                item = bot->GetItemByEntry(step.itemId);
-                if (!item)
-                    return StepResult::Running;  // bags full this tick — retry
+                LOG_INFO("playerbots.dungeonclear",
+                         "[dungeon-clear] {} event-step UseItem {}: not carried, and the "
+                         "event does not grant it; failing the step",
+                         bot->GetName(), step.itemId);
+                return StepResult::Failed;
             }
             LOG_INFO("playerbots.dungeonclear",
                      "[dungeon-clear] {} event-step UseItem {} (encounter trigger)",
@@ -1087,6 +1090,18 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // anchor-relative pick keeps five barrels five DISTINCT targets.
             if (step.itemId == 0 || step.spellId == 0 || step.goEntry == 0)
                 return StepResult::Done;  // mis-authored step: skip loudly in review, not a stall
+
+            // The key item is never granted. A leader without it fails the step
+            // and says so, before any walk to the GO (DriveUseItemOnGO does not
+            // walk it either).
+            if (!bot->HasItemCount(step.itemId, 1))
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[dungeon-clear] {} event-step UseItemOnGO: item {} not carried, "
+                         "and the event does not grant it; failing the step",
+                         bot->GetName(), step.itemId);
+                return StepResult::Failed;
+            }
 
             bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
             // Interaction reach: the successful OPEN_LOCK ends in Player::SendLoot,
@@ -1150,17 +1165,12 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             if (bot->IsNonMeleeSpellCast(false))
                 return StepResult::Running;
 
-            // At the barrel. Grant the quest item (bots never ran the questline
-            // that awards it) and USE it on the GO — the item-use cast supplies the
-            // lock's key context, the spell hits, and the SmartAI SPELLHIT counts it.
-            Item* item = step.itemId ? bot->GetItemByEntry(step.itemId) : nullptr;
-            if (step.itemId && !item)
-            {
-                bot->AddItem(step.itemId, 1);
-                item = bot->GetItemByEntry(step.itemId);
-            }
+            // At the barrel. USE the carried item on the GO: the item-use cast
+            // supplies the lock's key context, the spell hits, and the SmartAI
+            // SPELLHIT counts it.
+            Item* item = bot->GetItemByEntry(step.itemId);
             if (!item)
-                return StepResult::Running;  // bags full this tick — retry
+                return StepResult::Failed;  // used up or dropped since the check above
             LOG_INFO("playerbots.dungeonclear",
                      "[dungeon-clear] {} event-step UseItemOnGO: use item {} (spell {}) "
                      "on GO {} '{}' (dist {:.1f})",

@@ -314,6 +314,7 @@ TEST(DungeonEventBlackfathomDeeps, ValveNeverOpensPastAHardGate)
         { "range",    [](DcAtBossGate::Inputs& i) { i.atEngage = false; },    Gate::NotAtEngage },
         { "encounter",[](DcAtBossGate::Inputs& i) { i.encounterHold = true; },Gate::EncounterHold },
         { "drive",    [](DcAtBossGate::Inputs& i) { i.driving = false; },     Gate::NotDriving },
+        { "anchor",   [](DcAtBossGate::Inputs& i) { i.bossAnchor = false; },  Gate::NotBossAnchor },
     };
     for (Case const& c : cases)
     {
