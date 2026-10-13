@@ -71,6 +71,14 @@ struct DungeonEventProgress
     uint32 timeoutRewinds{0};
     bool   timeoutFailLogged{false};  // Drive said "retries spent" once already
 
+    // The Custom-step attempt the hook's reason memory (DcRunState::
+    // eventHookReason) belongs to, keyed by (stepIndex, stepStartMs): every
+    // advance, timeout rewind and lapse re-stamps stepStartMs, so a new pair is
+    // a new attempt and the hook gets to say its reason again. See
+    // DungeonEventExecutor::BeginsHookAttempt.
+    int32  hookAttemptStep{-1};
+    uint32 hookAttemptStartMs{0};
+
     // EscortCreature watchdog: ms-time the escort last made genuine progress
     // (escortee moved, combat occurred, a reachable threat existed, or the final
     // boss is pending within grace). The escort step has no flat timeout (the
@@ -113,6 +121,8 @@ struct DungeonEventProgress
         progressMs = 0;
         timeoutRewinds = 0;
         timeoutFailLogged = false;
+        hookAttemptStep = -1;
+        hookAttemptStartMs = 0;
         escortProgressMs = 0;
         escortCombatWedgeMs = 0;
         relocationCombatHoldMs = 0;
@@ -134,6 +144,12 @@ public:
     // directly. `defaultTimeoutMs` is used when the step's own timeoutMs is 0.
     static EventDriveOutcome Advance(DungeonEvent const& ev, DungeonEventProgress& prog,
                                      StepResult result, uint32 nowMs, uint32 defaultTimeoutMs);
+
+    // PURE: true exactly once per attempt at the current step (a fresh
+    // (stepIndex, stepStartMs) pair), and records it. Drive uses it to clear a
+    // Custom hook's "last reported reason" before the hook runs, so the reason
+    // from a timed-out attempt never silences or mislabels the retry.
+    static bool BeginsHookAttempt(DungeonEventProgress& prog);
 
     // IMPURE driver: (re)initialise progress for `ev`, run the active step
     // against the live bot/world, and Advance(). Returns the driver outcome.

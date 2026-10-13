@@ -56,6 +56,8 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
             //    returns Running until the door opens, so its timeout is what
             //    ends a stuck attempt: walk back onto the cannon and try again,
             //    twice, then fail the event rather than hold at the door.
+            //    Pinned by t/TestDungeonEvent.cpp,
+            //    DungeonEventAdvance.DeadminesCannonCustomTimeoutRewindsThenFails.
             .Custom(DM_FIRE_CANNON_HOOK)
             .Timeout(DM_FIRE_CANNON_TIMEOUT_MS)
             .RetryOnTimeout(DM_FIRE_CANNON_RETRIES)

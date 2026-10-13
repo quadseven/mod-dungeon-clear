@@ -188,7 +188,7 @@ namespace
     {
         if (!context)
             return true;
-        uint8& last = DcRun::Of(context).dmCannonReason;
+        uint8& last = DcRun::Of(context).eventHookReason;
         if (last == static_cast<uint8>(reason))
             return false;
         last = static_cast<uint8>(reason);
@@ -199,7 +199,7 @@ namespace
                                            DungeonBossInfo const& /*info*/)
     {
         DmCannonReason const last = context
-            ? static_cast<DmCannonReason>(DcRun::Of(context).dmCannonReason)
+            ? static_cast<DmCannonReason>(DcRun::Of(context).eventHookReason)
             : DmCannonReason::None;
 
         // Door already open (state != READY) -> the cannon has fired.
@@ -287,6 +287,12 @@ namespace
                                                            : "cast started",
                      castId, static_cast<uint32>(bot->CanUseItem(gunpowder)),
                      static_cast<uint32>(bot->GetShapeshiftForm()));
+        // Running on a refused cast too, on purpose. The refusals seen are
+        // transient (the form drop above lands this tick, a bot still closing
+        // to range), so failing here would end the event on the first one;
+        // Blocked would stall it with no retry at all. The refusal is logged
+        // above, and the step's Timeout + RetryOnTimeout bound it: a refused
+        // attempt walks back onto the cannon and then fails the event.
         return ObjectiveArriveResult::Running;  // door-state gate confirms it
     }
 

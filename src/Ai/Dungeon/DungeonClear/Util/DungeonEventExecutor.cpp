@@ -27,6 +27,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorOpener.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -1259,6 +1260,10 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
 
     if (result == StepResult::Done)
     {
+        // timeoutRewinds is deliberately NOT refunded here: the MoveTo a rewind
+        // went back to reports Done and advances like any step, and refunding on
+        // that would make the retry budget endless. Only a fresh activation in
+        // Drive refunds it.
         ++prog.stepIndex;
         prog.attempts = 0;
         prog.stepStartMs = nowMs;
@@ -1279,6 +1284,16 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
     // Failed (or timed out): required events stall for the human; optional ones
     // skip the rest of the event and let the clear advance.
     return ev.required ? EventDriveOutcome::Stalled : EventDriveOutcome::Skipped;
+}
+
+bool DungeonEventExecutor::BeginsHookAttempt(DungeonEventProgress& prog)
+{
+    int32 const step = static_cast<int32>(prog.stepIndex);
+    if (prog.hookAttemptStep == step && prog.hookAttemptStartMs == prog.stepStartMs)
+        return false;
+    prog.hookAttemptStep = step;
+    prog.hookAttemptStartMs = prog.stepStartMs;
+    return true;
 }
 
 EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* context,
@@ -1352,6 +1367,8 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
             prog.stepIndex = 0;
             prog.attempts = 0;
             prog.maxStepIndex = 0;
+            // The one place a live event's retry budget is refunded: a real lapse
+            // is a new activation. Advance never refunds it on a step advance.
             prog.timeoutRewinds = 0;
             prog.timeoutFailLogged = false;
         }
@@ -1362,6 +1379,12 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         return EventDriveOutcome::Completed;
 
     EventStep const& active = ev.steps[prog.stepIndex];
+    // A new attempt at a Custom step (first entry, a timeout rewind back onto
+    // it, a lapse) starts with the hook's reason memory cleared, so its first
+    // tick logs why it is Running even when that is the same reason the
+    // timed-out attempt gave, and a stale "our cast" never hides another cast.
+    if (context && active.kind == EventStepKind::Custom && BeginsHookAttempt(prog))
+        DcRun::Of(context).eventHookReason = 0;
     StepResult const result = RunStep(bot, context, active, prog, now);
 
     uint32 const defaultTimeoutMs =
@@ -1431,6 +1454,11 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
                  bot->GetName(), ev.name, stepBefore, static_cast<uint32>(active.kind),
                  active.timeoutMs ? active.timeoutMs : defaultTimeoutMs, prog.stepIndex,
                  prog.timeoutRewinds, active.timeoutRetries);
+    // `result` is the step's OWN result from RunStep (Advance takes it by
+    // value), not Advance's escalation. Running here plus a terminal outcome is
+    // exactly "the timeout (or the no-progress backstop) failed a step that was
+    // still running"; a step that itself returned Failed is not a timeout and
+    // must not be reported as one.
     else if (bot && active.timeoutRetries > 0 && !prog.timeoutFailLogged &&
              result == StepResult::Running &&
              (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped))

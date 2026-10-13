@@ -298,10 +298,13 @@ struct DcRunState
     ObjectGuid vhKeeperLock;
     ObjectGuid bmRiftLock;
 
-    // The Deadmines cannon hook's (FireDefiasCannon) last REPORTED branch, so it
-    // logs why it is still Running once per change instead of once per tick. 0 =
-    // nothing logged yet. Values are the hook's own DmCannonReason.
-    uint8 dmCannonReason = 0;
+    // An event Custom hook's last REPORTED branch, so it logs why it is still
+    // Running once per change instead of once per tick (the Deadmines cannon,
+    // FireDefiasCannon, with its own DmCannonReason values). 0 = nothing logged
+    // yet. The event executor clears it at the start of every attempt at a
+    // Custom step (DungeonEventExecutor::BeginsHookAttempt), so a retry after a
+    // timeout rewind reports its reason afresh.
+    uint8 eventHookReason = 0;
 
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
