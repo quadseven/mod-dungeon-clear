@@ -8,6 +8,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 namespace
@@ -767,6 +768,55 @@ TEST(DungeonEventAdvance, DeadminesCannonRetryIsANewHookAttempt)
               EventDriveOutcome::Running);
     ASSERT_EQ(q.stepIndex, 0u);
     EXPECT_TRUE(DungeonEventExecutor::BeginsHookAttempt(q));
+}
+
+TEST(DungeonEventAdvance, DeadminesRefusedCannonUseReportsOnEachBoundedAttempt)
+{
+    using namespace DcDefiasGunpowder;
+
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(e->steps[1].kind, EventStepKind::Custom);
+    uint32 const timeout = e->steps[1].timeoutMs;
+    ASSERT_GT(timeout, 0u);
+
+    uint32 now = 1000;
+    DungeonEventProgress p = Prog(e->id, 1, now);
+    std::uint8_t reason = 0;
+    for (uint32 attempt = 0; attempt <= e->steps[1].timeoutRetries; ++attempt)
+    {
+        ASSERT_TRUE(DungeonEventExecutor::BeginsHookAttempt(p));
+        reason = 0;  // Drive clears the hook's last report at each new attempt.
+        std::uint8_t const refused = ReportCode(Action::UseOnCannon, true, reason);
+        EXPECT_NE(refused, reason) << "the refused item use needs a reason line";
+        EXPECT_NE(refused & REPORT_CAST_REFUSED, 0u);
+        reason = refused;
+        EXPECT_EQ(ReportCode(Action::UseOnCannon, true, reason), reason)
+            << "the same refusal on the next tick must not repeat the line";
+
+        EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running,
+                                                now + timeout - 1, timeout),
+                  EventDriveOutcome::Running);
+        EXPECT_EQ(p.stepIndex, 1u);
+        EXPECT_FALSE(DungeonEventExecutor::BeginsHookAttempt(p));
+
+        now += timeout;
+        EventDriveOutcome const outcome =
+            DungeonEventExecutor::Advance(*e, p, StepResult::Running, now, timeout);
+        if (attempt == e->steps[1].timeoutRetries)
+        {
+            EXPECT_EQ(outcome, EventDriveOutcome::Stalled);
+            EXPECT_EQ(p.stepIndex, 1u);
+            break;
+        }
+
+        ASSERT_EQ(outcome, EventDriveOutcome::Running);
+        ASSERT_EQ(p.stepIndex, 0u) << "retry must reapproach the cannon";
+        now += 1;
+        ASSERT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Done, now, timeout),
+                  EventDriveOutcome::Running);
+        ASSERT_EQ(p.stepIndex, 1u);
+    }
 }
 
 TEST(EventBuilderTest, RetryOnTimeoutTagsOnlyTheStepItFollows)
