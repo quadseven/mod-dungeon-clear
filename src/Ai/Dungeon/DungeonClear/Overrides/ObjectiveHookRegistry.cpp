@@ -289,6 +289,7 @@ namespace
                                            DungeonBossInfo const& /*info*/)
     {
         using namespace DcDefiasGunpowder;
+        using Action = DcDefiasGunpowder::Action; // playerbots also declares ::Action
 
         Inputs in;
         if (GameObject* door = bot->FindNearestGameObject(GO_IRON_CLAD_DOOR, 100.0f))
