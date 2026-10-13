@@ -1279,14 +1279,17 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
         tx, ty, tz + 2.0f, from->GetPhaseMask(),
         LINEOFSIGHT_CHECK_GOBJECT_ALL, VMAP::ModelIgnoreFlags::Nothing);
 }
-bool DcEngageGeometry::OnlyEventGatesBetween(WorldObject* from, float tx, float ty,
-                                            float tz)
+void DcEngageGeometry::CountShutDoorsOnChord(WorldObject* from, float tx, float ty,
+                                             float tz, uint32& shutDoors,
+                                             uint32& eventGates)
 {
+    shutDoors = 0;
+    eventGates = 0;
     if (!from)
-        return false;
+        return;
     Map* map = from->GetMap();
     if (!map)
-        return false;
+        return;
 
     float const ax = from->GetPositionX();
     float const ay = from->GetPositionY();
@@ -1299,7 +1302,6 @@ bool DcEngageGeometry::OnlyEventGatesBetween(WorldObject* from, float tx, float 
     float const hiZ = std::max(az, tz) + DC_DOOR_Z_BAND;
     float const bandSq = DC_EVENT_GATE_BAND * DC_EVENT_GATE_BAND;
 
-    bool sawGate = false;
     for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
         GameObject* go = map->GetGameObject(guid);
@@ -1314,13 +1316,20 @@ bool DcEngageGeometry::OnlyEventGatesBetween(WorldObject* from, float tx, float 
                                                ax, ay, tx, ty) > bandSq)
             continue;
 
-        // One ordinary shut door on the line is enough to keep the veto: the
-        // caller's original answer was right and there is nothing to excuse.
-        if (!DcEventDoorRegistry::IsNavigationIgnored(go->GetEntry()))
-            return false;
-        sawGate = true;
+        ++shutDoors;
+        if (DcEventDoorRegistry::IsNavigationIgnored(go->GetEntry()))
+            ++eventGates;
     }
-    return sawGate;
+}
+bool DcEngageGeometry::OnlyEventGatesBetween(WorldObject* from, float tx, float ty,
+                                            float tz)
+{
+    // One ordinary shut door on the line is enough to keep the veto: the
+    // caller's original answer was right and there is nothing to excuse.
+    uint32 shutDoors = 0;
+    uint32 eventGates = 0;
+    CountShutDoorsOnChord(from, tx, ty, tz, shutDoors, eventGates);
+    return eventGates > 0 && eventGates == shutDoors;
 }
 bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float z,
                                       float radius)

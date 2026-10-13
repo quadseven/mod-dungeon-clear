@@ -92,6 +92,19 @@ struct DcApproachState
     std::string lastYieldLogged;
     uint32 lastYieldLogMs      = 0;
 
+    // --- at-boss gate (DcAtBossGate / DcAtBoss::Evaluate) ------------------
+    // The valve clock: when the current valve-eligible hold at the boss began
+    // (getMSTime, 0 = not holding). Written back by every evaluation, so any
+    // tick that is not such a hold re-arms it.
+    uint32 atBossHeldSinceMs   = 0;
+    // The gate last logged by the evaluator and by the engage hold, and when
+    // (getMSTime, 0 = never): both lines go out on a change plus one reminder per
+    // DC_AT_BOSS_GATE_LOG_INTERVAL_MS.
+    uint8 atBossGateLogged     = 0;
+    uint32 atBossGateLogMs     = 0;
+    uint8 atBossHoldLogged     = 0;
+    uint32 atBossHoldLogMs     = 0;
+
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
     uint32 lastTickLogMs       = 0;  // advance-tick debug-log throttle (getMSTime)
@@ -350,6 +363,7 @@ struct DcApproachState
         resnapAttempts      = 0;
         nudgeAttempts       = 0;
         partyNotReadyTicks  = 0;
+        atBossHeldSinceMs   = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
         offLineLatched      = false;

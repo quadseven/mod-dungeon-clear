@@ -35,6 +35,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/SealedEncounterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAtBoss.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
@@ -233,7 +234,7 @@ bool DungeonClearAtBossTrigger::IsActive()
 {
     if (!IsEnabled(context, bot))
         return false;
-    if (!bot || bot->isDead() || !MayDrive(bot, context))
+    if (!bot || bot->isDead())
         return false;
     Map* map = bot->GetMap();
     if (!map || !map->IsDungeon())
@@ -243,252 +244,24 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    // Travel objectives are not combat targets — the at-objective trigger owns
-    // arrival. Stand down so engage-boss never fires on a non-creature anchor.
-    if (next->kind != DungeonAnchorKind::Boss)
-        return false;
-
-    // Blackwing Lair, phase 1: the anchor behind us (Grethok) has cleared and
-    // the next boss is a POSSESSED Razorgore our own runner is walking egg to
-    // egg. Everything this rung leads to is wrong for that boss: the raid
-    // muster it hosts would sit the raid down to eat and rebuff mid-egg-run
-    // (live: "raid muster: (rest timed out) rebuff round for Razorgore the
-    // Untamed", 23:15:32), and the engage behind it would pull the one boss in
-    // the game whose death here casts 20038 on all forty of them. Stand down for
-    // the whole egg run; the camp rung holds the raid meanwhile, and this reopens
-    // within ~3s of the last egg. See DcBlackwingLair::EggRunHoldsTheRaid.
-    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
-        return false;
-
-    // Mid-maneuver the pull owns the tank — same window, same bound, same reason as
-    // the idle rung above. A trash pull taken within engage range of the boss must
-    // not have the boss engage fire underneath it while its own trigger is quiet;
-    // that is how a pull one room short of a boss turns into the boss pull.
-    DcPullContext const& pullCtx = AI_VALUE(DcPullContext&, DcKey::PullContext);
-    if (pullCtx.phase != DcPullPhase::Idle &&
-        getMSTimeDiff(pullCtx.phaseSince, getMSTime()) < DC_PULL_ADVANCE_STANDDOWN_MAX_MS)
-        return false;
-    // And unconditionally while a scripted row is latched, for the reason spelled out
-    // on the idle rung: the plan owns the tank, and for THIS rung the destination it
-    // would drive to is the very boss the plan is peeling trash away from.
-    if (pullCtx.scriptedStage >= 0)
-        return false;
-
-    // Close enough AND on the boss's own floor (not just 3D-near while passing
-    // under an upper-floor boss). See IsAtBossEngage.
-    if (!DcTickMemoAccess::AtBossEngage(bot, context, *next))
-        return false;
-
-    // Room-wide-aggro boss (RoomAggroRegistry): on engage it force-pulls the
-    // whole room, so HOLD the boss pull while any room trash remains. The
-    // room-clear driver (Off/Leeroy) or the pull pipeline (advanced/dynamic)
-    // clears it first; the gate reopens the instant the room is clear (or the
-    // RoomClearTimeout valve fires inside the value). Cheap cached read.
-    if (DcTargeting::ActiveBossRoom(bot, context, next->entry) &&
-        !AI_VALUE(GuidVector, DcKey::RoomTrashRemaining).empty())
-        return false;
-
-    // A closed door between us and the boss means it's BEYOND it and not actually
-    // reachable yet — even when it's within straight-line engage range (a boss or
-    // its pack right behind the door). Without this, IsAtBossEngage (a pure
-    // distance+floor test, door-blind) fires the at-boss engage, which outranks
-    // door-blocked (30 vs 22) and bee-lines the tank onto/through the door. Stand
-    // down so door-blocked parks at its stand-off; re-evaluates the instant the
-    // door opens. Checked fresh, not via the 500ms-cached blocking-door value,
-    // which can still read empty the moment the boss first comes into range.
-    Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
-    float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
-    float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
-    float const bz = liveBoss ? liveBoss->GetPositionZ() : next->z;
+    // Every gate this rung used to test inline (drive, anchor kind, encounter
+    // hold, pull ownership, engage range and floor, room trash, door, anchored
+    // route, sealed muster, raid muster, readiness) and the valve past the ones
+    // that can wedge now live in one predicate. DungeonClearAdvanceAction's
+    // engage hold reads the very same verdict, so "holding for at-boss" can no
+    // longer wait on a trigger that disagrees with it, and the gate that is down
+    // is logged by name. See DcAtBoss::Evaluate / DcAtBossGate.
     //
-    // EXCEPT an interact-through GATE (DcEventDoorRegistry::IsNavigationIgnored).
-    // The ray is entry-blind, and for that handful of doors standing down is the
-    // exact wrong answer: nothing DC does opens them, the objective behind one is
-    // performed from THIS side, and the rung this stand-down hands the tick to
-    // cannot open it either. Blackwing Lair's Chromaggus cage is the deadlock —
-    // the portcullis sits on the tank->boss line, so this returned false, the
-    // raid muster (ticked at the bottom of this function) never staged, and
-    // ChromaggusCageDue waits on muster Ready, so the lever that opens the cage
-    // was never pulled. tr-20260829-204120-2 idled 30yd out to teardown with
-    // every watchdog clear and zero "raid muster: staging at Chromaggus" lines.
-    // The boss-engage rung holds the tank on the anchor meanwhile (it reads
-    // `caged`), so letting this through does not walk anyone into the gate.
-    if (DcEngageGeometry::ClosedDoorBetween(bot, bx, by, bz) &&
-        !DcEngageGeometry::OnlyEventGatesBetween(bot, bx, by, bz))
-        return false;
-
-    // When the long-path cache is anchored (registered route), make sure the
-    // intermediate anchors STILL AHEAD OF US have been resolved before firing.
-    // This prevents the bot from "engaging" a boss it's geometrically near but
-    // separated from by a wall or door — the cached anchor list runs the bot
-    // around through the actual corridor first.
-    //
-    // FROM THE FOLLOWER'S CURSOR, NOT FROM ZERO. This loop used to start at
-    // segment 0, which asks the bot to be within one arriveRadius (6yd) of every
-    // anchor on the route SIMULTANEOUSLY — satisfiable only by a route whose
-    // anchors all sit inside a 6yd bubble, and false forever for any real one.
-    // It went unnoticed because DungeonClearRouteRegistry had no rows until
-    // Azjol-Nerub's; the first registered route (12 anchors over 250yd) turned
-    // it into a hard stall — 19 of 20 runs in tp-20260818-200553-1 parked 29yd
-    // from Anub'arak at full health, out of combat, watchdogs clear, until the
-    // no-progress watchdog ended them.
-    //
-    // DcAdvanceAction's copy of this check (its atBoss handoff, the one that
-    // logs "holding for at-boss") already started at followerNow.segmentIdx and
-    // was right; the two disagreeing is precisely why Advance said it was done
-    // navigating while the trigger never fired. Same cursor, same answer.
-    ChunkedPathfinder::Result const& path =
-        AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
-    if (path.reachable && !path.segments.empty())
-    {
-        DungeonFollowerState const& follower =
-            AI_VALUE(DungeonFollowerState&, DcKey::FollowerState);
-        // Last segment is the boss anchor; the anchored ones between the cursor
-        // and it must be within their arriveRadius. Anchors already walked past
-        // don't gate the engage.
-        for (size_t i = follower.segmentIdx; i + 1 < path.segments.size(); ++i)
-        {
-            PathSegment const& seg = path.segments[i];
-            if (!seg.anchored)
-                continue;
-            float const d = bot->GetDistance(seg.ex, seg.ey, seg.ez);
-            if (d > seg.arriveRadius)
-                return false;
-        }
-    }
-
-    // SEALED ENCOUNTER MUSTER. This boss's room locks the instant the encounter
-    // starts — an InstanceScript DOOR_TYPE_ROOM door, held `open &= (state !=
-    // IN_PROGRESS)` for the whole fight (SealedEncounterRegistry). Engage with anyone
-    // still outside and they spend the entire fight at a closed door while the tank
-    // solos it. Reported live for Selin Fireheart, whose Assembly Chamber Door
-    // (188065) hangs at (215.1, 0.4).
-    //
-    // The test is the VOLUME, not a radius around the tank, and the difference
-    // matters: the tank crosses the threshold BEFORE it engages, so a follower a
-    // tolerable 10yd behind it is several yards on the wrong side of the door. Only
-    // "is this member inside the room" answers the actual question.
-    //
-    // The clump that makes this satisfiable in a second or two — rather than a long
-    // wait parked inside the boss's aggro radius — is the tank-anchored spread
-    // override in DcPartyState::GetSpreadGate, which arms over the same
-    // approachRadius. This is the guarantee; that is the thing that makes the
-    // guarantee cheap.
-    if (SealedEncounterRow const* const sealed =
-            SealedEncounterRegistry::Find(bot->GetMapId(), next->entry))
-    {
-        if (SealedEncounterRegistry::InApproachRange(
-                *sealed, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
-                next->x, next->y, next->z))
-        {
-            DcRunState& run = DcRun::Of(context);
-            uint32 const now = getMSTime();
-            if (!run.sealedMusterSince)
-                run.sealedMusterSince = now;
-
-            // RAID quorum: with 10-40 members, one wedged straggler outside must
-            // not hold the whole raid inside the boss's aggro radius for the full
-            // timeout. A raid holds only while an outside member is a tank/healer
-            // or the outside share exceeds the quorum's tolerance; a dungeon
-            // still holds for literally anyone outside (5 people, one door — the
-            // strict contract is cheap and right there).
-            bool const raidQuorum = bot->GetMap() && bot->GetMap()->IsRaid();
-            uint32 const quorumPct =
-                raidQuorum ? DcSettings::GetUInt(bot, "RaidReadyQuorumPct") : 100;
-            uint32 living = 0;
-            uint32 outsideCount = 0;
-            bool outsideCritical = false;
-            Player* outside = nullptr;
-            if (Group* group = bot->GetGroup())
-            {
-                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-                {
-                    Player* member = ref->GetSource();
-                    if (!member || member == bot || member->isDead())
-                        continue;
-                    if (member->GetMapId() != bot->GetMapId())
-                        continue;
-                    if (!GET_PLAYERBOT_AI(member))
-                        continue;   // a real player is never gated on
-                    ++living;
-                    if (!SealedEncounterRegistry::InSealedRoom(
-                            *sealed, member->GetPositionX(), member->GetPositionY()))
-                    {
-                        ++outsideCount;
-                        if (!outside)
-                            outside = member;
-                        if (PlayerbotAI::IsTank(member) || PlayerbotAI::IsHeal(member))
-                            outsideCritical = true;
-                    }
-                }
-            }
-            if (raidQuorum && outside && !outsideCritical && living &&
-                (living - outsideCount) * 100 >= living * quorumPct)
-                outside = nullptr;  // quorum inside, stragglers tolerated
-
-            // Bounded: a member that cannot path in (stuck, mid-rez, feared out)
-            // must not hold the run open. On expiry engage anyway and say so — that
-            // member is about to miss the fight and the log should not be silent
-            // about why.
-            if (outside && (now - run.sealedMusterSince) < DC_SEALED_MUSTER_TIMEOUT_MS)
-            {
-                DC_PULL_TRACE("[DC:{}] sealed encounter: holding the boss engage — {} "
-                              "is still outside the room ({} ms of {})",
-                              bot->GetName(), outside->GetName(),
-                              now - run.sealedMusterSince, DC_SEALED_MUSTER_TIMEOUT_MS);
-                return false;
-            }
-            if (outside)
-                LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] sealed encounter: muster timed out after {} ms with "
-                         "{} still outside — engaging anyway; that member will be "
-                         "locked out of the fight",
-                         bot->GetName(), now - run.sealedMusterSince, outside->GetName());
-        }
-        else
-        {
-            DcRun::Of(context).sealedMusterSince = 0;   // left the approach; re-arm
-        }
-    }
-
-    // RAID BOSS: THE PRE-BOSS MUSTER IS THE GATE.
-    //
-    // Plan C's muster (stage -> top off -> rebuff -> release, every phase and the
-    // whole thing timeout-bounded) used to be hosted only in the engage action
-    // BEHIND this trigger, with IsBetweenPullsReady below as the gate. That is a
-    // loop the muster cannot get out of: it pushes RestHealthPct/RestManaPct to
-    // 100 for the run so bots eat and drink to the bars, IsPartyReady is strict
-    // on every tank and healer, and a priest single-target buffing thirty-nine
-    // people is a healer who is never at full mana. The gate stayed down, the
-    // engage action never ran, and every budget the muster owns — which is only
-    // ever compared against getMSTime() on a tick that EVALUATES it — was never
-    // sampled. Live at Vaelastrasz (2026-08-28, five 40-mans, 60s ceiling): the
-    // kernel was asked three times in 126s and released 66s late; the siblings
-    // ran 77s, 89s, 116s and 218s. Nothing was wrong with DcRaidMusterDecision.
-    //
-    // So tick it HERE, every tick, and gate on its verdict. It subsumes what
-    // IsBetweenPullsReady was doing at a raid boss and does it better: `staged`
-    // is the same PartyMaxSpread walk, `topped` is a stricter HP/mana bar than
-    // the rest floors, and unlike the readiness gate it hands itself forward on a
-    // clock instead of waiting forever. A pending party rez still outranks it —
-    // releasing forty players onto a boss over a corpse the elected rezzer is
-    // already working is never the lesser evil. (DcPartyState::GetRestGate also
-    // stops feeding the muster's own override back into the general readiness
-    // gate, so advance and the pull rungs no longer inherit a 100/100 bar either.)
-    //
-    // The engage action still calls the same helper as the action-side half of
-    // this guard, the pairing used throughout this module; by then the phase
-    // reads Ready and it passes straight through.
-    if (map->IsRaid() && next->kind == DungeonAnchorKind::Boss)
-    {
-        if (DcRezRecovery::IsPending(bot))
-            return false;
-        return !DcRaidMuster::Holds(bot, botAI, context, *next);
-    }
-
-    // Don't pull while party is still recovering or tank-side loot is pending.
-    // The idle-trigger's advance action holds the tank in place meanwhile.
-    return IsBetweenPullsReady(bot, context);
+    // Nothing is dropped by the move. Evaluate reads each gate fresh every call:
+    // drive is DcCombatFlag::MayDrive (Inputs::driving), then EggRunHoldsTheRaid,
+    // the pull context, AtBossEngage, room trash, the door ray, the anchored
+    // route, SealedMusterHolds, and on a raid DcRezRecovery / DcRaidMuster, else
+    // BetweenPullsReady. DcAtBossGate::Decide fires only with every one of them
+    // open; the valve may pass only room trash or a sealed muster, never drive,
+    // anchor, encounter, pull, range, door or route. Pinned in
+    // t/TestBlackfathomDeeps.cpp: EveryGateTheTriggerTestedStillRefusesTheEngage
+    // (each gate alone refuses the engage) and ValveNeverOpensPastAHardGate.
+    return DcAtBoss::Evaluate(bot, botAI, context, *next).fire;
 }
 
 bool DungeonClearAtObjectiveTrigger::IsActive()
