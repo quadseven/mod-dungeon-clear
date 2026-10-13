@@ -155,6 +155,9 @@ namespace DcAtBoss
         in.valveMs = DC_AT_BOSS_HOLD_VALVE_MS;
         in.raid = map && map->IsRaid();
 
+        // The drive gate DungeonClearAtBossTrigger::IsActive used to test inline
+        // (MayDrive). It is the first gate Decide asks, and the valve never opens
+        // past it (EveryGateTheTriggerTestedStillRefusesTheEngage).
         in.driving = !bot->isDead() && map && map->IsDungeon() &&
                      DcCombatFlag::MayDrive(bot, context);
 
