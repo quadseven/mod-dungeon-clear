@@ -10,17 +10,22 @@
 
 #include "Creature.h"
 #include "CreatureAI.h"
+#include "DBCStores.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "InstanceScript.h"
 #include "Item.h"
 #include "Log.h"
+#include "LootMgr.h"
+#include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Opcodes.h"
 #include "ServerFacade.h"
 #include "Player.h"
 #include "Spell.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
@@ -30,6 +35,7 @@
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
@@ -135,165 +141,334 @@ namespace
 
     // --- Deadmines Defias Cannon: FireDefiasCannon (hook id 2) ------------
     // The way to the pirate ship is sealed by the Iron Clad Door (GO 16397,
-    // lock 202 — rogue-pick only, so a bot party can never click it open). A
+    // lock 202, rogue-pick only, so a bot party can never click it open). A
     // player loots the Defias Gunpowder chest, then USES the gunpowder on the
     // Defias Cannon (GO 16398): that casts spell 6250 at the cannon, whose
-    // SmartGameObjectAI (SMART_EVENT_SPELLHIT on 6250) fires the cannon —
+    // SmartGameObjectAI (SMART_EVENT_SPELLHIT on 6250) fires the cannon,
     // opening the door to GO_STATE_ACTIVE_ALTERNATIVE (the GOState enum's
     // "closed door open by cannon fire"), summoning two Defias Squallshapers,
     // and setting the cannon instance data.
     //
     // Spell 6250 is SPELL_EFFECT_OPEN_LOCK against the cannon, and the cannon's
     // lock (83) is an ITEM lock requiring the Defias Gunpowder (item 5397) as
-    // the key — so the spell only HITS the cannon (and fires the SmartAI) when
+    // the key, so the spell only HITS the cannon (and fires the SmartAI) when
     // it is cast FROM that item, supplying the cast-item the lock check needs.
     // A bare CastSpell(6250) with no cast item fails the lock and never hits.
     //
-    // A bot never loots the chest, so grant it the gunpowder and use the item on
-    // the cannon via the full item-use path. Used as the Deadmines event's
-    // Custom step (DeadminesEvents). The gunpowder has a 2s "Opening" cast, so:
-    //  - if the door is already open, the cannon has fired -> Done (idempotent;
-    //    also covers a re-init after an earlier attempt left the door open, where
-    //    a second fire would summon two more Squallshapers);
-    //  - if the opening cast is already in flight, let it finish (don't re-cast
-    //    and interrupt ourselves every tick);
-    //  - otherwise grant + use the gunpowder. Returns Running; the event's
-    //    door-state gate is what confirms the open and advances.
+    // The gunpowder is EARNED, never granted: when nobody in the party carries
+    // it, this bot walks to the Defias Gunpowder chest (GO 17155), opens it with
+    // an Opening spell it knows, and takes the gunpowder out of the loot window
+    // through the core's own loot opcodes. Whoever carries it then uses it on
+    // the cannon via the full item-use path. DcDefiasGunpowder::Decide picks the
+    // action; this is the glue. Used as the Deadmines event's Custom step
+    // (DeadminesEvents, which sets StepsOwnMovement so the at-objective hold does
+    // not cancel the walk to the chest). Returns Running throughout; the event's
+    // door-state gate is what confirms the open and advances.
     //
-    // Every Running path says which one it is, once per change (DmCannonReason,
-    // remembered on the bot's run state). A live realm logged this step Running
-    // for 21 minutes with nothing to say whether the cannon was out of range, a
-    // cast was stuck in flight, or the item use never started a cast at all.
-    constexpr uint32 DM_GO_CANNON         = 16398;
-    constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
-    constexpr uint32 DM_ITEM_GUNPOWDER    = 5397;  // casts OPEN_LOCK spell 6250
-    constexpr float  DM_CANNON_SCAN       = 40.0f;
-
-    enum class DmCannonReason : uint8
-    {
-        None = 0,
-        DoorOpen,      // Done: the door is no longer READY
-        CastInFlight,  // someone else's cast (not our gunpowder) is running
-        NoCannon,      // no cannon GO within DM_CANNON_SCAN
-        NoGunpowder,   // the grant did not land (bags full)
-        CastStarted,   // used the gunpowder; the opening cast is running
-        CastAgain,     // our cast finished and the door is still shut; using it again
-        CastRefused,   // used the gunpowder; no cast started
-    };
-
-    // Log `reason` if it differs from the last one this bot reported. The cast
-    // cycle (CastStarted -> the 2s cast in flight -> CastStarted) is one state,
-    // so the in-flight tick after our own use is folded into CastStarted.
-    bool DmCannonReasonChanged(AiObjectContext* context, DmCannonReason reason)
+    // Every Running branch says which one it is, once per change: a live realm
+    // logged this step Running for 21 minutes with nothing to say whether the
+    // cannon was out of range, a cast was stuck in flight, or the item use never
+    // started a cast at all. The last code said lives on the bot's run state
+    // (DcRunState::eventHookReason, cleared by the executor at each new attempt
+    // at the step); DcDefiasGunpowder::ReportCode picks the code.
+    bool DmReportChanged(AiObjectContext* context, DcDefiasGunpowder::Action a,
+                         bool castRefused = false)
     {
         if (!context)
             return true;
         uint8& last = DcRun::Of(context).eventHookReason;
-        if (last == static_cast<uint8>(reason))
+        uint8 const code = DcDefiasGunpowder::ReportCode(a, castRefused, last);
+        if (code == last)
             return false;
-        last = static_cast<uint8>(reason);
+        last = code;
         return true;
+    }
+
+    // Walk `who` to a point, without re-issuing the same point every tick (a
+    // re-issue restarts the spline). `who` is a bot: the hook's own, or the
+    // party bot carrying the gunpowder.
+    void DmWalkTo(Player* who, float x, float y, float z)
+    {
+        PlayerbotAI* ai = GET_PLAYERBOT_AI(who);
+        if (!ai)
+            return;
+        if (who->isMoving() &&
+            DcRun::Of(ai).ThrottledIssue(DcThrottle::DmGunpowderIssue, x, y, z, 1.0f, 3000))
+            return;
+        DcMovement::ResolveEscortConflict(who);
+        who->GetMotionMaster()->MovePoint(0, x, y, z, FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
+                                          /*generatePath*/ true, false);
+    }
+
+    // The party member holding item 5397, and what kind of member it is. The bot
+    // itself wins over anyone else.
+    Player* DmFindGunpowderCarrier(Player* bot, DcDefiasGunpowder::Carrier& kind)
+    {
+        using DcDefiasGunpowder::Carrier;
+        kind = Carrier::None;
+        if (bot->HasItemCount(DcDefiasGunpowder::ITEM_GUNPOWDER, 1))
+        {
+            kind = Carrier::Self;
+            return bot;
+        }
+        Group* group = bot->GetGroup();
+        if (!group)
+            return nullptr;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == bot || !member->IsInWorld() || !member->IsAlive() ||
+                member->GetMapId() != bot->GetMapId())
+                continue;
+            if (!member->HasItemCount(DcDefiasGunpowder::ITEM_GUNPOWDER, 1))
+                continue;
+            bool const human =
+                DcPlayerbotCompat::IsHumanControlled(member) || !GET_PLAYERBOT_AI(member);
+            kind = human ? Carrier::PartyHuman : Carrier::PartyBot;
+            return member;
+        }
+        return nullptr;
+    }
+
+    // The loot slot holding item 5397 that `bot` may still take, or -1. Slots run
+    // over the shared items and then the bot's own quest items, the numbering
+    // CMSG_AUTOSTORE_LOOT_ITEM uses; LootItemInSlot answers null for a slot
+    // already taken or not this bot's to take.
+    int32 DmGunpowderLootSlot(Player* bot, Loot& loot)
+    {
+        std::size_t const n = loot.items.size() + loot.quest_items.size();
+        for (std::size_t slot = 0; slot < n && slot <= 0xFF; ++slot)
+            if (LootItem* li = loot.LootItemInSlot(static_cast<uint32>(slot), bot))
+                if (li->itemid == DcDefiasGunpowder::ITEM_GUNPOWDER)
+                    return static_cast<int32>(slot);
+        return -1;
+    }
+
+    // Does the chest still hold the gunpowder? Untouched (GO_READY) it has not
+    // rolled its loot yet, and template 2882 always drops it. Opened and left
+    // (GO_ACTIVATED) it holds whatever the last looter did not take.
+    DcDefiasGunpowder::Chest DmChestState(GameObject* chest)
+    {
+        using DcDefiasGunpowder::Chest;
+        if (!chest)
+            return Chest::Missing;
+        if (chest->getLootState() == GO_READY)
+            return Chest::Lootable;
+        if (chest->getLootState() != GO_ACTIVATED)
+            return Chest::Spent;
+        for (LootItem const& li : chest->loot.items)
+            if (li.itemid == DcDefiasGunpowder::ITEM_GUNPOWDER && !li.is_looted)
+                return Chest::Lootable;
+        for (LootItem const& li : chest->loot.quest_items)
+            if (li.itemid == DcDefiasGunpowder::ITEM_GUNPOWDER && !li.is_looted)
+                return Chest::Lootable;
+        return Chest::Spent;
+    }
+
+    // An Opening spell the bot already knows that opens `chest`'s lock: the
+    // spell a player's client casts when they click the chest. Every character
+    // starts with the generic Opening spells, so this finds one; 0 if not.
+    uint32 DmFindOpeningSpell(Player* bot, GameObject* chest)
+    {
+        LockEntry const* lock = sLockStore.LookupEntry(chest->GetGOInfo()->GetLockId());
+        if (!lock)
+            return 0;
+        for (uint8 j = 0; j < MAX_LOCK_CASE; ++j)
+        {
+            if (lock->Type[j] != LOCK_KEY_SKILL)
+                continue;
+            uint32 const lockType = lock->Index[j];
+            SkillType const skill = SkillByLockType(LockType(lockType));
+            if (skill != SKILL_NONE && bot->GetSkillValue(skill) < lock->Skill[j])
+                continue;
+            for (auto const& [spellId, known] : bot->GetSpellMap())
+            {
+                if (!known || known->State == PLAYERSPELL_REMOVED || !known->Active)
+                    continue;
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId);
+                if (!info)
+                    continue;
+                for (uint8 e = 0; e < MAX_SPELL_EFFECTS; ++e)
+                    if (info->Effects[e].Effect == SPELL_EFFECT_OPEN_LOCK &&
+                        uint32(info->Effects[e].MiscValue) == lockType)
+                        return spellId;
+            }
+        }
+        return 0;
     }
 
     ObjectiveArriveResult FireDefiasCannon(Player* bot, AiObjectContext* context,
                                            DungeonBossInfo const& /*info*/)
     {
-        DmCannonReason const last = context
-            ? static_cast<DmCannonReason>(DcRun::Of(context).eventHookReason)
-            : DmCannonReason::None;
+        using namespace DcDefiasGunpowder;
 
-        // Door already open (state != READY) -> the cannon has fired.
-        if (GameObject* door = bot->FindNearestGameObject(DM_GO_IRON_CLAD_DOOR, 100.0f))
-            if (door->GetGoState() != GO_STATE_READY)
-            {
-                if (DmCannonReasonChanged(context, DmCannonReason::DoorOpen))
-                    LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Defias Cannon: Iron Clad Door is open (state {}) -> done",
-                             bot->GetName(), static_cast<uint32>(door->GetGoState()));
+        Inputs in;
+        if (GameObject* door = bot->FindNearestGameObject(GO_IRON_CLAD_DOOR, 100.0f))
+            in.doorOpen = door->GetGoState() != GO_STATE_READY;
+
+        GameObject* cannon = bot->FindNearestGameObject(GO_CANNON, EVENT_AREA_RADIUS);
+        in.cannonFound = cannon != nullptr;
+
+        Player* carrier = DmFindGunpowderCarrier(bot, in.carrier);
+        Player* actor = carrier ? carrier : bot;
+        in.actorCasting = actor->IsNonMeleeSpellCast(false);
+        in.actorToCannon = cannon ? actor->GetExactDist(cannon) : 0.0f;
+
+        GameObject* chest = bot->FindNearestGameObject(GO_GUNPOWDER, EVENT_AREA_RADIUS);
+        in.chest = DmChestState(chest);
+        in.botToChest = chest ? bot->GetExactDist(chest) : 0.0f;
+        ObjectGuid const lootGuid = bot->GetLootGUID();
+        GameObject* looted = lootGuid.IsGameObject() ? bot->GetMap()->GetGameObject(lootGuid)
+                                                      : nullptr;
+        in.lootWindowOnChest = looted && looted->GetEntry() == GO_GUNPOWDER;
+        uint32 const openSpell =
+            (chest && in.chest == Chest::Lootable) ? DmFindOpeningSpell(bot, chest) : 0;
+        in.hasOpeningSpell = openSpell != 0;
+
+        Plan const plan = Decide(in);
+        switch (plan.action)
+        {
+            case Action::Done:
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: {} -> done",
+                             bot->GetName(), Describe(plan.action));
                 return ObjectiveArriveResult::Done;
-            }
 
-        // The 2s gunpowder "Opening" cast is already running — let it complete.
-        if (bot->IsNonMeleeSpellCast(false))
-        {
-            bool const ours = last == DmCannonReason::CastStarted ||
-                              last == DmCannonReason::CastAgain;
-            if (!ours && DmCannonReasonChanged(context, DmCannonReason::CastInFlight))
-            {
-                Spell* cur = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-                if (!cur)
-                    cur = bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
-                LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] Defias Cannon: running, waiting on a cast in flight (spell {})",
-                         bot->GetName(), cur ? cur->GetSpellInfo()->Id : 0u);
-            }
-            return ObjectiveArriveResult::Running;
-        }
-
-        GameObject* cannon = bot->FindNearestGameObject(DM_GO_CANNON, DM_CANNON_SCAN);
-        if (!cannon)
-        {
-            if (DmCannonReasonChanged(context, DmCannonReason::NoCannon))
-                LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] Defias Cannon: running, no cannon (GO {}) within {:.0f}yd of "
-                         "({:.1f},{:.1f},{:.1f})",
-                         bot->GetName(), DM_GO_CANNON, DM_CANNON_SCAN, bot->GetPositionX(),
-                         bot->GetPositionY(), bot->GetPositionZ());
-            return ObjectiveArriveResult::Running;  // not in range yet
-        }
-
-        // Grant the gunpowder (bots never looted the chest) and use it on the
-        // cannon: the item is the OPEN_LOCK key, so the spell hits and the
-        // cannon's SmartAI fires.
-        Item* gunpowder = bot->GetItemByEntry(DM_ITEM_GUNPOWDER);
-        if (!gunpowder)
-        {
-            bot->AddItem(DM_ITEM_GUNPOWDER, 1);
-            gunpowder = bot->GetItemByEntry(DM_ITEM_GUNPOWDER);
-            if (!gunpowder)
-            {
-                if (DmCannonReasonChanged(context, DmCannonReason::NoGunpowder))
+            case Action::WaitForCast:
+                // Folded into the action when it is the cast the step started.
+                if (DmReportChanged(context, plan.action))
+                {
+                    Spell* cur = actor->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                    if (!cur)
+                        cur = actor->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
                     LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Defias Cannon: running, could not grant the gunpowder "
-                             "(item {}; bags full?)",
-                             bot->GetName(), DM_ITEM_GUNPOWDER);
-                return ObjectiveArriveResult::Running;  // bags full this tick
+                             "[DC:{}] Deadmines cannon: running, {} ({} casting spell {})",
+                             bot->GetName(), Describe(plan.action), actor->GetName(),
+                             cur ? cur->GetSpellInfo()->Id : 0u);
+                }
+                return ObjectiveArriveResult::Running;
+
+            case Action::WalkToCannon:
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Deadmines cannon: running, {} ({}, {:.1f}yd)",
+                             bot->GetName(), Describe(plan.action), actor->GetName(),
+                             actor->GetExactDist(cannon));
+                DmWalkTo(actor, cannon->GetPositionX(), cannon->GetPositionY(),
+                         cannon->GetPositionZ());
+                return ObjectiveArriveResult::Running;
+
+            case Action::UseOnCannon:
+            {
+                Item* gunpowder = actor->GetItemByEntry(ITEM_GUNPOWDER);
+                if (!gunpowder)
+                    return ObjectiveArriveResult::Running;
+                // Feral-form druids can't cast the item spell at all; shift back
+                // first (same gate the barrel plants use). See DcFormGate.
+                DcFormGate::DropBlockingForm(actor, gunpowder);
+                SpellCastTargets targets;
+                targets.SetGOTarget(cannon);
+                actor->CastItemUseSpell(gunpowder, targets, 0, 0);
+
+                // CastItemUseSpell returns nothing; its result is whether a cast
+                // is now running. A refused cast (lock, form, range, item) leaves
+                // none. Re-tried every tick until the door opens, so the line is
+                // written once per change, not once per try.
+                Spell* cast = actor->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                uint32 const castId = cast ? cast->GetSpellInfo()->Id : 0u;
+                if (DmReportChanged(context, plan.action, /*castRefused*/ !cast))
+                {
+                    uint8 const code = context ? DcRun::Of(context).eventHookReason : 0;
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Deadmines cannon: running, {} uses the Defias Gunpowder "
+                             "on the cannon ({:.1f}yd): {} (cast spell {}, CanUseItem {}, "
+                             "form {}, door still shut)",
+                             bot->GetName(), actor->GetName(), actor->GetExactDist(cannon),
+                             !cast                           ? "no cast started"
+                             : (code & REPORT_CAST_AGAIN) ? "previous cast ended, cast again"
+                                                             : "cast started",
+                             castId, static_cast<uint32>(actor->CanUseItem(gunpowder)),
+                             static_cast<uint32>(actor->GetShapeshiftForm()));
+                }
+                // Running on a refused cast too, on purpose. The refusals seen
+                // are transient (the form drop above lands this tick, a carrier
+                // still closing to range), so failing here would end the event on
+                // the first one; Blocked would stall it with no retry at all. The
+                // refusal is logged above, and the step's Timeout + RetryOnTimeout
+                // bound it: a refused attempt walks back onto the cannon and then
+                // fails the event.
+                return ObjectiveArriveResult::Running;  // door-state gate confirms it
             }
+
+            case Action::TakeFromChest:
+            {
+                // What a player's client sends: take the item out of the open
+                // loot window, then close it. The stock "store loot" handler may
+                // have queued the same take already; whichever lands second finds
+                // the slot empty and does nothing.
+                int32 const slot = DmGunpowderLootSlot(bot, looted->loot);
+                if (slot >= 0)
+                {
+                    WorldPacket take(CMSG_AUTOSTORE_LOOT_ITEM, 1);
+                    take << uint8(slot);
+                    bot->GetSession()->HandleAutostoreLootItemOpcode(take);
+                }
+                bool const got = bot->HasItemCount(ITEM_GUNPOWDER, 1);
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Deadmines cannon: looted the Defias Gunpowder chest ({})",
+                             bot->GetName(),
+                             got ? "took the gunpowder"
+                                 : (slot < 0 ? "it held no gunpowder for us"
+                                             : "the gunpowder did not fit in the bags"));
+                WorldPacket release(CMSG_LOOT_RELEASE, 8);
+                release << lootGuid;
+                bot->GetSession()->HandleLootReleaseOpcode(release);
+                return ObjectiveArriveResult::Running;
+            }
+
+            case Action::WalkToChest:
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Deadmines cannon: running, {} ({:.1f}yd)", bot->GetName(),
+                             Describe(plan.action), bot->GetExactDist(chest));
+                DmWalkTo(bot, chest->GetPositionX(), chest->GetPositionY(), chest->GetPositionZ());
+                return ObjectiveArriveResult::Running;
+
+            case Action::OpenChest:
+            {
+                // The Opening cast lands as OPEN_LOCK -> Player::SendLoot, which
+                // rolls loot template 2882 and opens the window that
+                // TakeFromChest empties.
+                bot->StopMoving();
+                // A feral form can't cast the Opening spell; shift back first,
+                // the same gate the item-use casts go through (DcFormGate).
+                if (SpellInfo const* info = sSpellMgr->GetSpellInfo(openSpell))
+                    if (bot->GetShapeshiftForm() != FORM_NONE &&
+                        info->CheckShapeshift(uint32(bot->GetShapeshiftForm())) != SPELL_CAST_OK)
+                        bot->RemoveAurasByType(SPELL_AURA_MOD_SHAPESHIFT);
+                SpellCastResult const res = bot->CastSpell(chest, openSpell, false);
+                // A refused cast is re-tried next tick; the line is written once
+                // per change, not once per try.
+                if (DmReportChanged(context, plan.action, /*castRefused*/ res != SPELL_CAST_OK))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] Deadmines cannon: running, opening the Defias Gunpowder "
+                             "chest with spell {} (result {})",
+                             bot->GetName(), openSpell, uint32(res));
+                return ObjectiveArriveResult::Running;
+            }
+
+            case Action::NoCannon:
+            case Action::NoChest:
+            case Action::ChestSpent:
+            case Action::NoOpeningSpell:
+            case Action::WaitForPlayer:
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",
+                             bot->GetName(), Describe(plan.action));
+                return ObjectiveArriveResult::Running;
         }
-
-        // Feral-form druids can't cast the item spell at all — shift back first
-        // (same gate the barrel plants use). See DcFormGate.
-        DcFormGate::DropBlockingForm(bot, gunpowder);
-        SpellCastTargets targets;
-        targets.SetGOTarget(cannon);
-        bot->CastItemUseSpell(gunpowder, targets, 0, 0);
-
-        // CastItemUseSpell returns nothing; its result is whether a cast is now
-        // running. A refused cast (lock, form, range, item) leaves none.
-        Spell* cast = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-        uint32 const castId = cast ? cast->GetSpellInfo()->Id : 0u;
-        DmCannonReason const reason =
-            !cast ? DmCannonReason::CastRefused
-            : (last == DmCannonReason::CastStarted || last == DmCannonReason::CastAgain)
-                ? DmCannonReason::CastAgain
-                : DmCannonReason::CastStarted;
-        if (DmCannonReasonChanged(context, reason))
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] Defias Cannon: running, used gunpowder on the cannon "
-                     "(dist {:.1f}yd): {} (cast spell {}, CanUseItem {}, form {}, door still shut)",
-                     bot->GetName(), bot->GetExactDist(cannon),
-                     reason == DmCannonReason::CastRefused ? "no cast started"
-                     : reason == DmCannonReason::CastAgain ? "previous cast ended, cast again"
-                                                           : "cast started",
-                     castId, static_cast<uint32>(bot->CanUseItem(gunpowder)),
-                     static_cast<uint32>(bot->GetShapeshiftForm()));
-        // Running on a refused cast too, on purpose. The refusals seen are
-        // transient (the form drop above lands this tick, a bot still closing
-        // to range), so failing here would end the event on the first one;
-        // Blocked would stall it with no retry at all. The refusal is logged
-        // above, and the step's Timeout + RetryOnTimeout bound it: a refused
-        // attempt walks back onto the cannon and then fails the event.
-        return ObjectiveArriveResult::Running;  // door-state gate confirms it
+        return ObjectiveArriveResult::Running;
     }
 
     // --- ZulFarrak: WakeZumrah (hook id 5) --------------------------------
@@ -762,45 +937,47 @@ namespace
         return ObjectiveArriveResult::Running;
     }
 
-    // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
+    // --- Old Hillsbrad: CarryIncendiaryBombs (hook id 3) ------------------
     // Brazen (18725) only offers his drake ride to Durnholde Keep when the player
-    // HOLDS the Pack of Incendiary Bombs (item 25853) — gossip menu 7959 option 0
-    // is condition-gated on that item. A player gets the pack by talking to Erozion
-    // (18723), but Erozion's grant option is quest-gated (quest 10283 "Taretha's
-    // Diversion" taken/rewarded), which a bot never has — so the bot can never
-    // select Erozion's gossip. Grant the pack directly (mechanically identical to
-    // Erozion's AddItem) so Brazen's ride option then appears. Idempotent: Done
-    // once the tank holds it. (The same pack is used to bomb the barrels in
-    // objective 2 — the UseItemOnGO step also self-grants as a backstop.)
+    // HOLDS the Pack of Incendiary Bombs (item 25853): gossip menu 7959 option 0
+    // is condition-gated on that item. A player gets the pack from Erozion
+    // (18723), whose gossip option is gated on quest 10283 "Taretha's Diversion"
+    // (taken or rewarded), itself after quest 10282 outside the instance. This
+    // hook used to grant the pack; it no longer does. Done once the tank carries
+    // the pack; until then it waits and says why, and the event's step timeout
+    // ends the wait. A bot that has not done the quest chain does not get the
+    // pack, so an all-bot party now stops here.
     constexpr uint32 OH_ITEM_INCENDIARY_BOMBS = 25853;
 
-    ObjectiveArriveResult GrantIncendiaryBombs(Player* bot, AiObjectContext* /*context*/,
+    ObjectiveArriveResult CarryIncendiaryBombs(Player* bot, AiObjectContext* context,
                                                DungeonBossInfo const& /*info*/)
     {
         if (bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS))
             return ObjectiveArriveResult::Done;
-        bot->AddItem(OH_ITEM_INCENDIARY_BOMBS, 1);
-        return bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS)
-                   ? ObjectiveArriveResult::Done
-                   : ObjectiveArriveResult::Running;  // bags full this tick — retry
+        if (!DcRun::Of(context).Throttled(DcThrottle::OhBombsLog, 5000))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] Old Hillsbrad: no Pack of Incendiary Bombs; Erozion gives "
+                     "it only to a player on quest 10283, and Brazen will not fly "
+                     "without it",
+                     bot->GetName());
+        return ObjectiveArriveResult::Running;
     }
 
-    // --- The Mechanar: GrantCacheKeyAndLoot (hook id 4) -------------------
+    // --- The Mechanar: OpenCacheWithCarriedKey (hook id 4) ----------------
     // The Cache of the Legion (GO 184465 normal / 184849 heroic) is a locked chest
     // (Lock.dbc 1706, a LOCK_KEY_ITEM lock) requiring the Cache of the Legion Key
-    // (item 30438). Blizzard's key is formed by combining the two Jagged Crystals
+    // (item 30438). A player forms the key by combining the two Jagged Crystals
     // the Gatewatchers drop (Gyro-Kill -> Blue 30436, Iron-Hand -> Red 30437) via
-    // the crystals' on-use spell 36565 — but a bot never right-clicks a crystal,
-    // and in a party the two crystals can land in different bags. Per the design
-    // decision (grant the key), hand the leader key 30438 directly, then OPEN the
-    // chest exactly the way the Deadmines cannon / Old Hillsbrad barrels do it:
-    // USE the key item on the GO (CastItemUseSpell). This is load-bearing — the
-    // original "grant key + let the stock loot pipeline open it" plan DEADLOCKED
-    // (the tank parked at the cache and never looted). Two independent stock
-    // failings sink that plan: (a) MaybeSkipUnworthyLoot blacklists every chest
-    // with DungeonClear.IgnoreChests on (the default), and (b) even reached,
+    // the crystals' on-use spell 36565. This hook used to hand the leader the key
+    // outright; it no longer grants anything. When the leader CARRIES the key it
+    // opens the chest exactly the way the Deadmines cannon / Old Hillsbrad
+    // barrels do it: USE the key item on the GO (CastItemUseSpell). Without the
+    // key the objective is Done and the cache is left for whoever holds one.
+    // Using the key is load-bearing: the stock loot pipeline cannot open this
+    // lock. (a) MaybeSkipUnworthyLoot blacklists every chest with
+    // DungeonClear.IgnoreChests on (the default), and (b) even reached,
     // OpenLootAction's CanOpenLock has the LOCK_KEY_ITEM case COMMENTED OUT, so it
-    // can never produce an opening spell for a key-item lock — and the core only
+    // can never produce an opening spell for a key-item lock, and the core only
     // opens such a lock when the KEY ITEM ITSELF is the cast item (Spell::
     // CanOpenLock: m_CastItem->GetEntry() == lockInfo->Index[j]). So the leader
     // must use the key on the chest itself; the resulting Player::SendLoot fires
@@ -844,8 +1021,8 @@ namespace
         return false;
     }
 
-    ObjectiveArriveResult GrantCacheKeyAndLoot(Player* bot, AiObjectContext* /*context*/,
-                                               DungeonBossInfo const& /*info*/)
+    ObjectiveArriveResult OpenCacheWithCarriedKey(Player* bot, AiObjectContext* /*context*/,
+                                                  DungeonBossInfo const& /*info*/)
     {
         // Full-bot run: skip the open entirely. The cache (184465/184849) is a
         // CONSUMABLE chest that only despawns once its loot is actually LOOTED, and in
@@ -859,20 +1036,27 @@ namespace
         if (!PartyHasRealPlayer(bot))
             return ObjectiveArriveResult::Done;
 
+        // No key, no open: the key is earned by combining the Gatewatchers'
+        // crystals, never handed out. The player in the party can open the
+        // cache with their own key.
+        Item* key = bot->GetItemByEntry(MECH_ITEM_CACHE_KEY);
+        if (!key)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] The Mechanar: no Cache of the Legion Key in {}'s bags, "
+                     "leaving the cache to a player who carries one",
+                     bot->GetName(), bot->GetName());
+            return ObjectiveArriveResult::Done;
+        }
+
         GameObject* cache = bot->FindNearestGameObject(MECH_GO_CACHE_NORMAL, MECH_CACHE_SEARCH);
         if (!cache)
             cache = bot->FindNearestGameObject(MECH_GO_CACHE_HEROIC, MECH_CACHE_SEARCH);
 
+        // No cache in range: the objective anchor sits ON the chest, so at the
+        // anchor that means it was already looted and despawned (consumable).
         if (!cache)
-        {
-            // No cache in range: either the tank has not arrived / scanned it yet,
-            // or it has already been looted and despawned (consumable). Once we
-            // have handed over the key the latter is true -> Done; otherwise keep
-            // waiting to arrive.
-            return bot->HasItemCount(MECH_ITEM_CACHE_KEY, 1)
-                       ? ObjectiveArriveResult::Done
-                       : ObjectiveArriveResult::Running;
-        }
+            return ObjectiveArriveResult::Done;
 
         // The chest leaves GO_READY the instant the key-use OPEN_LOCK lands (the
         // loot window is up and the "store loot" handler is draining it) — a
@@ -884,16 +1068,6 @@ namespace
         // than re-issue and interrupt ourselves every tick.
         if (bot->IsNonMeleeSpellCast(false))
             return ObjectiveArriveResult::Running;
-
-        // Grant the key (bots never combined the crystals).
-        Item* key = bot->GetItemByEntry(MECH_ITEM_CACHE_KEY);
-        if (!key)
-        {
-            bot->AddItem(MECH_ITEM_CACHE_KEY, 1);
-            key = bot->GetItemByEntry(MECH_ITEM_CACHE_KEY);
-            if (!key)
-                return ObjectiveArriveResult::Running;  // bags full this tick — retry
-        }
 
         // Close the final yards if the objective anchor left us just outside the
         // interact box (SendLoot's range check is unforgiving). Nothing else moves
@@ -936,8 +1110,8 @@ namespace
             Reg::HookTable t;
             Reg::AddHook(t, 1, &EnsureRingStarted);      // BRD Ring of Law — start the arena event
             Reg::AddHook(t, 2, &FireDefiasCannon);       // Deadmines — fire the cannon, open the door
-            Reg::AddHook(t, 3, &GrantIncendiaryBombs);   // Old Hillsbrad — pack of bombs (unlocks Brazen)
-            Reg::AddHook(t, 4, &GrantCacheKeyAndLoot);   // The Mechanar — Cache of the Legion key + loot
+            Reg::AddHook(t, 3, &CarryIncendiaryBombs);   // Old Hillsbrad: wait for a carried pack of bombs (unlocks Brazen)
+            Reg::AddHook(t, 4, &OpenCacheWithCarriedKey);  // The Mechanar: open the Cache of the Legion with a carried key
             Reg::AddHook(t, 5, &WakeZumrah);             // ZulFarrak — flip Zum'rah hostile (AT 962)
             Reg::AddHook(t, 6, &DriveMellicharWaves);    // Arcatraz — poke Mellichar, hold through the waves
             Reg::AddHook(t, 7, &DriveAnzuSummon);        // Sethekk Halls — force-summon Anzu (send-event 14797)

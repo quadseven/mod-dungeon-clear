@@ -47,17 +47,18 @@ namespace
     constexpr float OH_ENTRANCE_Z = 66.54f;
     constexpr uint32 NPC_BRAZEN   = 18725;
 
-    // Erozion — hands out the Pack of Incendiary Bombs (item 25853). His grant
-    // gossip is quest-gated (quest 10283 taken/rewarded), which a bot never has,
-    // AND Brazen's ride gossip (menu 7959) only appears once the player HOLDS item
-    // 25853 — so the bot must acquire the pack before Brazen will transport it.
-    // Since Erozion's option is unreachable for a questless bot, hook 3 grants the
-    // pack directly (mechanically identical to Erozion's AddItem). See
-    // ObjectiveHookRegistry GrantIncendiaryBombs. Erozion (18723) sits at:
+    // Erozion hands out the Pack of Incendiary Bombs (item 25853). His gossip
+    // option is quest-gated (quest 10283 taken/rewarded, after 10282 outside the
+    // instance), AND Brazen's ride gossip (menu 7959) only appears once the player
+    // HOLDS item 25853, so the leader must carry the pack before Brazen will
+    // transport it. Hook 3 grants nothing: it is Done once the leader carries the
+    // pack and otherwise waits and says why. A bot that has not done the quest
+    // chain never gets the pack. See ObjectiveHookRegistry CarryIncendiaryBombs.
+    // Erozion (18723) sits at:
     constexpr float OH_EROZION_X       = 2375.50f;
     constexpr float OH_EROZION_Y       = 1175.50f;
     constexpr float OH_EROZION_Z       = 65.30f;
-    constexpr uint32 OH_HOOK_GRANT_BOMBS = 3;  // ObjectiveHookRegistry id
+    constexpr uint32 OH_HOOK_CARRY_BOMBS = 3;  // ObjectiveHookRegistry id
 
     // Brazen's drake DROP-OFF — OUTSIDE the keep's west wall (in-game reading), on
     // the road above the courtyard. The party teleports HERE and then WALKS in to
@@ -127,9 +128,9 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
     // (1) GET THE BOMBS FROM EROZION, THEN RIDE TO DURNHOLDE KEEP.
     // The player must hold the Pack of Incendiary Bombs (item 25853) before Brazen
     // will offer his drake ride (Brazen menu 7959 opt 0 is condition-gated on the
-    // item). Erozion normally grants it, but his gossip is quest-gated (quest 10283)
-    // and unreachable for a questless bot — so walk to Erozion and grant the pack
-    // directly (hook 3), THEN gossip Brazen to trigger the ride (spell 32892), THEN
+    // item). Erozion gives it to a player on quest 10283; walk to Erozion and wait
+    // until the leader carries the pack (hook 3, which grants nothing), THEN
+    // gossip Brazen to trigger the ride (spell 32892), THEN
     // TeleportParty the WHOLE party to the keep. The taxi flies only the invoker, so
     // a lone-leader flight would desync the followers 1100yd back; the teleport
     // lands everyone together at Brazen's DROP-OFF outside the walls (its
@@ -143,7 +144,7 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
             .Anchored(/*orderIndex*/ 1)
             .Persistent()
             .MoveTo(OH_EROZION_X, OH_EROZION_Y, OH_EROZION_Z, /*radius*/ 6.0f)
-            .Custom(OH_HOOK_GRANT_BOMBS)  // hold the pack -> Brazen's ride option appears
+            .Custom(OH_HOOK_CARRY_BOMBS)  // carry the pack -> Brazen's ride option appears
             .Gossip(NPC_BRAZEN, /*option*/ 0, /*searchRadius*/ 20.0f)
                 .SkipIfTargetMissing()
             .TeleportParty(/*checkpoint*/ OH_ENTRANCE_X, OH_ENTRANCE_Y, OH_ENTRANCE_Z,

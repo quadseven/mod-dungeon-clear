@@ -24,10 +24,15 @@
 //
 // The cannon's lock (83) is an ITEM lock requiring the Defias Gunpowder (item
 // 5397) as the key, so spell 6250 only fires the cannon when cast FROM that
-// item. A bot never loots the chest, so the FireDefiasCannon hook grants the
-// gunpowder and uses it on the cannon (the item-use path supplies the cast-item
-// the OPEN_LOCK needs). The gunpowder has a 2s "Opening" cast. See
-// ObjectiveHookRegistry.
+// item. The FireDefiasCannon hook earns the gunpowder the way a player does:
+// when nobody in the party carries it, the bot walks ~42yd up to the Defias
+// Gunpowder chest (GO 17155), opens it and loots the gunpowder, then walks back
+// and uses it on the cannon (the item-use path supplies the cast-item the
+// OPEN_LOCK needs). Nothing is granted. The gunpowder has a 2s "Opening" cast.
+// See ObjectiveHookRegistry and Util/DcDefiasGunpowder.h.
+//
+// STEPS OWN MOVEMENT: the hook walks the tank to the chest and back, and the
+// at-objective hold would otherwise cancel that walk every tick.
 //
 // PERSISTENT: firing the cannon summons two Squallshapers that immediately
 // engage, so the event sees a >1s Drive gap on the combat engine right after the
@@ -40,7 +45,9 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_DOOR_OPEN_STATE   = 2;  // GO_STATE_ACTIVE_ALTERNATIVE
     constexpr uint32 DM_FIRE_CANNON_HOOK  = 2;  // ObjectiveHookRegistry id
-    // Ample for a 2s cast; a cannon that has not fired in this long will not.
+    // Ample for the ~42yd walk to the chest and back plus two 2s casts. A
+    // gunpowder looted before a timeout stays in the bags, so the retry only
+    // walks back onto the cannon and uses it.
     constexpr uint32 DM_FIRE_CANNON_TIMEOUT_MS = 30000;
     constexpr uint32 DM_FIRE_CANNON_RETRIES    = 2;
 
@@ -48,10 +55,12 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
         EventBuilder(36, 1, "Iron Clad Door (Defias Cannon)")
             .Anchored(/*encounterIndex*/ 3)
             .Persistent()
+            .StepsOwnMovement()
             // 1. Step up onto the cannon (the objective's arrive radius may
             //    leave the tank ~10yd off; the cannon GO is at this spot).
             .MoveTo(-107.56f, -659.67f, 7.21f, /*radius*/ 5.0f)
-            // 2. Fire it. The hook casts spell 6250 at the cannon GO -> its
+            // 2. Fire it. The hook loots the gunpowder from its chest if nobody
+            //    carries it, then uses it on the cannon GO (spell 6250) -> its
             //    SmartAI opens the door + summons the Squallshapers. The hook
             //    returns Running until the door opens, so its timeout is what
             //    ends a stuck attempt: walk back onto the cannon and try again,

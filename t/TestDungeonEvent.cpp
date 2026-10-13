@@ -621,8 +621,9 @@ TEST(DungeonEventRegistryTest, BlackrockShadowforgeLockEventShape)
         << "the doors are 113yd from the lever — the scan must reach them";
 }
 
-// Deadmines Defias Cannon: walk to the cannon, fire it (Custom hook 2 casts the
-// gunpowder spell at GO 16398), then hold until the Iron Clad Door (16397) opens.
+// Deadmines Defias Cannon: walk to the cannon, fire it (Custom hook 2 loots the
+// gunpowder from GO 17155 if nobody carries it, then uses it on GO 16398), then
+// hold until the Iron Clad Door (16397) opens.
 TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
@@ -631,6 +632,9 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     EXPECT_EQ(e->orderIndex, 3u);  // between Gilnid (2) and Mr. Smite (3)
     EXPECT_TRUE(e->persistent);
     EXPECT_TRUE(e->required);
+    // The hook walks the tank to the gunpowder chest and back; the at-objective
+    // hold must not cancel that walk.
+    EXPECT_TRUE(e->stepsOwnMovement);
 
     ASSERT_EQ(e->steps.size(), 3u);
 

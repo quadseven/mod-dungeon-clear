@@ -117,8 +117,8 @@ namespace
     //         event RESETS (fail). So the suppressors MUST be interrupted/killed.
     //   - Using a flame needs Hakkari Blood (item 10460) — the flame's lock (520)
     //     consumes it (dropped by Bloodkeepers 8438 during the waves).
-    // OUR CHEAT (phase 2, the in-combat orchestration — TODO): after the egg use,
-    // grant the tank Hakkari Blood and walk it corner-to-corner USING each flame
+    // PHASE 2, the in-combat orchestration (Action/DcHakkar): after the egg use,
+    // loot Hakkari Blood from the Bloodkeepers and walk corner-to-corner USING each flame
     // (counter 1 -> 4) while the party fights the waves and interrupts the
     // suppressors; then kill the Avatar. PHASE 1 (this file) only fires the egg
     // so the encounter actually starts.
@@ -213,10 +213,12 @@ void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out)
 
     // --- Event 8: GATE 3 beat 1 — start the encounter (use the Egg) -------
     // Anchored at the CENTRE of the Sanctum of the Fallen (the Shade-spawn spot),
-    // ordered after Atal'alarion. The bot USES the Egg of Hakkar (10465) — granted
-    // on the fly — which is the only thing that actually summons the Shade and
-    // starts the encounter (a bare spell cast / idol click does not). Optional —
-    // pit-wing bonus; degrades to `dc skip` if the room can't be reached.
+    // ordered after Atal'alarion. The bot USES the Egg of Hakkar (10465), which is
+    // the only thing that actually summons the Shade and starts the encounter (a
+    // bare spell cast / idol click does not). The egg is never granted: a leader
+    // that does not carry it (it comes from the quest "The God Hakkar") fails the
+    // step, and since the event is Optional (pit-wing bonus) the clear moves on.
+    // Also degrades to `dc skip` if the room can't be reached.
     // The egg summon FAILS unless used from dead centre, and the objective arrive
     // radius (8yd) lets boss-nav park the tank short of it — so a tight MoveTo
     // walks the tank precisely to the centre BEFORE the egg fires (live bug
