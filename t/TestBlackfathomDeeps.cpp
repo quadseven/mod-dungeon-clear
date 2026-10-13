@@ -402,6 +402,38 @@ TEST(DungeonEventBlackfathomDeeps, ANotReadyTickReArmsTheValve)
     EXPECT_EQ(v.heldSinceMs, in.nowMs);
 }
 
+// Losing the drive gate during a hold must discard elapsed time. If the tank
+// resumes driving beside Gelihast, it gets a fresh valve window.
+TEST(DungeonEventBlackfathomDeeps, DriveGateInterruptsTheGelihastValveClock)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    in.nowMs = 10000;
+    DcAtBossGate::Verdict v = DcAtBossGate::Decide(in);
+    ASSERT_EQ(v.heldSinceMs, 10000u);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.nowMs += DC_AT_BOSS_HOLD_VALVE_MS - 1;
+    in.driving = false;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_EQ(v.gate, Gate::NotDriving);
+    EXPECT_FALSE(v.fire);
+    EXPECT_EQ(v.heldSinceMs, 0u);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.driving = true;
+    ++in.nowMs;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_FALSE(v.fire);
+    EXPECT_EQ(v.heldSinceMs, in.nowMs);
+
+    in.heldSinceMs = v.heldSinceMs;
+    in.nowMs += DC_AT_BOSS_HOLD_VALVE_MS;
+    v = DcAtBossGate::Decide(in);
+    EXPECT_TRUE(v.fire);
+    EXPECT_TRUE(v.valveOpen);
+}
+
 // Loot appearing mid-hold re-arms the clock the same way: the valve fires only
 // after a full, continuous valve-length hold with no loot pending.
 TEST(DungeonEventBlackfathomDeeps, ALootPendingTickReArmsTheValve)
