@@ -258,8 +258,9 @@ bool DungeonClearAtBossTrigger::IsActive()
     // route, SealedMusterHolds, and on a raid DcRezRecovery / DcRaidMuster, else
     // BetweenPullsReady. DcAtBossGate::Decide fires only with every one of them
     // open; the valve may pass only room trash or a sealed muster, never drive,
-    // anchor, encounter, pull, range, door or route (pinned by
-    // ValveNeverOpensPastAHardGate in t/TestBlackfathomDeeps.cpp).
+    // anchor, encounter, pull, range, door or route. Pinned in
+    // t/TestBlackfathomDeeps.cpp: EveryGateTheTriggerTestedStillRefusesTheEngage
+    // (each gate alone refuses the engage) and ValveNeverOpensPastAHardGate.
     return DcAtBoss::Evaluate(bot, botAI, context, *next).fire;
 }
 

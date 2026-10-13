@@ -333,6 +333,49 @@ TEST(DungeonEventBlackfathomDeeps, ValveNeverOpensPastAHardGate)
     EXPECT_EQ(DcAtBossGate::Decide(in).gate, Gate::ClosedDoor);
 }
 
+// Every gate DungeonClearAtBossTrigger::IsActive used to test inline, each down
+// on its own, still refuses the engage now that the trigger reads only
+// DcAtBoss::Evaluate(...).fire, and the hard ones refuse it past the valve too.
+// Drive, anchor kind, encounter hold, pull ownership, engage range, door,
+// anchored route, raid rez, raid muster and dungeon readiness never fire; room
+// trash and a sealed muster hold until the valve, and not one tick before it.
+TEST(DungeonEventBlackfathomDeeps, EveryGateTheTriggerTestedStillRefusesTheEngage)
+{
+    uint32_t const budget = 3 * DC_AT_BOSS_HOLD_VALVE_MS;
+    struct Case { char const* name; void (*set)(DcAtBossGate::Inputs&); Gate want; bool valve; };
+    Case const cases[] = {
+        { "drive",     [](DcAtBossGate::Inputs& i) { i.driving = false; },       Gate::NotDriving,    false },
+        { "anchor",    [](DcAtBossGate::Inputs& i) { i.bossAnchor = false; },    Gate::NotBossAnchor, false },
+        { "encounter", [](DcAtBossGate::Inputs& i) { i.encounterHold = true; },  Gate::EncounterHold, false },
+        { "pull",      [](DcAtBossGate::Inputs& i) { i.pullOwns = true; },       Gate::PullOwns,      false },
+        { "range",     [](DcAtBossGate::Inputs& i) { i.atEngage = false; },      Gate::NotAtEngage,   false },
+        { "door",      [](DcAtBossGate::Inputs& i) { i.closedDoor = true; },     Gate::ClosedDoor,    false },
+        { "hops",      [](DcAtBossGate::Inputs& i) { i.anchoredHops = true; },   Gate::AnchoredHops,  false },
+        { "ready",     [](DcAtBossGate::Inputs& i) { i.partyReady = false; },    Gate::PartyNotReady, false },
+        { "rez",       [](DcAtBossGate::Inputs& i) { i.raid = true; i.rezPending = true; },
+                                                                                 Gate::RezPending,    false },
+        { "muster",    [](DcAtBossGate::Inputs& i) { i.raid = true; i.raidMusterHolds = true; },
+                                                                                 Gate::RaidMuster,    false },
+        { "trash",     [](DcAtBossGate::Inputs& i) { i.roomTrash = true; },      Gate::RoomTrash,     true },
+        { "sealed",    [](DcAtBossGate::Inputs& i) { i.sealedHolds = true; },    Gate::SealedMuster,  true },
+    };
+    for (Case const& c : cases)
+    {
+        DcAtBossGate::Inputs in = AtGelihast();
+        c.set(in);
+        in.nowMs = 50000;
+        DcAtBossGate::Verdict const first = DcAtBossGate::Decide(in);
+        EXPECT_FALSE(first.fire) << c.name;
+        EXPECT_EQ(first.gate, c.want) << c.name;
+
+        uint32_t const took = MsToFire(in, 50000, budget);
+        if (c.valve)
+            EXPECT_GE(took, DC_AT_BOSS_HOLD_VALVE_MS - TICK_MS) << c.name;
+        else
+            EXPECT_EQ(took, UINT32_MAX) << c.name;
+    }
+}
+
 // One tick that is not a valve hold (the party dips below ready) re-arms the
 // clock: the valve measures one continuous hold.
 TEST(DungeonEventBlackfathomDeeps, ANotReadyTickReArmsTheValve)
