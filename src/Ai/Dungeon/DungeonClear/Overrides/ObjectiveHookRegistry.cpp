@@ -322,6 +322,15 @@ namespace
         GameObject* looted = lootGuid.IsGameObject() ? bot->GetMap()->GetGameObject(lootGuid)
                                                       : nullptr;
         in.lootWindowOnChest = looted && looted->GetEntry() == GO_GUNPOWDER;
+        if (context && in.carrier == Carrier::None && !in.actorCasting &&
+            !in.lootWindowOnChest)
+        {
+            uint8 const last = DcRun::Of(context).eventHookReason;
+            uint8 const lastAction = last & REPORT_ACTION_MASK;
+            uint8 const openAction =
+                static_cast<uint8>(static_cast<uint8>(Action::OpenChest) + 1);
+            in.openingAttempted = !(last & REPORT_CAST_REFUSED) && lastAction == openAction;
+        }
         uint32 const openSpell =
             (chest && in.chest == Chest::Lootable) ? DmFindOpeningSpell(bot, chest) : 0;
         in.hasOpeningSpell = openSpell != 0;
@@ -463,6 +472,7 @@ namespace
             case Action::NoChest:
             case Action::ChestSpent:
             case Action::NoOpeningSpell:
+            case Action::OpeningNoLoot:
             case Action::WaitForPlayer:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",

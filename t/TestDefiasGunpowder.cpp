@@ -166,6 +166,24 @@ TEST(DcDefiasGunpowder, AnOpenLootWindowIsTakenFirst)
     EXPECT_EQ(Decide(in).action, Action::TakeFromChest);
 }
 
+TEST(DcDefiasGunpowder, OpeningThatYieldsNoLootIsNotCastAgain)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.botToChest = 2.0f;
+    EXPECT_EQ(Decide(in).action, Action::OpenChest);
+
+    in.actorCasting = true;
+    EXPECT_EQ(Decide(in).action, Action::WaitForCast);
+
+    in.actorCasting = false;
+    in.openingAttempted = true;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::OpeningNoLoot);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_EQ(Decide(in).action, Action::OpeningNoLoot);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {

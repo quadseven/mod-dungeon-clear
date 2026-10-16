@@ -77,6 +77,7 @@ namespace DcDefiasGunpowder
         float   botToChest = 0.0f;
         bool    lootWindowOnChest = false;  // the bot's loot window is the chest's
         bool    hasOpeningSpell = false;    // the bot knows a spell that opens lock 57
+        bool    openingAttempted = false;   // a prior Opening cast ended without a loot window
     };
 
     enum class Action : std::uint8_t
@@ -95,6 +96,7 @@ namespace DcDefiasGunpowder
         NoChest,         // no GO 17155 in the event area
         ChestSpent,      // GO 17155 is there, but its gunpowder is gone
         NoOpeningSpell,  // the bot knows no spell that opens the chest's lock
+        OpeningNoLoot,   // Opening ended without a loot window; do not cast it again
     };
 
     struct Plan
@@ -130,6 +132,8 @@ namespace DcDefiasGunpowder
             return {Action::TakeFromChest, GO_GUNPOWDER};
         if (in.actorCasting)
             return {Action::WaitForCast, GO_GUNPOWDER};
+        if (in.openingAttempted)
+            return {Action::OpeningNoLoot, GO_GUNPOWDER};
         if (in.chest == Chest::Missing)
             return {Action::NoChest, GO_GUNPOWDER};
         if (in.chest == Chest::Spent)
@@ -145,7 +149,8 @@ namespace DcDefiasGunpowder
     inline bool IsReport(Action a)
     {
         return a == Action::NoCannon || a == Action::NoChest || a == Action::ChestSpent ||
-               a == Action::NoOpeningSpell || a == Action::WaitForPlayer;
+               a == Action::NoOpeningSpell || a == Action::OpeningNoLoot ||
+               a == Action::WaitForPlayer;
     }
 
     // The step's "why it is still Running" line is logged once per change, not
@@ -197,6 +202,7 @@ namespace DcDefiasGunpowder
             case Action::NoChest:        return "no Defias Gunpowder chest in the event area (already looted, or not spawned)";
             case Action::ChestSpent:     return "the Defias Gunpowder chest has been emptied of its gunpowder";
             case Action::NoOpeningSpell: return "no known spell opens the Defias Gunpowder chest's lock";
+            case Action::OpeningNoLoot:  return "Opening ended without a Defias Gunpowder loot window";
         }
         return "?";
     }
