@@ -165,6 +165,7 @@ namespace DcDefiasGunpowder
     constexpr std::uint8_t REPORT_CAST_REFUSED = 0x40;  // UseOnCannon / OpenChest started no cast
     constexpr std::uint8_t REPORT_CAST_AGAIN   = 0x80;  // UseOnCannon again: the last use's
                                                         // cast ended with the door still shut
+    constexpr std::uint8_t REPORT_OPENING_ATTEMPTED = 0x80;  // OpenChest succeeded this attempt
 
     inline std::uint8_t ReportCode(Action a, bool castRefused, std::uint8_t last)
     {
@@ -183,6 +184,10 @@ namespace DcDefiasGunpowder
             return code | REPORT_CAST_REFUSED;
         if (a == Action::UseOnCannon && lastCastStarted && lastAction == code)
             return code | REPORT_CAST_AGAIN;
+        if (a == Action::OpenChest)
+            return code | REPORT_OPENING_ATTEMPTED;
+        if (a == Action::OpeningNoLoot && (last & REPORT_OPENING_ATTEMPTED))
+            return code | REPORT_OPENING_ATTEMPTED;
         return code;
     }
 

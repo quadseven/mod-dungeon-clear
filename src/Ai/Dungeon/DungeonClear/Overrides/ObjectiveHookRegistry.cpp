@@ -327,9 +327,12 @@ namespace
         {
             uint8 const last = DcRun::Of(context).eventHookReason;
             uint8 const lastAction = last & REPORT_ACTION_MASK;
-            uint8 const openAction =
-                static_cast<uint8>(static_cast<uint8>(Action::OpenChest) + 1);
-            in.openingAttempted = !(last & REPORT_CAST_REFUSED) && lastAction == openAction;
+            uint8 const openAction = static_cast<uint8>(static_cast<uint8>(Action::OpenChest) + 1);
+            uint8 const noLootAction =
+                static_cast<uint8>(static_cast<uint8>(Action::OpeningNoLoot) + 1);
+            in.openingAttempted = !(last & REPORT_CAST_REFUSED) &&
+                                  (lastAction == openAction || lastAction == noLootAction) &&
+                                  (last & REPORT_OPENING_ATTEMPTED);
         }
         uint32 const openSpell =
             (chest && in.chest == Chest::Lootable) ? DmFindOpeningSpell(bot, chest) : 0;

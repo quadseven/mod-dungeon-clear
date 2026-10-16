@@ -184,6 +184,21 @@ TEST(DcDefiasGunpowder, OpeningThatYieldsNoLootIsNotCastAgain)
     EXPECT_EQ(Decide(in).action, Action::OpeningNoLoot);
 }
 
+TEST(DcDefiasGunpowder, OpeningNoLootReportPreservesTheOpeningAttemptLatch)
+{
+    uint8_t const openingStarted = ReportCode(Action::OpenChest, false, 0);
+    uint8_t const openingInFlight = ReportCode(Action::WaitForCast, false, openingStarted);
+    ASSERT_EQ(openingInFlight, openingStarted);
+
+    uint8_t const noLoot = ReportCode(Action::OpeningNoLoot, false, openingInFlight);
+    EXPECT_NE(noLoot & 0x80, 0) << "the live eventHookReason must keep the opening attempt bit";
+
+    Inputs in = AtTheCannonEmptyHanded();
+    in.botToChest = 2.0f;
+    in.openingAttempted = (noLoot & 0x80) != 0;
+    EXPECT_EQ(Decide(in).action, Action::OpeningNoLoot);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {
