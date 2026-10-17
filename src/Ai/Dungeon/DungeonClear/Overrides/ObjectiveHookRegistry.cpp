@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <utility>
+#include <vector>
 
 #include "Creature.h"
 #include "CreatureAI.h"
@@ -32,6 +33,7 @@
 #include "PlayerbotAI.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -246,7 +248,8 @@ namespace
 
     // Does the chest still hold the gunpowder? Untouched (GO_READY) it has not
     // rolled its loot yet, and template 2882 always drops it. Opened and left
-    // (GO_ACTIVATED) it holds whatever the last looter did not take.
+    // (GO_ACTIVATED) it holds whatever the last looter did not take: Opened when
+    // that still includes the gunpowder (a loot window was closed on it).
     DcDefiasGunpowder::Chest DmChestState(GameObject* chest)
     {
         using DcDefiasGunpowder::Chest;
@@ -258,11 +261,85 @@ namespace
             return Chest::Spent;
         for (LootItem const& li : chest->loot.items)
             if (li.itemid == DcDefiasGunpowder::ITEM_GUNPOWDER && !li.is_looted)
-                return Chest::Lootable;
+                return Chest::Opened;
         for (LootItem const& li : chest->loot.quest_items)
             if (li.itemid == DcDefiasGunpowder::ITEM_GUNPOWDER && !li.is_looted)
-                return Chest::Lootable;
+                return Chest::Opened;
         return Chest::Spent;
+    }
+
+    // The party bot that opens the chest (DcDefiasGunpowder::PickOpener): `bot`
+    // when its bags can hold the gunpowder, else the bot in the event area with
+    // the emptiest bags that can; null when none can. Players are left out: the
+    // hook cannot walk or cast for them.
+    Player* DmPickOpener(Player* bot)
+    {
+        using DcDefiasGunpowder::Looter;
+        auto looterOf = [](Player* p)
+        {
+            Looter l;
+            ItemPosCountVec dest;
+            l.canStore = p->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest,
+                                            DcDefiasGunpowder::ITEM_GUNPOWDER, 1) == EQUIP_ERR_OK;
+            if (PlayerbotAI* ai = GET_PLAYERBOT_AI(p))
+                l.bagSpace = ai->GetAiObjectContext()->GetValue<uint8>(DcKey::Stock::BagSpace)->Get();
+            return l;
+        };
+
+        std::vector<Player*> members{bot};
+        std::vector<Looter> looters{looterOf(bot)};
+        if (Group* group = bot->GetGroup())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member == bot || !member->IsInWorld() || !member->IsAlive() ||
+                    member->GetMapId() != bot->GetMapId() ||
+                    !member->IsWithinDistInMap(bot, DcDefiasGunpowder::EVENT_AREA_RADIUS) ||
+                    !GET_PLAYERBOT_AI(member) || DcPlayerbotCompat::IsHumanControlled(member))
+                    continue;
+                members.push_back(member);
+                looters.push_back(looterOf(member));
+            }
+        int const i = DcDefiasGunpowder::PickOpener(looters.data(), looters.size());
+        return i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
+    }
+
+    // Take item 5397 out of `looter`'s open loot window on `chest`, the way a
+    // player's client does (CMSG_AUTOSTORE_LOOT_ITEM), then close the window.
+    // The stock "store loot" handler may have queued the same take already;
+    // whichever lands second finds the slot empty and does nothing.
+    enum class DmTake : uint8 { Took, NoWindow, NotInWindow, NoRoom };
+    DmTake DmTakeGunpowder(Player* looter, GameObject* chest)
+    {
+        ObjectGuid const lootGuid = looter->GetLootGUID();
+        if (!chest || lootGuid != chest->GetGUID())
+            return DmTake::NoWindow;
+        int32 const slot = DmGunpowderLootSlot(looter, chest->loot);
+        if (slot >= 0)
+        {
+            WorldPacket take(CMSG_AUTOSTORE_LOOT_ITEM, 1);
+            take << uint8(slot);
+            looter->GetSession()->HandleAutostoreLootItemOpcode(take);
+        }
+        bool const got = looter->HasItemCount(DcDefiasGunpowder::ITEM_GUNPOWDER, 1);
+        WorldPacket release(CMSG_LOOT_RELEASE, 8);
+        release << lootGuid;
+        looter->GetSession()->HandleLootReleaseOpcode(release);
+        if (got)
+            return DmTake::Took;
+        return slot < 0 ? DmTake::NotInWindow : DmTake::NoRoom;
+    }
+
+    char const* DmTakeText(DmTake t)
+    {
+        switch (t)
+        {
+            case DmTake::Took:        return "took the gunpowder";
+            case DmTake::NoWindow:    return "no loot window opened";
+            case DmTake::NotInWindow: return "it held no gunpowder for us";
+            case DmTake::NoRoom:      return "the gunpowder did not fit in the bags";
+        }
+        return "?";
     }
 
     // An Opening spell the bot already knows that opens `chest`'s lock: the
@@ -311,31 +388,28 @@ namespace
         in.cannonFound = cannon != nullptr;
 
         Player* carrier = DmFindGunpowderCarrier(bot, in.carrier);
-        Player* actor = carrier ? carrier : bot;
+        // Nobody carries it: a party bot whose bags can hold it opens the chest
+        // (DmPickOpener). The chest inputs are the opener's.
+        Player* opener = carrier ? nullptr : DmPickOpener(bot);
+        in.openerHasRoom = carrier != nullptr || opener != nullptr;
+        Player* actor = carrier ? carrier : (opener ? opener : bot);
         in.actorCasting = actor->IsNonMeleeSpellCast(false);
         in.actorToCannon = cannon ? actor->GetExactDist(cannon) : 0.0f;
 
         GameObject* chest = bot->FindNearestGameObject(GO_GUNPOWDER, EVENT_AREA_RADIUS);
         in.chest = DmChestState(chest);
-        in.botToChest = chest ? bot->GetExactDist(chest) : 0.0f;
-        ObjectGuid const lootGuid = bot->GetLootGUID();
-        GameObject* looted = lootGuid.IsGameObject() ? bot->GetMap()->GetGameObject(lootGuid)
+        in.botToChest = chest ? actor->GetExactDist(chest) : 0.0f;
+        ObjectGuid const lootGuid = actor->GetLootGUID();
+        GameObject* looted = lootGuid.IsGameObject() ? actor->GetMap()->GetGameObject(lootGuid)
                                                       : nullptr;
-        in.lootWindowOnChest = looted && looted->GetEntry() == GO_GUNPOWDER;
+        in.lootWindowOnChest = !carrier && looted && looted->GetEntry() == GO_GUNPOWDER;
         if (context && in.carrier == Carrier::None && !in.actorCasting &&
             !in.lootWindowOnChest)
-        {
-            uint8 const last = DcRun::Of(context).eventHookReason;
-            uint8 const lastAction = last & REPORT_ACTION_MASK;
-            uint8 const openAction = static_cast<uint8>(static_cast<uint8>(Action::OpenChest) + 1);
-            uint8 const noLootAction =
-                static_cast<uint8>(static_cast<uint8>(Action::OpeningNoLoot) + 1);
-            in.openingAttempted = !(last & REPORT_CAST_REFUSED) &&
-                                  (lastAction == openAction || lastAction == noLootAction) &&
-                                  (last & REPORT_OPENING_ATTEMPTED);
-        }
+            in.openingAttempted = ReopenAttempted(DcRun::Of(context).eventHookReason);
         uint32 const openSpell =
-            (chest && in.chest == Chest::Lootable) ? DmFindOpeningSpell(bot, chest) : 0;
+            (opener && chest && (in.chest == Chest::Lootable || in.chest == Chest::Opened))
+                ? DmFindOpeningSpell(opener, chest)
+                : 0;
         in.hasOpeningSpell = openSpell != 0;
 
         Plan const plan = Decide(in);
@@ -369,6 +443,11 @@ namespace
                              actor->GetExactDist(cannon));
                 DmWalkTo(actor, cannon->GetPositionX(), cannon->GetPositionY(),
                          cannon->GetPositionZ());
+                // The party trails this bot (follow-tank); it walks along, so the
+                // trail pulls the carrier toward the cannon, not back off it.
+                if (actor != bot)
+                    DmWalkTo(bot, cannon->GetPositionX(), cannon->GetPositionY(),
+                             cannon->GetPositionZ());
                 return ObjectiveArriveResult::Running;
 
             case Action::UseOnCannon:
@@ -416,58 +495,78 @@ namespace
             case Action::TakeFromChest:
             {
                 // What a player's client sends: take the item out of the open
-                // loot window, then close it. The stock "store loot" handler may
-                // have queued the same take already; whichever lands second finds
-                // the slot empty and does nothing.
-                int32 const slot = DmGunpowderLootSlot(bot, looted->loot);
-                if (slot >= 0)
-                {
-                    WorldPacket take(CMSG_AUTOSTORE_LOOT_ITEM, 1);
-                    take << uint8(slot);
-                    bot->GetSession()->HandleAutostoreLootItemOpcode(take);
-                }
-                bool const got = bot->HasItemCount(ITEM_GUNPOWDER, 1);
+                // loot window, then close it.
+                DmTake const took = DmTakeGunpowder(actor, looted);
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Deadmines cannon: looted the Defias Gunpowder chest ({})",
-                             bot->GetName(),
-                             got ? "took the gunpowder"
-                                 : (slot < 0 ? "it held no gunpowder for us"
-                                             : "the gunpowder did not fit in the bags"));
-                WorldPacket release(CMSG_LOOT_RELEASE, 8);
-                release << lootGuid;
-                bot->GetSession()->HandleLootReleaseOpcode(release);
+                             "[DC:{}] Deadmines cannon: {} looted the Defias Gunpowder chest ({})",
+                             bot->GetName(), actor->GetName(), DmTakeText(took));
                 return ObjectiveArriveResult::Running;
             }
 
             case Action::WalkToChest:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Deadmines cannon: running, {} ({:.1f}yd)", bot->GetName(),
-                             Describe(plan.action), bot->GetExactDist(chest));
-                DmWalkTo(bot, chest->GetPositionX(), chest->GetPositionY(), chest->GetPositionZ());
+                             "[DC:{}] Deadmines cannon: running, {} ({}, {:.1f}yd)",
+                             bot->GetName(), Describe(plan.action), actor->GetName(),
+                             actor->GetExactDist(chest));
+                DmWalkTo(actor, chest->GetPositionX(), chest->GetPositionY(),
+                         chest->GetPositionZ());
+                // An opener other than this bot: walk along, so the party's
+                // trail on this bot does not pull the opener back to the cannon.
+                if (actor != bot)
+                    DmWalkTo(bot, chest->GetPositionX(), chest->GetPositionY(),
+                             chest->GetPositionZ());
                 return ObjectiveArriveResult::Running;
 
             case Action::OpenChest:
+            case Action::ReopenChest:
             {
                 // The Opening cast lands as OPEN_LOCK -> Player::SendLoot, which
-                // rolls loot template 2882 and opens the window that
-                // TakeFromChest empties.
-                bot->StopMoving();
+                // rolls loot template 2882 (or shows what is left of it) and
+                // opens the window that TakeFromChest empties.
+                bool const reopen = plan.action == Action::ReopenChest;
+                actor->StopMoving();
+                SpellInfo const* info = sSpellMgr->GetSpellInfo(openSpell);
                 // A feral form can't cast the Opening spell; shift back first,
                 // the same gate the item-use casts go through (DcFormGate).
-                if (SpellInfo const* info = sSpellMgr->GetSpellInfo(openSpell))
-                    if (bot->GetShapeshiftForm() != FORM_NONE &&
-                        info->CheckShapeshift(uint32(bot->GetShapeshiftForm())) != SPELL_CAST_OK)
-                        bot->RemoveAurasByType(SPELL_AURA_MOD_SHAPESHIFT);
-                SpellCastResult const res = bot->CastSpell(chest, openSpell, false);
+                if (info && actor->GetShapeshiftForm() != FORM_NONE &&
+                    info->CheckShapeshift(uint32(actor->GetShapeshiftForm())) != SPELL_CAST_OK)
+                    actor->RemoveAurasByType(SPELL_AURA_MOD_SHAPESHIFT);
+                SpellCastResult res = SPELL_FAILED_UNKNOWN;
+                DmTake took = DmTake::NoWindow;
+                if (!reopen)
+                    res = actor->CastSpell(chest, openSpell, false);
+                else if (info)
+                {
+                    // The chest's lock is already beaten (it is Opened), and the
+                    // first Opening's window was closed on the gunpowder by the
+                    // opener's own loot handler before this hook could see it.
+                    // The same Opening spell, cast to land at once (the lock and
+                    // range checks still run), opens the window inside this call,
+                    // and the gunpowder is taken from it in the same tick.
+                    SpellCastTargets targets;
+                    targets.SetGOTarget(chest);
+                    res = actor->CastSpell(targets, info, nullptr, TRIGGERED_CAST_DIRECTLY);
+                    if (res == SPELL_CAST_OK)
+                        took = DmTakeGunpowder(actor, chest);
+                }
                 // A refused cast is re-tried next tick; the line is written once
                 // per change, not once per try.
                 if (DmReportChanged(context, plan.action, /*castRefused*/ res != SPELL_CAST_OK))
-                    LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Deadmines cannon: running, opening the Defias Gunpowder "
-                             "chest with spell {} (result {})",
-                             bot->GetName(), openSpell, uint32(res));
+                {
+                    if (!reopen)
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC:{}] Deadmines cannon: running, {} opens the Defias "
+                                 "Gunpowder chest with spell {} (result {})",
+                                 bot->GetName(), actor->GetName(), openSpell, uint32(res));
+                    else
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC:{}] Deadmines cannon: running, {} opens the opened Defias "
+                                 "Gunpowder chest again with spell {} (result {}): {}",
+                                 bot->GetName(), actor->GetName(), openSpell, uint32(res),
+                                 DmTakeText(took));
+                }
                 return ObjectiveArriveResult::Running;
             }
 
@@ -476,6 +575,7 @@ namespace
             case Action::ChestSpent:
             case Action::NoOpeningSpell:
             case Action::OpeningNoLoot:
+            case Action::NoBagRoom:
             case Action::WaitForPlayer:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",

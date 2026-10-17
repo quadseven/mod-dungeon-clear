@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DCDEFIASGUNPOWDER_H
 #define _PLAYERBOT_DCDEFIASGUNPOWDER_H
 
+#include <cstddef>
 #include <cstdint>
 
 // THE DEADMINES CANNON, PLAYED THE WAY A PLAYER PLAYS IT.
@@ -24,6 +25,22 @@
 // There is deliberately no answer that creates the item: when the chest is
 // gone or empty, or nobody can open it, the step says why and keeps waiting,
 // and the event's step timeout ends it.
+//
+// WHY OPENING THE CHEST WAS NOT ENOUGH. The Opening cast (spell 3365) has a 1s
+// cast time, so its loot window opens inside the core's spell update, never
+// inside this hook. The opener is a playerbot, and its own "loot response"
+// handler (playerbots StoreLootAction) answers that window on its next AI tick,
+// before this hook ticks again. That handler skips any item that does not stack
+// (item 5397 does not) while the bot's "bag space" reads over 80 percent used,
+// then releases the window. The gunpowder stays in the opened chest, the hook
+// sees no loot window, and the step waits out its timeouts while the guild run
+// sits at 3 bosses until its 2 hour cap. On the realm (bags read after the
+// fact), the tanks of the runs that stalled at the cannon carried 91 to 100
+// percent full bags, and the tanks of runs that passed it were under half
+// full. So the step now (a) sends a member whose bags can hold the gunpowder,
+// and (b) when the chest is already opened with the gunpowder still in it,
+// opens it again with the cast landing at once and takes the gunpowder from
+// the window in the same tick, before any other handler can close it.
 //
 // Engine-free and header-only (no Player / GameObject), so it is gtested in
 // isolation; ObjectiveHookRegistry's FireDefiasCannon is the glue.
@@ -60,8 +77,10 @@ namespace DcDefiasGunpowder
     enum class Chest : std::uint8_t
     {
         Missing,   // none spawned in range (looted and despawned, or not there)
-        Lootable,  // spawned and still holding the gunpowder
+        Lootable,  // spawned, never opened, still holding the gunpowder
         Spent,     // spawned but opened and emptied of it by somebody
+        Opened,    // opened (its lock already beaten), the loot window closed,
+                   // and the gunpowder still in it
     };
 
     struct Inputs
@@ -70,14 +89,17 @@ namespace DcDefiasGunpowder
         bool    cannonFound = false;     // GO 16398 within EVENT_AREA_RADIUS
         Carrier carrier = Carrier::None;
         // The member who acts this tick: the carrier when there is one, else the
-        // bot running the hook (it loots the chest).
+        // opener (PickOpener: the bot running the hook unless its bags cannot
+        // hold the gunpowder). The chest fields below are the opener's.
         bool    actorCasting = false;    // a cast in flight (the 2s gunpowder use, the open)
         float   actorToCannon = 0.0f;
         Chest   chest = Chest::Missing;
-        float   botToChest = 0.0f;
-        bool    lootWindowOnChest = false;  // the bot's loot window is the chest's
-        bool    hasOpeningSpell = false;    // the bot knows a spell that opens lock 57
-        bool    openingAttempted = false;   // a prior Opening cast ended without a loot window
+        float   botToChest = 0.0f;          // the opener's distance to the chest
+        bool    lootWindowOnChest = false;  // the opener's loot window is the chest's
+        bool    hasOpeningSpell = false;    // the opener knows a spell that opens lock 57
+        bool    openerHasRoom = true;       // some party bot's bags can hold item 5397
+        bool    openingAttempted = false;   // ReopenAttempted(): a reopen this attempt
+                                            // still left the gunpowder in the chest
     };
 
     enum class Action : std::uint8_t
@@ -96,7 +118,11 @@ namespace DcDefiasGunpowder
         NoChest,         // no GO 17155 in the event area
         ChestSpent,      // GO 17155 is there, but its gunpowder is gone
         NoOpeningSpell,  // the bot knows no spell that opens the chest's lock
-        OpeningNoLoot,   // Opening ended without a loot window; do not cast it again
+        OpeningNoLoot,   // a reopen left the gunpowder in the chest; do not cast it again
+        // Appended, so the report codes of the actions above do not move.
+        ReopenChest,     // the chest is Opened: open it again, the cast landing this
+                         // tick, and take item 5397 from the window in the same tick
+        NoBagRoom,       // no party bot's bags can hold item 5397 (a report)
     };
 
     struct Plan
@@ -138,11 +164,44 @@ namespace DcDefiasGunpowder
             return {Action::NoChest, GO_GUNPOWDER};
         if (in.chest == Chest::Spent)
             return {Action::ChestSpent, GO_GUNPOWDER};
+        if (!in.openerHasRoom)
+            return {Action::NoBagRoom, GO_GUNPOWDER};
         if (in.botToChest > CHEST_REACH)
             return {Action::WalkToChest, GO_GUNPOWDER};
         if (!in.hasOpeningSpell)
             return {Action::NoOpeningSpell, GO_GUNPOWDER};
+        // An Opened chest has had its window closed on the gunpowder (see the
+        // header comment): a second normal Opening would lose it the same way.
+        if (in.chest == Chest::Opened)
+            return {Action::ReopenChest, GO_GUNPOWDER};
         return {Action::OpenChest, GO_GUNPOWDER};
+    }
+
+    // WHO OPENS THE CHEST. One candidate per party bot in the event area, the
+    // bot running the hook first.
+    struct Looter
+    {
+        bool         canStore = false;  // the core would store one item 5397 in its bags
+        std::uint8_t bagSpace = 100;    // playerbots "bag space": percent of bag slots used
+    };
+
+    // The index of the member who opens the chest, or -1 when nobody's bags can
+    // hold the gunpowder. The bot running the hook goes itself whenever its bags
+    // can hold it: a reopen (ReopenChest) takes the gunpowder whatever its bag
+    // space reads. Otherwise the member with the emptiest bags goes (ties to the
+    // earlier member), since one at or under 80 percent loots it on the first
+    // Opening through its own loot handler.
+    inline int PickOpener(Looter const* looters, std::size_t n)
+    {
+        if (!looters || n == 0)
+            return -1;
+        if (looters[0].canStore)
+            return 0;
+        int best = -1;
+        for (std::size_t i = 1; i < n; ++i)
+            if (looters[i].canStore && (best < 0 || looters[i].bagSpace < looters[best].bagSpace))
+                best = static_cast<int>(i);
+        return best;
     }
 
     // The reports: the step cannot move forward by itself and says why.
@@ -150,7 +209,7 @@ namespace DcDefiasGunpowder
     {
         return a == Action::NoCannon || a == Action::NoChest || a == Action::ChestSpent ||
                a == Action::NoOpeningSpell || a == Action::OpeningNoLoot ||
-               a == Action::WaitForPlayer;
+               a == Action::WaitForPlayer || a == Action::NoBagRoom;
     }
 
     // The step's "why it is still Running" line is logged once per change, not
@@ -160,12 +219,16 @@ namespace DcDefiasGunpowder
     // event executor clears it at every new attempt at the step) and logs when
     // ReportCode answers something else.
     //
-    // The code is 1 + the Action, with two flags for the casts the step starts:
-    constexpr std::uint8_t REPORT_ACTION_MASK = 0x3F;
-    constexpr std::uint8_t REPORT_CAST_REFUSED = 0x40;  // UseOnCannon / OpenChest started no cast
+    // The code is 1 + the Action, with three flags for the casts the step starts.
+    // Each flag has its own bit, so no flag can read as another.
+    constexpr std::uint8_t REPORT_ACTION_MASK = 0x1F;
+    constexpr std::uint8_t REPORT_OPENING_ATTEMPTED = 0x20;  // ReopenChest cast this attempt
+    constexpr std::uint8_t REPORT_CAST_REFUSED = 0x40;  // UseOnCannon / OpenChest /
+                                                        // ReopenChest started no cast
     constexpr std::uint8_t REPORT_CAST_AGAIN   = 0x80;  // UseOnCannon again: the last use's
                                                         // cast ended with the door still shut
-    constexpr std::uint8_t REPORT_OPENING_ATTEMPTED = 0x80;  // OpenChest succeeded this attempt
+    static_assert(static_cast<std::uint8_t>(Action::NoBagRoom) + 1 <= REPORT_ACTION_MASK,
+                  "every action's report code must fit under REPORT_ACTION_MASK");
 
     inline std::uint8_t ReportCode(Action a, bool castRefused, std::uint8_t last)
     {
@@ -174,8 +237,10 @@ namespace DcDefiasGunpowder
         bool const lastCastStarted =
             !(last & REPORT_CAST_REFUSED) &&
             (lastAction == static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::UseOnCannon) + 1) ||
-             lastAction == static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::OpenChest) + 1));
-        bool const casts = a == Action::UseOnCannon || a == Action::OpenChest;
+             lastAction == static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::OpenChest) + 1) ||
+             lastAction == static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::ReopenChest) + 1));
+        bool const casts =
+            a == Action::UseOnCannon || a == Action::OpenChest || a == Action::ReopenChest;
 
         // The cast this step just started is that action's own wait, not news.
         if (a == Action::WaitForCast && lastCastStarted)
@@ -184,11 +249,28 @@ namespace DcDefiasGunpowder
             return code | REPORT_CAST_REFUSED;
         if (a == Action::UseOnCannon && lastCastStarted && lastAction == code)
             return code | REPORT_CAST_AGAIN;
-        if (a == Action::OpenChest)
+        if (a == Action::ReopenChest)
             return code | REPORT_OPENING_ATTEMPTED;
         if (a == Action::OpeningNoLoot && (last & REPORT_OPENING_ATTEMPTED))
             return code | REPORT_OPENING_ATTEMPTED;
         return code;
+    }
+
+    // The latch, read from the live stored code (DcRunState::eventHookReason)
+    // each tick: a reopen was cast this attempt and the gunpowder is still not
+    // in anyone's bags. ReopenChest stores the flag; OpeningNoLoot keeps it, so
+    // the latch survives its own report. Only a reopen latches: a first
+    // Opening whose window was closed on the gunpowder leaves the chest Opened,
+    // and the reopen is what gets it out.
+    inline bool ReopenAttempted(std::uint8_t last)
+    {
+        std::uint8_t const action = last & REPORT_ACTION_MASK;
+        std::uint8_t const reopen =
+            static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::ReopenChest) + 1);
+        std::uint8_t const noLoot =
+            static_cast<std::uint8_t>(static_cast<std::uint8_t>(Action::OpeningNoLoot) + 1);
+        return !(last & REPORT_CAST_REFUSED) && (last & REPORT_OPENING_ATTEMPTED) &&
+               (action == reopen || action == noLoot);
     }
 
     inline char const* Describe(Action a)
@@ -207,7 +289,9 @@ namespace DcDefiasGunpowder
             case Action::NoChest:        return "no Defias Gunpowder chest in the event area (already looted, or not spawned)";
             case Action::ChestSpent:     return "the Defias Gunpowder chest has been emptied of its gunpowder";
             case Action::NoOpeningSpell: return "no known spell opens the Defias Gunpowder chest's lock";
-            case Action::OpeningNoLoot:  return "Opening ended without a Defias Gunpowder loot window";
+            case Action::OpeningNoLoot:  return "opening the Defias Gunpowder chest again left the gunpowder in it";
+            case Action::ReopenChest:    return "opening the Defias Gunpowder chest again and taking the gunpowder from it";
+            case Action::NoBagRoom:      return "no party bot has room in its bags for the Defias Gunpowder";
         }
         return "?";
     }

@@ -166,11 +166,20 @@ TEST(DcDefiasGunpowder, AnOpenLootWindowIsTakenFirst)
     EXPECT_EQ(Decide(in).action, Action::TakeFromChest);
 }
 
-TEST(DcDefiasGunpowder, OpeningThatYieldsNoLootIsNotCastAgain)
+// The first Opening is the normal one; a chest left Opened with the gunpowder
+// still in it (the loot window was closed on it) is opened again, the cast
+// landing at once, and a reopen that still leaves it is never cast twice.
+TEST(DcDefiasGunpowder, AChestLeftOpenedIsReopenedAndOnlyOnce)
 {
     Inputs in = AtTheCannonEmptyHanded();
     in.botToChest = 2.0f;
     EXPECT_EQ(Decide(in).action, Action::OpenChest);
+
+    in.chest = Chest::Opened;
+    Plan const reopen = Decide(in);
+    EXPECT_EQ(reopen.action, Action::ReopenChest);
+    EXPECT_EQ(reopen.goEntry, GO_GUNPOWDER);
+    EXPECT_FALSE(IsReport(reopen.action));
 
     in.actorCasting = true;
     EXPECT_EQ(Decide(in).action, Action::WaitForCast);
@@ -179,24 +188,87 @@ TEST(DcDefiasGunpowder, OpeningThatYieldsNoLootIsNotCastAgain)
     in.openingAttempted = true;
     Plan const p = Decide(in);
     EXPECT_EQ(p.action, Action::OpeningNoLoot);
-    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
     EXPECT_TRUE(IsReport(p.action));
     EXPECT_EQ(Decide(in).action, Action::OpeningNoLoot);
+
+    // A loot window that is up is still taken first, latch or not.
+    in.lootWindowOnChest = true;
+    EXPECT_EQ(Decide(in).action, Action::TakeFromChest);
 }
 
-TEST(DcDefiasGunpowder, OpeningNoLootReportPreservesTheOpeningAttemptLatch)
+// The latch is read from the live stored report code each tick
+// (DcRunState::eventHookReason). The OpeningNoLoot report that the latch
+// itself produces must keep the flag, or the next tick would cast the reopen
+// again and the step would loop on it until the run's 2 hour cap (the
+// 2026-10-16 Deadmines stall).
+TEST(DcDefiasGunpowder, TheReopenLatchSurvivesItsOwnReport)
 {
-    uint8_t const openingStarted = ReportCode(Action::OpenChest, false, 0);
-    uint8_t const openingInFlight = ReportCode(Action::WaitForCast, false, openingStarted);
-    ASSERT_EQ(openingInFlight, openingStarted);
+    uint8_t const reopenStarted = ReportCode(Action::ReopenChest, false, 0);
+    EXPECT_NE(reopenStarted & REPORT_OPENING_ATTEMPTED, 0);
+    EXPECT_TRUE(ReopenAttempted(reopenStarted));
 
-    uint8_t const noLoot = ReportCode(Action::OpeningNoLoot, false, openingInFlight);
-    EXPECT_NE(noLoot & 0x80, 0) << "the live eventHookReason must keep the opening attempt bit";
+    uint8_t const reopenInFlight = ReportCode(Action::WaitForCast, false, reopenStarted);
+    ASSERT_EQ(reopenInFlight, reopenStarted);
+    EXPECT_TRUE(ReopenAttempted(reopenInFlight));
+
+    uint8_t const noLoot = ReportCode(Action::OpeningNoLoot, false, reopenInFlight);
+    EXPECT_NE(noLoot & REPORT_OPENING_ATTEMPTED, 0) << "the report must keep the attempt bit";
+    EXPECT_TRUE(ReopenAttempted(noLoot));
+    EXPECT_EQ(ReportCode(Action::OpeningNoLoot, false, noLoot), noLoot);
 
     Inputs in = AtTheCannonEmptyHanded();
     in.botToChest = 2.0f;
-    in.openingAttempted = (noLoot & 0x80) != 0;
+    in.chest = Chest::Opened;
+    in.openingAttempted = ReopenAttempted(noLoot);
     EXPECT_EQ(Decide(in).action, Action::OpeningNoLoot);
+}
+
+// Only a reopen latches. A first Opening whose window was closed on the
+// gunpowder leaves the chest Opened, and the reopen is what gets it out.
+TEST(DcDefiasGunpowder, OnlyAReopenLatches)
+{
+    uint8_t const first = ReportCode(Action::OpenChest, false, 0);
+    EXPECT_FALSE(ReopenAttempted(first));
+    EXPECT_FALSE(ReopenAttempted(ReportCode(Action::WaitForCast, false, first)));
+    EXPECT_FALSE(ReopenAttempted(0));
+    // A reopen whose cast was refused did not happen, so it is tried again.
+    uint8_t const refused = ReportCode(Action::ReopenChest, true, 0);
+    EXPECT_NE(refused & REPORT_CAST_REFUSED, 0);
+    EXPECT_FALSE(ReopenAttempted(refused));
+}
+
+// Item 5397 does not stack, and the playerbots loot handler skips such an item
+// while the bot's bags read over 80 percent used. On the realm the tanks of the
+// runs that stalled carried 91 to 100 percent full bags.
+TEST(DcDefiasGunpowder, NobodyWithRoomIsAReportNotAWalk)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.openerHasRoom = false;
+    in.botToChest = 30.0f;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoBagRoom);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    // With room the same state walks to the chest.
+    in.openerHasRoom = true;
+    EXPECT_EQ(Decide(in).action, Action::WalkToChest);
+}
+
+TEST(DcDefiasGunpowder, TheEmptiestBagsOpenTheChestUnlessTheHookBotCanTakeIt)
+{
+    using L = Looter;
+    // The bot running the hook goes itself whenever it can store the gunpowder.
+    L const hookCan[] = {{true, 95}, {true, 10}};
+    EXPECT_EQ(PickOpener(hookCan, 2), 0);
+    // Otherwise the member with the emptiest bags that can store it.
+    L const others[] = {{false, 99}, {true, 70}, {true, 40}, {false, 5}, {true, 40}};
+    EXPECT_EQ(PickOpener(others, 5), 2) << "ties go to the earlier member";
+    // Nobody can: a report, not a pick.
+    L const none[] = {{false, 99}, {false, 20}};
+    EXPECT_EQ(PickOpener(none, 2), -1);
+    EXPECT_EQ(PickOpener(none, 0), -1);
+    EXPECT_EQ(PickOpener(nullptr, 3), -1);
 }
 
 // Someone in the party already carries it: no trip to the chest.
@@ -248,7 +320,8 @@ TEST(DcDefiasGunpowder, EveryBranchHasItsOwnReport)
     Action const all[] = {Action::Done,          Action::WaitForCast,  Action::WalkToCannon,
                           Action::UseOnCannon,   Action::WaitForPlayer, Action::TakeFromChest,
                           Action::WalkToChest,   Action::OpenChest,    Action::NoCannon,
-                          Action::NoChest,       Action::ChestSpent,   Action::NoOpeningSpell};
+                          Action::NoChest,       Action::ChestSpent,   Action::NoOpeningSpell,
+                          Action::NoBagRoom};
     std::vector<std::uint8_t> seen;
     for (Action a : all)
     {
