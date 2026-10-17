@@ -98,6 +98,8 @@ namespace DcDefiasGunpowder
         bool    lootWindowOnChest = false;  // the opener's loot window is the chest's
         bool    hasOpeningSpell = false;    // the opener knows a spell that opens lock 57
         bool    openerHasRoom = true;       // some party bot's bags can hold item 5397
+        bool    openerEligible = true;      // some party bot is out of combat and not a
+                                            // healer, so it can be sent to the chest
         bool    openingAttempted = false;   // ReopenAttempted(): a reopen this attempt
                                             // still left the gunpowder in the chest
     };
@@ -123,6 +125,9 @@ namespace DcDefiasGunpowder
         ReopenChest,     // the chest is Opened: open it again, the cast landing this
                          // tick, and take item 5397 from the window in the same tick
         NoBagRoom,       // no party bot's bags can hold item 5397 (a report)
+        // Appended, so the report codes of the actions above do not move.
+        NoEligibleOpener,  // no out-of-combat non-healer to send: everyone is fighting,
+                           // or only healers are free (a report)
     };
 
     struct Plan
@@ -164,6 +169,8 @@ namespace DcDefiasGunpowder
             return {Action::NoChest, GO_GUNPOWDER};
         if (in.chest == Chest::Spent)
             return {Action::ChestSpent, GO_GUNPOWDER};
+        if (!in.openerEligible)
+            return {Action::NoEligibleOpener, GO_GUNPOWDER};
         if (!in.openerHasRoom)
             return {Action::NoBagRoom, GO_GUNPOWDER};
         if (in.botToChest > CHEST_REACH)
@@ -183,23 +190,31 @@ namespace DcDefiasGunpowder
     {
         bool         canStore = false;  // the core would store one item 5397 in its bags
         std::uint8_t bagSpace = 100;    // playerbots "bag space": percent of bag slots used
+        bool         inCombat = false;  // fighting right now: never sent to the chest
+        bool         isHealer = false;  // sending one leaves the party without healing
     };
 
-    // The index of the member who opens the chest, or -1 when nobody's bags can
-    // hold the gunpowder. The bot running the hook goes itself whenever its bags
-    // can hold it: a reopen (ReopenChest) takes the gunpowder whatever its bag
-    // space reads. Otherwise the member with the emptiest bags goes (ties to the
+    // The index of the member who opens the chest, or -1 when nobody can go.
+    // The bot running the hook goes itself whenever it can: it is out of
+    // combat, not a healer, and its bags can hold the gunpowder (a reopen
+    // takes the gunpowder whatever its bag space reads). Otherwise the
+    // out-of-combat non-healer with the emptiest bags goes (ties to the
     // earlier member), since one at or under 80 percent loots it on the first
-    // Opening through its own loot handler.
+    // Opening through its own loot handler. A bot in combat is never picked:
+    // it would be pulled off the fight. A healer is never picked either, even
+    // out of combat: sending it to the chest leaves the party without healing
+    // while the opener runs its errand. When nobody can go, the hook names the
+    // fallback (NoEligibleOpener) instead of sending a bot that is fighting.
     inline int PickOpener(Looter const* looters, std::size_t n)
     {
         if (!looters || n == 0)
             return -1;
-        if (looters[0].canStore)
+        if (!looters[0].inCombat && !looters[0].isHealer && looters[0].canStore)
             return 0;
         int best = -1;
         for (std::size_t i = 1; i < n; ++i)
-            if (looters[i].canStore && (best < 0 || looters[i].bagSpace < looters[best].bagSpace))
+            if (!looters[i].inCombat && !looters[i].isHealer && looters[i].canStore &&
+                (best < 0 || looters[i].bagSpace < looters[best].bagSpace))
                 best = static_cast<int>(i);
         return best;
     }
@@ -209,7 +224,8 @@ namespace DcDefiasGunpowder
     {
         return a == Action::NoCannon || a == Action::NoChest || a == Action::ChestSpent ||
                a == Action::NoOpeningSpell || a == Action::OpeningNoLoot ||
-               a == Action::WaitForPlayer || a == Action::NoBagRoom;
+               a == Action::WaitForPlayer || a == Action::NoBagRoom ||
+               a == Action::NoEligibleOpener;
     }
 
     // The step's "why it is still Running" line is logged once per change, not
@@ -292,6 +308,7 @@ namespace DcDefiasGunpowder
             case Action::OpeningNoLoot:  return "opening the Defias Gunpowder chest again left the gunpowder in it";
             case Action::ReopenChest:    return "opening the Defias Gunpowder chest again and taking the gunpowder from it";
             case Action::NoBagRoom:      return "no party bot has room in its bags for the Defias Gunpowder";
+            case Action::NoEligibleOpener: return "no out-of-combat non-healer can open the Defias Gunpowder chest";
         }
         return "?";
     }

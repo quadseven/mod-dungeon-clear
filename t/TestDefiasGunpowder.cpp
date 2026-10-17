@@ -271,6 +271,57 @@ TEST(DcDefiasGunpowder, TheEmptiestBagsOpenTheChestUnlessTheHookBotCanTakeIt)
     EXPECT_EQ(PickOpener(nullptr, 3), -1);
 }
 
+// T41: the opener pick must skip a bot that is in combat, so a healer is not
+// pulled to the gunpowder chest mid-fight.
+TEST(DcDefiasGunpowder, CombatBotsAreNeverSentToTheChest)
+{
+    using L = Looter;
+    // The hook runner is in combat: skipped even though its bags can hold it.
+    L const hookInCombat[] = {{true, 95, true}, {true, 10}};
+    EXPECT_EQ(PickOpener(hookInCombat, 2), 1);
+    // A combat-flagged member is never picked over an out-of-combat one.
+    L const memberInCombat[] = {{false, 99}, {true, 5, true}, {true, 40}};
+    EXPECT_EQ(PickOpener(memberInCombat, 3), 2);
+    // Everybody in combat: nobody is picked; the log names the fallback.
+    L const allInCombat[] = {{true, 10, true}, {true, 20, true}};
+    EXPECT_EQ(PickOpener(allInCombat, 2), -1);
+}
+
+// T41: healers are never pulled to the chest: sending one leaves the party
+// without healing while the opener runs its errand.
+TEST(DcDefiasGunpowder, HealersAreNeverPulledToTheChest)
+{
+    using L = Looter;
+    // Every out-of-combat bot is a healer: nobody goes, the step holds and the
+    // log names the fallback.
+    L const healersOnly[] = {{false, 99}, {true, 10, false, true}, {true, 40, false, true}};
+    EXPECT_EQ(PickOpener(healersOnly, 3), -1);
+    // A healer is skipped even with the emptiest bags; an out-of-combat
+    // non-healer goes.
+    L const mixed[] = {{true, 95, false, true}, {true, 5, false, true}, {true, 40}};
+    EXPECT_EQ(PickOpener(mixed, 3), 2);
+}
+
+// T41: when nobody can be sent (everyone in combat, or only healers out of
+// combat), the step holds with a report that names the fallback instead of
+// walking a bot mid-fight to the chest.
+TEST(DcDefiasGunpowder, NoEligibleOpenerIsAReportNotAWalk)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.openerHasRoom = true;
+    in.openerEligible = false;
+    in.botToChest = 30.0f;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoEligibleOpener);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    // An eligible opener with no bag room is the old report, not the new one.
+    in.openerEligible = true;
+    in.openerHasRoom = false;
+    EXPECT_EQ(Decide(in).action, Action::NoBagRoom);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {
@@ -321,7 +372,7 @@ TEST(DcDefiasGunpowder, EveryBranchHasItsOwnReport)
                           Action::UseOnCannon,   Action::WaitForPlayer, Action::TakeFromChest,
                           Action::WalkToChest,   Action::OpenChest,    Action::NoCannon,
                           Action::NoChest,       Action::ChestSpent,   Action::NoOpeningSpell,
-                          Action::NoBagRoom};
+                          Action::NoBagRoom,     Action::NoEligibleOpener};
     std::vector<std::uint8_t> seen;
     for (Action a : all)
     {

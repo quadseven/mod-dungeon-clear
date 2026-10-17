@@ -269,10 +269,19 @@ namespace
     }
 
     // The party bot that opens the chest (DcDefiasGunpowder::PickOpener): `bot`
-    // when its bags can hold the gunpowder, else the bot in the event area with
-    // the emptiest bags that can; null when none can. Players are left out: the
-    // hook cannot walk or cast for them.
-    Player* DmPickOpener(Player* bot)
+    // when it can go, else the out-of-combat non-healer in the event area with
+    // the emptiest bags that can; null when nobody can. Players are left out:
+    // the hook cannot walk or cast for them. The pick also says why nobody
+    // goes, so the log names the fallback (NoEligibleOpener) instead of the
+    // step silently holding.
+    struct DmOpenerPick
+    {
+        Player* opener = nullptr;    // the member PickOpener chose, if any
+        bool    anyBagRoom = false;  // some party bot's bags can hold item 5397
+        bool    anyEligible = false; // some party bot is out of combat and not a healer
+    };
+
+    DmOpenerPick DmPickOpener(Player* bot)
     {
         using DcDefiasGunpowder::Looter;
         auto looterOf = [](Player* p)
@@ -283,6 +292,8 @@ namespace
                                             DcDefiasGunpowder::ITEM_GUNPOWDER, 1) == EQUIP_ERR_OK;
             if (PlayerbotAI* ai = GET_PLAYERBOT_AI(p))
                 l.bagSpace = ai->GetAiObjectContext()->GetValue<uint8>(DcKey::Stock::BagSpace)->Get();
+            l.inCombat = p->IsInCombat();
+            l.isHealer = PlayerbotAI::IsHeal(p);
             return l;
         };
 
@@ -300,8 +311,15 @@ namespace
                 members.push_back(member);
                 looters.push_back(looterOf(member));
             }
+        DmOpenerPick pick;
+        for (Looter const& l : looters)
+        {
+            pick.anyBagRoom = pick.anyBagRoom || l.canStore;
+            pick.anyEligible = pick.anyEligible || (!l.inCombat && !l.isHealer);
+        }
         int const i = DcDefiasGunpowder::PickOpener(looters.data(), looters.size());
-        return i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
+        pick.opener = i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
+        return pick;
     }
 
     // Take item 5397 out of `looter`'s open loot window on `chest`, the way a
@@ -390,8 +408,10 @@ namespace
         Player* carrier = DmFindGunpowderCarrier(bot, in.carrier);
         // Nobody carries it: a party bot whose bags can hold it opens the chest
         // (DmPickOpener). The chest inputs are the opener's.
-        Player* opener = carrier ? nullptr : DmPickOpener(bot);
-        in.openerHasRoom = carrier != nullptr || opener != nullptr;
+        DmOpenerPick const pick = carrier ? DmOpenerPick{} : DmPickOpener(bot);
+        Player* opener = pick.opener;
+        in.openerHasRoom = carrier != nullptr || pick.anyBagRoom;
+        in.openerEligible = carrier != nullptr || pick.anyEligible;
         Player* actor = carrier ? carrier : (opener ? opener : bot);
         in.actorCasting = actor->IsNonMeleeSpellCast(false);
         in.actorToCannon = cannon ? actor->GetExactDist(cannon) : 0.0f;
@@ -576,6 +596,7 @@ namespace
             case Action::NoOpeningSpell:
             case Action::OpeningNoLoot:
             case Action::NoBagRoom:
+            case Action::NoEligibleOpener:
             case Action::WaitForPlayer:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",
