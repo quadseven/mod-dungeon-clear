@@ -5,8 +5,12 @@
 
 #include "SwimPathfinder.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <queue>
+#include <tuple>
 
 #include "Optional.h"          // Optional<> used (unguarded) by GridTerrainData.h
 #include "GridTerrainData.h"   // ZLiquidStatus (LIQUID_MAP_*); std::array<> used (unguarded) too
@@ -22,7 +26,7 @@ namespace
     constexpr int   SWIM_MAX_STEPS    = 220;    // hard budget (≈880yd of travel)
     constexpr float SWIM_ARRIVE       = 4.0f;   // within this of goal => done
     constexpr float SWIM_EXIT_RADIUS  = 12.0f;  // allow leaving water this close to goal (surfacing onto a dry platform)
-    constexpr int   SWIM_MAX_NO_PROGRESS = 12;  // consecutive non-progress hops before bailing to (future) Tier B
+    constexpr int   SWIM_MAX_NO_PROGRESS = 12;  // consecutive non-progress hops before search
 
     // Deflection fan, in degrees, off the straight-to-goal bearing. Tried only
     // when the straight hop is blocked. Ordered small->large so the least
@@ -65,6 +69,125 @@ namespace
         float const ce = std::cos(e);
         return G3D::Vector3(ce * std::cos(a), ce * std::sin(a), std::sin(e));
     }
+
+    struct SearchNode
+    {
+        int x, y, z;
+        float cost;
+        int parent;
+        bool closed = false;
+    };
+
+    G3D::Vector3 SearchPoint(G3D::Vector3 const& start, SearchNode const& node)
+    {
+        return start + G3D::Vector3(node.x * SWIM_STEP_LEN,
+                                     node.y * SWIM_STEP_LEN,
+                                     node.z * SWIM_STEP_LEN);
+    }
+
+    struct SwimSearch
+    {
+        using Key = std::tuple<int, int, int>;
+        using QueueEntry = std::pair<float, int>;
+        G3D::Vector3 const& start;
+        G3D::Vector3 const& goal;
+        SwimPathfinder::LineProbe const& lineClear;
+        SwimPathfinder::WaterProbe const& inWater;
+        std::vector<SearchNode> nodes{{0, 0, 0, 0.0f, -1}};
+        std::map<Key, int> visited{{Key(0, 0, 0), 0}};
+        std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>> open;
+
+        SwimSearch(G3D::Vector3 const& from, G3D::Vector3 const& to,
+                   SwimPathfinder::LineProbe const& clear, SwimPathfinder::WaterProbe const& wet)
+            : start(from), goal(to), lineClear(clear), inWater(wet) { }
+
+        bool WithinBounds(G3D::Vector3 const& point) const
+        {
+            constexpr float margin = 64.0f;
+            return point.x >= std::min(start.x, goal.x) - margin &&
+                   point.x <= std::max(start.x, goal.x) + margin &&
+                   point.y >= std::min(start.y, goal.y) - margin &&
+                   point.y <= std::max(start.y, goal.y) + margin &&
+                   point.z >= std::min(start.z, goal.z) - margin &&
+                   point.z <= std::max(start.z, goal.z) + margin;
+        }
+
+        void Consider(int index, SearchNode const& node, G3D::Vector3 const& here,
+                      int dx, int dy, int dz)
+        {
+            if (!dx && !dy && !dz)
+                return;
+            SearchNode next{node.x + dx, node.y + dy, node.z + dz, 0.0f, index};
+            G3D::Vector3 const point = SearchPoint(start, next);
+            if (!WithinBounds(point))
+                return;
+            float const remaining = Dist3D(point, goal);
+            if ((!inWater(point) && remaining > SWIM_EXIT_RADIUS) || !lineClear(here, point))
+                return;
+            float const cost = node.cost + Dist3D(here, point);
+            if (cost > SWIM_MAX_STEPS * SWIM_STEP_LEN)
+                return;
+            Key const key(next.x, next.y, next.z);
+            auto const found = visited.find(key);
+            if (found != visited.end() && (nodes[found->second].closed || nodes[found->second].cost <= cost))
+                return;
+            next.cost = cost;
+            if (found == visited.end())
+            {
+                int const nextIndex = static_cast<int>(nodes.size());
+                nodes.push_back(next);
+                visited.emplace(key, nextIndex);
+                open.emplace(cost + remaining, nextIndex);
+                return;
+            }
+            SearchNode& old = nodes[found->second];
+            old.cost = cost;
+            old.parent = index;
+            open.emplace(cost + remaining, found->second);
+        }
+
+        SwimPathfinder::Result RouteTo(int index) const
+        {
+            SwimPathfinder::Result result;
+            result.ok = true;
+            for (int at = index; nodes[at].parent >= 0; at = nodes[at].parent)
+                result.points.push_back(SearchPoint(start, nodes[at]));
+            std::reverse(result.points.begin(), result.points.end());
+            result.points.push_back(goal);
+            return result;
+        }
+    };
+
+    SwimPathfinder::Result SearchSwim(G3D::Vector3 const& start, G3D::Vector3 const& goal,
+                                      SwimPathfinder::LineProbe const& lineClear,
+                                      SwimPathfinder::WaterProbe const& inWater)
+    {
+        SwimSearch search{start, goal, lineClear, inWater};
+        search.open.emplace(Dist3D(start, goal), 0);
+        constexpr int MAX_EXPANDED = 12000;
+        int expanded = 0;
+        while (!search.open.empty() && expanded < MAX_EXPANDED)
+        {
+            int const index = search.open.top().second;
+            search.open.pop();
+            if (search.nodes[index].closed)
+                continue;
+            search.nodes[index].closed = true;
+            ++expanded;
+            SearchNode const node = search.nodes[index];
+            G3D::Vector3 const here = SearchPoint(start, node);
+            if (Dist3D(here, goal) <= SWIM_STEP_LEN * 2.0f && lineClear(here, goal))
+                return search.RouteTo(index);
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dz = -1; dz <= 1; ++dz)
+                        search.Consider(index, node, here, dx, dy, dz);
+        }
+        SwimPathfinder::Result result;
+        result.failureReason = expanded == MAX_EXPANDED ? "swim search: node budget exhausted"
+                                                   : "swim search: no water route";
+        return result;
+    }
 }
 
 namespace SwimPathfinder
@@ -86,6 +209,17 @@ namespace SwimPathfinder
         uint32 const phase = bot->GetPhaseMask();
         float const coll = bot->GetCollisionHeight();
 
+        return BuildCore(start, goal,
+                         [map, phase](G3D::Vector3 const& a, G3D::Vector3 const& b)
+                         { return LineClear(map, phase, a, b); },
+                         [map, phase, coll](G3D::Vector3 const& p)
+                         { return InWater(map, phase, p, coll); });
+    }
+
+    Result BuildCore(G3D::Vector3 const& start, G3D::Vector3 const& goal,
+                     LineProbe const& lineClear, WaterProbe const& inWater)
+    {
+        Result r;
         G3D::Vector3 cur = start;
         float bestToGoal = Dist3D(cur, goal);
         int noProgress = 0;
@@ -94,7 +228,7 @@ namespace SwimPathfinder
         {
             float const d = Dist3D(cur, goal);
             // Close enough to dart straight in?
-            if (d <= SWIM_ARRIVE || (d <= SWIM_STEP_LEN * 2.0f && LineClear(map, phase, cur, goal)))
+            if (d <= SWIM_ARRIVE || (d <= SWIM_STEP_LEN * 2.0f && lineClear(cur, goal)))
             {
                 r.points.push_back(goal);
                 r.ok = true;
@@ -115,8 +249,8 @@ namespace SwimPathfinder
             // Fast path: straight toward the goal. Most of a tubular tunnel is
             // taken one cheap raycast per step this way; only bends pay the fan.
             G3D::Vector3 const straight = cur + DeflectedDir(az, el, 0.0f, 0.0f) * SWIM_STEP_LEN;
-            bool const straightOk = LineClear(map, phase, cur, straight) &&
-                (InWater(map, phase, straight, coll) || Dist3D(straight, goal) <= SWIM_EXIT_RADIUS);
+            bool const straightOk = lineClear(cur, straight) &&
+                (inWater(straight) || Dist3D(straight, goal) <= SWIM_EXIT_RADIUS);
 
             G3D::Vector3 chosen;
             bool found = false;
@@ -137,10 +271,10 @@ namespace SwimPathfinder
                         if (yaw == 0.0f && pitch == 0.0f)
                             continue;  // already tried as the straight hop
                         G3D::Vector3 const cand = cur + DeflectedDir(az, el, yaw, pitch) * SWIM_STEP_LEN;
-                        if (!LineClear(map, phase, cur, cand))
+                        if (!lineClear(cur, cand))
                             continue;
                         float const candToGoal = Dist3D(cand, goal);
-                        if (!InWater(map, phase, cand, coll) && candToGoal > SWIM_EXIT_RADIUS)
+                        if (!inWater(cand) && candToGoal > SWIM_EXIT_RADIUS)
                             continue;
                         float const progress = d - candToGoal;
                         float const deviation = std::abs(yaw) + std::abs(pitch);
@@ -157,10 +291,7 @@ namespace SwimPathfinder
 
             if (!found)
             {
-                // Boxed in — no clear hop in any probed direction. Tier B (lattice
-                // A*) is the designed escape; until then the caller stalls.
-                r.failureReason = "greedy swim: no clear hop (concave geometry?)";
-                return r;
+                return SearchSwim(start, goal, lineClear, inWater);
             }
 
             r.points.push_back(chosen);
@@ -170,8 +301,7 @@ namespace SwimPathfinder
             {
                 if (++noProgress > SWIM_MAX_NO_PROGRESS)
                 {
-                    r.failureReason = "greedy swim: stopped making progress";
-                    return r;
+                    return SearchSwim(start, goal, lineClear, inWater);
                 }
             }
             else
@@ -182,8 +312,7 @@ namespace SwimPathfinder
             cur = chosen;
         }
 
-        r.failureReason = "greedy swim: step budget exhausted";
-        return r;
+        return SearchSwim(start, goal, lineClear, inWater);
     }
 
     bool WaterBetween(Player* bot, G3D::Vector3 const& a, G3D::Vector3 const& b)

@@ -70,8 +70,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Value/DungeonExpectedEncounterMaskValue.{h,cpp}
 #   (exports the current wing-filtered boss mask to run coordinators)
 # Util/SwimPathfinder.{h,cpp}
-#   (Tier A greedy 3D swim navigator for submerged tunnels; driven via a raw
-#    3D escort spline off the new DungeonClearSwimState value)
+#   (greedy 3D swim navigator with bounded search around concave walls; driven
+#    via a raw 3D escort spline off the DungeonClearSwimState value)
 # Util/DungeonClearTuning.h
 #   (single home for shared DC_* tuning constants — constant-centralization)
 # Util/DcEngageGeometry.{h,cpp}

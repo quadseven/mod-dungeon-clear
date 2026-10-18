@@ -8,12 +8,13 @@
 
 #include <string>
 #include <vector>
+#include <functional>
 
 #include "G3D/Vector3.h"
 
 class Player;
 
-// Tier A "swim leg" pathfinder: a greedy 3D navigator through a water volume
+// Swim leg pathfinder: a greedy 3D navigator through a water volume
 // that needs NO navmesh and NO per-zone data.
 //
 // Why this exists: the mmap generator discards the floor under liquid and keeps
@@ -26,7 +27,8 @@ class Player;
 // between the bot and the goal (see WaterBetween). It walks toward the goal in
 // 3D; when a straight hop is blocked by geometry it probes a fan of yaw/pitch
 // deflections and takes the clearest one that still makes progress and stays in
-// water — a bug-algorithm tuned for tubular flooded corridors. Collision is
+// water. When it cannot advance, a bounded 3D lattice search finds a detour
+// around concave walls. Collision is
 // tested with VMAP line-of-sight (liquid is transparent to VMAP, so only rock /
 // WMO geometry blocks); "in water" is tested with the map's liquid status.
 //
@@ -35,11 +37,12 @@ class Player;
 // navmesh-bound and would yank the points back up to the surface sheet, which is
 // the whole bug). Drive it with a raw 3D escort spline.
 //
-// This is the cheap primary tier; a bounded 3D lattice A* (Tier B) is the
-// designed fallback for concave traps the greedy probe can't see around, and is
-// not implemented here.
+// The greedy tier handles open corridors cheaply; the search only runs when it
+// fails to make progress, has no clear hop, or exhausts its step budget.
 namespace SwimPathfinder
 {
+    using LineProbe = std::function<bool(G3D::Vector3 const&, G3D::Vector3 const&)>;
+    using WaterProbe = std::function<bool(G3D::Vector3 const&)>;
     struct Result
     {
         bool ok{false};
@@ -47,10 +50,14 @@ namespace SwimPathfinder
         std::string failureReason;          // populated when ok == false
     };
 
-    // Greedy 3D swim route from `start` to `goal`. Both are world coords on the
+    // 3D swim route from `start` to `goal`. Both are world coords on the
     // bot's map. On success `points` ends at (or within arrive-radius of) the
     // goal. Synchronous and map-thread only (touches VMAP + liquid).
     Result Build(Player* bot, G3D::Vector3 const& start, G3D::Vector3 const& goal);
+
+    // The geometry-only route seam used by the live map adapter and route tests.
+    Result BuildCore(G3D::Vector3 const& start, G3D::Vector3 const& goal,
+                     LineProbe const& lineClear, WaterProbe const& inWater);
 
     // Cheap gate: is there any water on the straight line between a and b?
     // Sampled, so it can miss a thin sliver, but a submerged tunnel is never

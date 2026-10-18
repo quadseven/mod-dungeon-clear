@@ -849,7 +849,7 @@ DungeonClear.SwimEnable = 1
 #
 #    DungeonClear.SwimMaxRange
 #        Max distance (yards) from the dead-end to the target for a swim to be
-#        attempted. Bounds the greedy search and avoids trying to swim to a
+#        attempted. Bounds the swim search and avoids trying to swim to a
 #        target that is genuinely out of reach. Sized to comfortably cover known
 #        underwater tunnels.
 #
