@@ -646,7 +646,9 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     // 2. fire it (Custom -> FireDefiasCannon hook id 2).
     EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
     EXPECT_EQ(e->steps[1].hookId, 2u);
-    EXPECT_EQ(e->steps[1].timeoutMs, 30000u);
+    // The bound covers a slow chest round trip: the ~42yd walk to the chest
+    // and back plus the two casts can run past 30s on a bad path.
+    EXPECT_EQ(e->steps[1].timeoutMs, 90000u);
     EXPECT_EQ(e->steps[1].timeoutRetries, 2u);  // rewind to step 1, twice, then fail
 
     // 3. hold until the Iron Clad Door opens (GO_STATE_ACTIVE_ALTERNATIVE).
@@ -716,6 +718,53 @@ TEST(DungeonEventAdvance, DeadminesCannonCustomTimeoutRewindsThenFails)
     EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now + 5000,
                                             kDefaultTimeout),
               EventDriveOutcome::Stalled);
+}
+
+// Deadmines Defias Cannon, live regression (mod-dungeon-clear#39): a slow
+// chest round trip false-stalled the step. The ~42yd walk to the chest and
+// back plus the two casts can run past the old 30s bound on a bad path; the
+// step timed out, and the 3x no-progress watchdog then stalled the run until
+// `dc skip`. A round trip longer than 30s but inside the new bound keeps the
+// hook's Running holding: no timeout, no rewind, no stall line.
+TEST(DungeonEventAdvance, DeadminesCannonSlowChestRoundTripDoesNotStall)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(e->steps.size(), 3u);
+    ASSERT_EQ(e->steps[1].kind, EventStepKind::Custom);
+    uint32 const timeout = e->steps[1].timeoutMs;
+    ASSERT_GT(timeout, 30000u) << "the cannon step must outlast a slow chest round trip";
+
+    constexpr uint32 kDefaultTimeout = 30000;
+    uint32 const start = 1000;
+    DungeonEventProgress p = Prog(1, 1, start);
+
+    // A 60s round trip, driven as the hook's Running over several ticks: past
+    // the old bound, inside the new one. The step holds with no rewind and no
+    // stall, and the 3x no-progress watchdog does not fire on it either.
+    uint32 now = start;
+    for (int tick = 0; tick < 6; ++tick)
+    {
+        now += 10000;
+        ASSERT_LT(now - start, timeout);
+        EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now,
+                                                kDefaultTimeout),
+                  EventDriveOutcome::Running)
+            << "tick " << tick << ": a slow round trip must not time out";
+        EXPECT_EQ(p.stepIndex, 1u) << "tick " << tick << ": no rewind mid round trip";
+    }
+    EXPECT_EQ(now - start, 60000u);
+
+    // Just inside the bound the hold continues; at the bound the timeout
+    // still fires (the bound is real, not removed).
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, start + timeout - 1,
+                                            kDefaultTimeout),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 1u);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, start + timeout,
+                                            kDefaultTimeout),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 0u) << "at the bound the step still rewinds and retries";
 }
 
 // The cannon hook logs its Running reason once per change, remembered on the

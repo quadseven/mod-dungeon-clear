@@ -45,10 +45,13 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
     constexpr uint32 DM_GO_IRON_CLAD_DOOR = 16397;
     constexpr uint32 DM_DOOR_OPEN_STATE   = 2;  // GO_STATE_ACTIVE_ALTERNATIVE
     constexpr uint32 DM_FIRE_CANNON_HOOK  = 2;  // ObjectiveHookRegistry id
-    // Ample for the ~42yd walk to the chest and back plus two 2s casts. A
-    // gunpowder looted before a timeout stays in the bags, so the retry only
-    // walks back onto the cannon and uses it.
-    constexpr uint32 DM_FIRE_CANNON_TIMEOUT_MS = 30000;
+    // Covers a slow chest round trip: the ~42yd walk to the chest and back
+    // plus the two casts can run past 30s on a bad path, and the old bound
+    // false-stalled the step before it recovered (the 3x no-progress watchdog
+    // then stalled the run until `dc skip`). A gunpowder looted before a
+    // timeout stays in the bags, so the retry only walks back onto the cannon
+    // and uses it.
+    constexpr uint32 DM_FIRE_CANNON_TIMEOUT_MS = 90000;
     constexpr uint32 DM_FIRE_CANNON_RETRIES    = 2;
 
     out.push_back(

@@ -356,11 +356,69 @@ TEST(DcDefiasGunpowder, AnOpenDoorIsDoneWhateverElseIsTrue)
 {
     Inputs in = AtTheCannonEmptyHanded();
     in.doorOpen = true;
-    for (Carrier c : {Carrier::None, Carrier::Self, Carrier::PartyBot, Carrier::PartyHuman})
+    for (Carrier c : {Carrier::None, Carrier::Self, Carrier::PartyBot, Carrier::PartyHuman,
+                      Carrier::Dead})
     {
         in.carrier = c;
         EXPECT_EQ(Decide(in).action, Action::Done);
     }
+}
+
+// A carrier that dies holding the gunpowder (the chest is spent by then) is a
+// named, recoverable report, not a watchdog stall: the step holds on the
+// report until they are back on their feet, and the use on the cannon resumes
+// on the rez (mod-dungeon-clear#39).
+TEST(DcDefiasGunpowder, ADeadCarrierIsANamedRecoverableReport)
+{
+    Inputs in = AtTheCannonEmptyHanded();
+    in.chest = Chest::Spent;  // the carrier looted it before dying
+    in.carrier = Carrier::Dead;
+
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::CarrierDead);
+    EXPECT_EQ(p.goEntry, GO_CANNON);
+    EXPECT_TRUE(IsReport(p.action));
+
+    // Back on their feet: the plan walks them to the cannon and uses it.
+    in.carrier = Carrier::PartyBot;
+    in.actorToCannon = 12.0f;
+    EXPECT_EQ(Decide(in).action, Action::WalkToCannon);
+    in.actorToCannon = 2.0f;
+    EXPECT_EQ(Decide(in).action, Action::UseOnCannon);
+}
+
+// The Iron Clad Door opening always says so at INFO: the transition to Done
+// always produces a fresh report code, whatever the step was doing, so the
+// hook's once-per-change log fires on it (mod-dungeon-clear#39).
+TEST(DcDefiasGunpowder, TheDoorOpeningAlwaysLogs)
+{
+    Action const running[] = {Action::WaitForCast,  Action::WalkToCannon,
+                              Action::UseOnCannon,  Action::WaitForPlayer,
+                              Action::TakeFromChest, Action::WalkToChest,
+                              Action::OpenChest,    Action::ReopenChest,
+                              Action::NoCannon,     Action::NoChest,
+                              Action::ChestSpent,   Action::NoOpeningSpell,
+                              Action::OpeningNoLoot, Action::NoBagRoom,
+                              Action::NoEligibleOpener, Action::CarrierDead};
+    for (Action a : running)
+    {
+        std::uint8_t const last = ReportCode(a, false, 0);
+        EXPECT_NE(ReportCode(Action::Done, false, last), last)
+            << Describe(a) << ": the door opening must log a fresh line";
+    }
+}
+
+// "Uses the Defias Gunpowder on the cannon" is only for a confirmed cast: a
+// refused use and a confirmed use are different report codes, so the hook
+// logs them as different lines and the "uses" wording never attaches to a use
+// that started no cast (mod-dungeon-clear#39).
+TEST(DcDefiasGunpowder, TheUseIsOnlyLoggedOnceTheCastIsConfirmed)
+{
+    std::uint8_t const confirmed = ReportCode(Action::UseOnCannon, false, 0);
+    std::uint8_t const refused = ReportCode(Action::UseOnCannon, true, 0);
+    EXPECT_NE(confirmed, refused);
+    EXPECT_EQ(confirmed & REPORT_CAST_REFUSED, 0u);
+    EXPECT_EQ(refused & REPORT_CAST_REFUSED, REPORT_CAST_REFUSED);
 }
 
 // The step logs why it is Running once per change (ReportCode), not once per
@@ -372,7 +430,7 @@ TEST(DcDefiasGunpowder, EveryBranchHasItsOwnReport)
                           Action::UseOnCannon,   Action::WaitForPlayer, Action::TakeFromChest,
                           Action::WalkToChest,   Action::OpenChest,    Action::NoCannon,
                           Action::NoChest,       Action::ChestSpent,   Action::NoOpeningSpell,
-                          Action::NoBagRoom,     Action::NoEligibleOpener};
+                          Action::NoBagRoom,     Action::NoEligibleOpener, Action::CarrierDead};
     std::vector<std::uint8_t> seen;
     for (Action a : all)
     {

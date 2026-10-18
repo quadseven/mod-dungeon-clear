@@ -217,18 +217,34 @@ namespace
         Group* group = bot->GetGroup();
         if (!group)
             return nullptr;
+        // A member that died holding the gunpowder keeps it on their corpse:
+        // remember them, but a live carrier always wins. The kernel holds the
+        // step on the named CarrierDead report until they are back on their
+        // feet, instead of timing out into the no-progress watchdog.
+        Player* deadCarrier = nullptr;
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
-            if (!member || member == bot || !member->IsInWorld() || !member->IsAlive() ||
+            if (!member || member == bot || !member->IsInWorld() ||
                 member->GetMapId() != bot->GetMapId())
                 continue;
             if (!member->HasItemCount(DcDefiasGunpowder::ITEM_GUNPOWDER, 1))
                 continue;
+            if (!member->IsAlive())
+            {
+                if (!deadCarrier)
+                    deadCarrier = member;
+                continue;
+            }
             bool const human =
                 DcPlayerbotCompat::IsHumanControlled(member) || !GET_PLAYERBOT_AI(member);
             kind = human ? Carrier::PartyHuman : Carrier::PartyBot;
             return member;
+        }
+        if (deadCarrier)
+        {
+            kind = Carrier::Dead;
+            return deadCarrier;
         }
         return nullptr;
     }
@@ -486,22 +502,33 @@ namespace
                 // CastItemUseSpell returns nothing; its result is whether a cast
                 // is now running. A refused cast (lock, form, range, item) leaves
                 // none. Re-tried every tick until the door opens, so the line is
-                // written once per change, not once per try.
+                // written once per change, not once per try. The "uses the
+                // Defias Gunpowder on the cannon" line is only for a confirmed
+                // cast: a use that started no cast says it tried, not that it
+                // used.
                 Spell* cast = actor->GetCurrentSpell(CURRENT_GENERIC_SPELL);
                 uint32 const castId = cast ? cast->GetSpellInfo()->Id : 0u;
                 if (DmReportChanged(context, plan.action, /*castRefused*/ !cast))
                 {
                     uint8 const code = context ? DcRun::Of(context).eventHookReason : 0;
-                    LOG_INFO("playerbots.dungeonclear",
-                             "[DC:{}] Deadmines cannon: running, {} uses the Defias Gunpowder "
-                             "on the cannon ({:.1f}yd): {} (cast spell {}, CanUseItem {}, "
-                             "form {}, door still shut)",
-                             bot->GetName(), actor->GetName(), actor->GetExactDist(cannon),
-                             !cast                           ? "no cast started"
-                             : (code & REPORT_CAST_AGAIN) ? "previous cast ended, cast again"
-                                                             : "cast started",
-                             castId, static_cast<uint32>(actor->CanUseItem(gunpowder)),
-                             static_cast<uint32>(actor->GetShapeshiftForm()));
+                    if (!cast)
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC:{}] Deadmines cannon: running, {} tried to use the Defias "
+                                 "Gunpowder on the cannon but no cast started (CanUseItem {}, "
+                                 "form {}, door still shut)",
+                                 bot->GetName(), actor->GetName(),
+                                 static_cast<uint32>(actor->CanUseItem(gunpowder)),
+                                 static_cast<uint32>(actor->GetShapeshiftForm()));
+                    else
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC:{}] Deadmines cannon: running, {} uses the Defias Gunpowder "
+                                 "on the cannon ({:.1f}yd): {} (cast spell {}, CanUseItem {}, "
+                                 "form {}, door still shut)",
+                                 bot->GetName(), actor->GetName(), actor->GetExactDist(cannon),
+                                 (code & REPORT_CAST_AGAIN) ? "previous cast ended, cast again"
+                                                            : "cast started",
+                                 castId, static_cast<uint32>(actor->CanUseItem(gunpowder)),
+                                 static_cast<uint32>(actor->GetShapeshiftForm()));
                 }
                 // Running on a refused cast too, on purpose. The refusals seen
                 // are transient (the form drop above lands this tick, a carrier
@@ -598,6 +625,7 @@ namespace
             case Action::OpeningNoLoot:
             case Action::NoBagRoom:
             case Action::NoEligibleOpener:
+            case Action::CarrierDead:
             case Action::WaitForPlayer:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",
