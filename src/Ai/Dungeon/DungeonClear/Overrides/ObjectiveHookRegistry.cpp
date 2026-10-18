@@ -39,6 +39,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcOldHillsbradBombs.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -1078,24 +1079,37 @@ namespace
     // is condition-gated on that item. A player gets the pack from Erozion
     // (18723), whose gossip option is gated on quest 10283 "Taretha's Diversion"
     // (taken or rewarded), itself after quest 10282 outside the instance. This
-    // hook used to grant the pack; it no longer does. Done once the tank carries
-    // the pack; until then it waits and says why, and the event's step timeout
-    // ends the wait. A bot that has not done the quest chain does not get the
-    // pack, so an all-bot party now stops here.
+    // hook used to grant the pack; it no longer does. Done when the tank or any
+    // online party member carries it. If nobody does, it logs the quest
+    // requirement and completes so the party can continue without the ride.
     constexpr uint32 OH_ITEM_INCENDIARY_BOMBS = 25853;
 
     ObjectiveArriveResult CarryIncendiaryBombs(Player* bot, AiObjectContext* context,
                                                DungeonBossInfo const& /*info*/)
     {
-        if (bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS))
+        bool partyMemberHasBombs = false;
+        if (Group* group = bot->GetGroup())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (member && member != bot && member->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS))
+                {
+                    partyMemberHasBombs = true;
+                    break;
+                }
+            }
+
+        DcOldHillsbradBombs::Action const action = DcOldHillsbradBombs::Decide(
+            bot->GetItemByEntry(OH_ITEM_INCENDIARY_BOMBS) != nullptr, partyMemberHasBombs);
+        if (action == DcOldHillsbradBombs::Action::Continue)
             return ObjectiveArriveResult::Done;
         if (!DcRun::Of(context).Throttled(DcThrottle::OhBombsLog, 5000))
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] Old Hillsbrad: no Pack of Incendiary Bombs; Erozion gives "
-                     "it only to a player on quest 10283, and Brazen will not fly "
-                     "without it",
+                     "[DC:{}] Old Hillsbrad: nobody carries the Pack of Incendiary Bombs; "
+                     "Erozion gives it only to a player on quest 10283. Skipping the ride "
+                     "so the party can continue",
                      bot->GetName());
-        return ObjectiveArriveResult::Running;
+        return ObjectiveArriveResult::Done;
     }
 
     // --- The Mechanar: OpenCacheWithCarriedKey (hook id 4) ----------------

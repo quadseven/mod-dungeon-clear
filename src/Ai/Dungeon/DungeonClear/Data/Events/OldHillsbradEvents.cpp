@@ -50,10 +50,10 @@ namespace
     // Erozion hands out the Pack of Incendiary Bombs (item 25853). His gossip
     // option is quest-gated (quest 10283 taken/rewarded, after 10282 outside the
     // instance), AND Brazen's ride gossip (menu 7959) only appears once the player
-    // HOLDS item 25853, so the leader must carry the pack before Brazen will
-    // transport it. Hook 3 grants nothing: it is Done once the leader carries the
-    // pack and otherwise waits and says why. A bot that has not done the quest
-    // chain never gets the pack. See ObjectiveHookRegistry CarryIncendiaryBombs.
+    // HOLDS item 25853, so the gossip actor must carry the pack before Brazen
+    // transports it. Hook 3 grants nothing and completes when any party member
+    // carries it. If nobody does, it logs the quest requirement and skips the
+    // ride so the party can continue. See ObjectiveHookRegistry CarryIncendiaryBombs.
     // Erozion (18723) sits at:
     constexpr float OH_EROZION_X       = 2375.50f;
     constexpr float OH_EROZION_Y       = 1175.50f;
@@ -128,8 +128,8 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
     // (1) GET THE BOMBS FROM EROZION, THEN RIDE TO DURNHOLDE KEEP.
     // The player must hold the Pack of Incendiary Bombs (item 25853) before Brazen
     // will offer his drake ride (Brazen menu 7959 opt 0 is condition-gated on the
-    // item). Erozion gives it to a player on quest 10283; walk to Erozion and wait
-    // until the leader carries the pack (hook 3, which grants nothing), THEN
+    // item). Erozion gives it to a player on quest 10283; check whether any party
+    // member carries the pack (hook 3, which grants nothing), THEN
     // gossip Brazen to trigger the ride (spell 32892), THEN
     // TeleportParty the WHOLE party to the keep. The taxi flies only the invoker, so
     // a lone-leader flight would desync the followers 1100yd back; the teleport
