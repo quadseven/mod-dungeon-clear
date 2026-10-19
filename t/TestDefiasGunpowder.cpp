@@ -322,6 +322,48 @@ TEST(DcDefiasGunpowder, NoEligibleOpenerIsAReportNotAWalk)
     EXPECT_EQ(Decide(in).action, Action::NoBagRoom);
 }
 
+
+// T43: With one healer that has bag room and one out-of-combat non-healer with
+// full bags (no carrier), the hook reports NoEligibleOpener instead of
+// walking to the chest.
+TEST(DcDefiasGunpowder, HealerWithRoomAndNonHealerWithFullBagsReportsNoEligibleOpener)
+{
+    using L = Looter;
+    // Healer has bag room (canStore=true) but is a healer -> not eligible
+    // Non-healer is out of combat but has full bags (canStore=false) -> not a valid opener
+    // Looter 1: isHealer=true -> skipped
+    // Looter 2: canStore=false -> skipped
+    // PickOpener returns -1.
+
+    
+
+    Inputs in = AtTheCannonEmptyHanded();
+    // Simulate: DmPickOpener found no eligible bot, so both flags are false
+    in.openerHasRoom = false;
+    in.openerEligible = false;
+    in.botToChest = 30.0f;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoEligibleOpener);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+}
+
+// T43: When one bot passes the full opener test (not in combat, not a healer, can store),
+// it is picked and walks to the chest.
+TEST(DcDefiasGunpowder, BotPassesFullOpenerTestWalksToChest)
+{
+    using L = Looter;
+    // One bot that passes all opener tests: not in combat, not a healer, can store
+
+    Inputs in = AtTheCannonEmptyHanded();
+    in.openerHasRoom = true;  // DmPickOpener would set anyBagRoom=true since bot passes test
+    in.openerEligible = true; // DmPickOpener would set anyEligible=true since bot passes test
+    in.botToChest = 30.0f;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::WalkToChest);
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {

@@ -328,14 +328,17 @@ namespace
                 members.push_back(member);
                 looters.push_back(looterOf(member));
             }
-        DmOpenerPick pick;
+        DmOpenerPick pick{};
         for (Looter const& l : looters)
         {
-            pick.anyBagRoom = pick.anyBagRoom || l.canStore;
-            pick.anyEligible = pick.anyEligible || (!l.inCombat && !l.isHealer);
+            bool const eligible = !l.inCombat && !l.isHealer;
+            pick.anyBagRoom = pick.anyBagRoom || eligible && l.canStore;
+            pick.anyEligible = pick.anyEligible || eligible;
         }
         int const i = DcDefiasGunpowder::PickOpener(looters.data(), looters.size());
         pick.opener = i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
+        pick.anyBagRoom = pick.anyBagRoom && (i >= 0);
+        pick.anyEligible = pick.anyEligible && (i >= 0);
         return pick;
     }
 
