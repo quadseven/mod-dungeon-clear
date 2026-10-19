@@ -2030,6 +2030,9 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         switch (ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next))
         {
             case ObjectiveArriveResult::Running: outcome = EventDriveOutcome::Running; break;
+            case ObjectiveArriveResult::WaitingForRecovery:
+                outcome = EventDriveOutcome::Running;
+                break;
             case ObjectiveArriveResult::Blocked: outcome = EventDriveOutcome::Stalled; break;
             case ObjectiveArriveResult::Done:
             default:                             outcome = EventDriveOutcome::Completed; break;

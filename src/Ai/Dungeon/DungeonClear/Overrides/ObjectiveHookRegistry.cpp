@@ -625,12 +625,16 @@ namespace
             case Action::OpeningNoLoot:
             case Action::NoBagRoom:
             case Action::NoEligibleOpener:
-            case Action::CarrierDead:
             case Action::WaitForPlayer:
                 if (DmReportChanged(context, plan.action))
                     LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",
                              bot->GetName(), Describe(plan.action));
                 return ObjectiveArriveResult::Running;
+            case Action::CarrierDead:
+                if (DmReportChanged(context, plan.action))
+                    LOG_INFO("playerbots.dungeonclear", "[DC:{}] Deadmines cannon: running, {}",
+                             bot->GetName(), Describe(plan.action));
+                return ObjectiveArriveResult::WaitingForRecovery;
         }
         return ObjectiveArriveResult::Running;
     }

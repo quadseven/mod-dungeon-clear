@@ -24,7 +24,8 @@
 // This kernel answers, from a plain snapshot, what the step does this tick.
 // There is deliberately no answer that creates the item: when the chest is
 // gone or empty, or nobody can open it, the step says why and keeps waiting,
-// and the event's step timeout ends it.
+// and the event's step timeout ends it. A dead carrier is different: recovery
+// pauses the timeout until the member is back on their feet.
 //
 // WHY OPENING THE CHEST WAS NOT ENOUGH. The Opening cast (spell 3365) has a 1s
 // cast time, so its loot window opens inside the core's spell update, never
@@ -120,7 +121,8 @@ namespace DcDefiasGunpowder
         WalkToChest,     // the bot walks to GO 17155
         OpenChest,       // the bot casts its Opening spell on GO 17155
         // Reports. Each holds the step (Running) and says why; none of them
-        // grants anything, and the event's step timeout bounds the wait.
+        // grants anything. The event's step timeout bounds these waits, except
+        // CarrierDead, which pauses the clock for resurrection.
         NoCannon,        // GO 16398 is not in range yet
         NoChest,         // no GO 17155 in the event area
         ChestSpent,      // GO 17155 is there, but its gunpowder is gone

@@ -767,6 +767,35 @@ TEST(DungeonEventAdvance, DeadminesCannonSlowChestRoundTripDoesNotStall)
     EXPECT_EQ(p.stepIndex, 0u) << "at the bound the step still rewinds and retries";
 }
 
+TEST(DungeonEventAdvance, DeadminesDeadCarrierWaitsForRecoveryWithoutTimingOut)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    uint32 const timeout = e->steps[1].timeoutMs;
+    DungeonEventProgress p = Prog(e->id, 1, 1000);
+    ASSERT_TRUE(DungeonEventExecutor::BeginsHookAttempt(p));
+
+    // Resurrection may take longer than the cannon step and its watchdog.
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::WaitingForRecovery,
+                                            1000 + timeout * 4, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 1u);
+    EXPECT_EQ(p.timeoutRewinds, 0u);
+    EXPECT_FALSE(DungeonEventExecutor::BeginsHookAttempt(p));
+
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::WaitingForRecovery,
+                                            1000 + timeout * 5, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_FALSE(DungeonEventExecutor::BeginsHookAttempt(p))
+        << "a death wait must not repeat the same reason every tick";
+
+    // The first live tick gets a full attempt to bring the carrier back.
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running,
+                                            1000 + timeout * 5 + 1, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 1u);
+}
+
 // The cannon hook logs its Running reason once per change, remembered on the
 // run state. That memory must not outlive the attempt: a retry after a timeout
 // rewind that hits the same reason (still no cast) has to say so again, or the

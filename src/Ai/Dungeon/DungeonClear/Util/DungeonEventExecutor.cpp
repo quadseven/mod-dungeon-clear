@@ -739,6 +739,8 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             {
                 case ObjectiveArriveResult::Done:    return StepResult::Done;
                 case ObjectiveArriveResult::Running: return StepResult::Running;
+                case ObjectiveArriveResult::WaitingForRecovery:
+                    return StepResult::WaitingForRecovery;
                 case ObjectiveArriveResult::Blocked: return StepResult::Blocked;
             }
             return StepResult::Done;
@@ -1211,6 +1213,16 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
 
     EventStep const& step = ev.steps[prog.stepIndex];
     uint32 const timeout = step.timeoutMs ? step.timeoutMs : defaultTimeoutMs;
+
+    if (result == StepResult::WaitingForRecovery)
+    {
+        // The carrier cannot finish the step while dead. Give the revived
+        // carrier a fresh attempt without spending retries or the watchdog.
+        prog.stepStartMs = nowMs;
+        prog.progressMs = nowMs;
+        prog.hookAttemptStartMs = nowMs;
+        return EventDriveOutcome::Running;
+    }
 
     // The EscortCreature step has NO flat timeout: a 30s default would mis-fire
     // during the Disciple's 32.5s banish channel and the long ritual hold. Its

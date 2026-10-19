@@ -21,6 +21,7 @@ enum class ObjectiveArriveResult
     Done,     // objective satisfied — latch it cleared and advance the clear
     Running,  // still working (e.g. mid-interaction) — hold and call again next tick
     Blocked,  // cannot complete unaided (needs the human) — stall the run
+    WaitingForRecovery,  // a dead carrier must be resurrected before this step can resume
 };
 
 // Optional per-objective behaviour run when the tank reaches a travel objective

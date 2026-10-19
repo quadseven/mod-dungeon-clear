@@ -22,6 +22,7 @@ enum class StepResult : uint8
     Done,     // this step finished — advance to the next
     Blocked,  // cannot finish unaided (needs the human) — stall the run
     Failed,   // step failed / timed out — required stalls, optional skips
+    WaitingForRecovery,  // a dead carrier is being recovered; pause step clocks
 };
 
 // What the driver should do after a step result is folded into progress.
