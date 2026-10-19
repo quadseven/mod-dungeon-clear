@@ -364,6 +364,62 @@ TEST(DcDefiasGunpowder, BotPassesFullOpenerTestWalksToChest)
     EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
 }
 
+// mod-dungeon-clear#36: on the realm the hook's own bot (the tank) was the
+// opener whenever it could store the gunpowder, even when it knew no spell
+// that opens the chest's lock. It walked to the chest, reported "no known spell
+// opens the Defias Gunpowder chest's lock", timed out three times and failed
+// the event, and the guild run sat at 3 of 7 bosses until its cap. A member who
+// cannot open the chest is never the opener: one that can goes instead.
+TEST(DcDefiasGunpowder, ABotThatKnowsNoOpeningSpellIsNeverSentToTheChest)
+{
+    using L = Looter;
+    // The hook's bot has room but no Opening spell: the member that has one goes.
+    L const hookCannotOpen[] = {{true, 10, false, false, false}, {true, 40}};
+    EXPECT_EQ(PickOpener(hookCannotOpen, 2), 1);
+    // Emptier bags do not win over a member that can open the chest.
+    L const emptiestCannotOpen[] = {{false, 99}, {true, 5, false, false, false}, {true, 60}};
+    EXPECT_EQ(PickOpener(emptiestCannotOpen, 3), 2);
+    // Nobody in the party knows one: nobody is sent.
+    L const noneCanOpen[] = {{true, 10, false, false, false}, {true, 40, false, false, false}};
+    EXPECT_EQ(PickOpener(noneCanOpen, 2), -1);
+}
+
+// When the only thing missing is an Opening spell, the step says so at the
+// cannon instead of walking a bot that cannot open the chest 42yd up to it,
+// and the flags Decide reads say the same thing as the pick.
+TEST(DcDefiasGunpowder, NobodyWhoCanOpenTheChestIsAReportNotAWalk)
+{
+    using L = Looter;
+    L const noneCanOpen[] = {{true, 10, false, false, false}, {true, 40, false, false, false}};
+    OpenerFlags const f = OpenerFlagsFor(noneCanOpen, 2, PickOpener(noneCanOpen, 2));
+    EXPECT_TRUE(f.eligible);
+    EXPECT_TRUE(f.hasRoom);
+    EXPECT_FALSE(f.hasOpeningSpell);
+
+    Inputs in = AtTheCannonEmptyHanded();  // 42.4yd from the chest
+    in.openerEligible = f.eligible;
+    in.openerHasRoom = f.hasRoom;
+    in.hasOpeningSpell = f.hasOpeningSpell;
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::NoOpeningSpell);
+    EXPECT_TRUE(IsReport(p.action));
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    // A pick reads all three flags true.
+    L const oneCanOpen[] = {{true, 10, false, false, false}, {true, 40}};
+    OpenerFlags const g = OpenerFlagsFor(oneCanOpen, 2, PickOpener(oneCanOpen, 2));
+    EXPECT_TRUE(g.eligible && g.hasRoom && g.hasOpeningSpell);
+
+    // A null pick for any other reason still reports NoEligibleOpener (#49):
+    // a healer with room and a non-healer with full bags.
+    L const healerRoomOnly[] = {{true, 10, false, true}, {false, 99}};
+    OpenerFlags const h = OpenerFlagsFor(healerRoomOnly, 2, PickOpener(healerRoomOnly, 2));
+    in.openerEligible = h.eligible;
+    in.openerHasRoom = h.hasRoom;
+    in.hasOpeningSpell = h.hasOpeningSpell;
+    EXPECT_EQ(Decide(in).action, Action::NoEligibleOpener);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {

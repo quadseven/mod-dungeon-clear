@@ -102,7 +102,9 @@ namespace DcDefiasGunpowder
         Chest   chest = Chest::Missing;
         float   botToChest = 0.0f;          // the opener's distance to the chest
         bool    lootWindowOnChest = false;  // the opener's loot window is the chest's
-        bool    hasOpeningSpell = false;    // the opener knows a spell that opens lock 57
+        bool    hasOpeningSpell = false;    // the opener knows a spell that opens lock 57;
+                                            // with no opener, some eligible party bot with
+                                            // room does (OpenerFlagsFor)
         bool    openerHasRoom = true;       // some party bot's bags can hold item 5397
         bool    openerEligible = true;      // some party bot is out of combat and not a
                                             // healer, so it can be sent to the chest
@@ -192,10 +194,12 @@ namespace DcDefiasGunpowder
             return {Action::NoEligibleOpener, GO_GUNPOWDER};
         if (!in.openerHasRoom)
             return {Action::NoBagRoom, GO_GUNPOWDER};
-        if (in.botToChest > CHEST_REACH)
-            return {Action::WalkToChest, GO_GUNPOWDER};
+        // Before the walk: a bot that cannot open the chest is not walked 42yd
+        // up to it only to say so there (mod-dungeon-clear#36).
         if (!in.hasOpeningSpell)
             return {Action::NoOpeningSpell, GO_GUNPOWDER};
+        if (in.botToChest > CHEST_REACH)
+            return {Action::WalkToChest, GO_GUNPOWDER};
         // An Opened chest has had its window closed on the gunpowder (see the
         // header comment): a second normal Opening would lose it the same way.
         if (in.chest == Chest::Opened)
@@ -211,7 +215,16 @@ namespace DcDefiasGunpowder
         std::uint8_t bagSpace = 100;    // playerbots "bag space": percent of bag slots used
         bool         inCombat = false;  // fighting right now: never sent to the chest
         bool         isHealer = false;  // sending one leaves the party without healing
+        bool         knowsOpening = true;  // knows a spell that opens the chest's lock
+                                           // (the generic Opening, 3365, on lock 57)
     };
+
+    // A member who could go to the chest: out of combat, not a healer, bags
+    // that can hold the gunpowder, and a spell that opens the chest's lock.
+    inline bool CanOpen(Looter const& l)
+    {
+        return !l.inCombat && !l.isHealer && l.canStore && l.knowsOpening;
+    }
 
     // The index of the member who opens the chest, or -1 when nobody can go.
     // The bot running the hook goes itself whenever it can: it is out of
@@ -224,18 +237,49 @@ namespace DcDefiasGunpowder
     // out of combat: sending it to the chest leaves the party without healing
     // while the opener runs its errand. When nobody can go, the hook names the
     // fallback (NoEligibleOpener) instead of sending a bot that is fighting.
+    //
+    // A member that knows no spell for the chest's lock is never picked either
+    // (mod-dungeon-clear#36): on the realm the hook's own bot was sent without
+    // one, walked to the chest, reported NoOpeningSpell until the event failed,
+    // and the guild run sat at 3 of 7 bosses until its cap, while a party
+    // member with the generic Opening spell stood by.
     inline int PickOpener(Looter const* looters, std::size_t n)
     {
         if (!looters || n == 0)
             return -1;
-        if (!looters[0].inCombat && !looters[0].isHealer && looters[0].canStore)
+        if (CanOpen(looters[0]))
             return 0;
         int best = -1;
         for (std::size_t i = 1; i < n; ++i)
-            if (!looters[i].inCombat && !looters[i].isHealer && looters[i].canStore &&
+            if (CanOpen(looters[i]) &&
                 (best < 0 || looters[i].bagSpace < looters[best].bagSpace))
                 best = static_cast<int>(i);
         return best;
+    }
+
+    // The opener flags Decide reads (Inputs::openerEligible, openerHasRoom,
+    // hasOpeningSpell), agreeing with the pick: all true when someone was
+    // picked. A null pick reads NoEligibleOpener (#49), except when an eligible
+    // member with room was passed over only for want of an Opening spell: that
+    // reads NoOpeningSpell, so the log names the real reason.
+    struct OpenerFlags
+    {
+        bool eligible = true;
+        bool hasRoom = true;
+        bool hasOpeningSpell = true;
+    };
+
+    inline OpenerFlags OpenerFlagsFor(Looter const* looters, std::size_t n, int picked)
+    {
+        if (picked >= 0)
+            return {};
+        bool roomButNoSpell = false;
+        for (std::size_t i = 0; looters && i < n; ++i)
+            roomButNoSpell = roomButNoSpell || (!looters[i].inCombat && !looters[i].isHealer &&
+                                                looters[i].canStore && !looters[i].knowsOpening);
+        if (roomButNoSpell)
+            return {true, true, false};
+        return {false, false, false};
     }
 
     // The reports: the step cannot move forward by itself and says why.

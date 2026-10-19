@@ -285,25 +285,33 @@ namespace
         return Chest::Spent;
     }
 
+    uint32 DmFindOpeningSpell(Player* bot, GameObject* chest);
+
     // The party bot that opens the chest (DcDefiasGunpowder::PickOpener): `bot`
     // when it can go, else the out-of-combat non-healer in the event area with
-    // the emptiest bags that can; null when nobody can. Players are left out:
-    // the hook cannot walk or cast for them. The pick also says why nobody
-    // goes, so the log names the fallback (NoEligibleOpener) instead of the
-    // step silently holding.
+    // the emptiest bags that can; null when nobody can. A bot that knows no
+    // spell for `chest`'s lock never goes (mod-dungeon-clear#36). Players are
+    // left out: the hook cannot walk or cast for them. The pick also says why
+    // nobody goes (OpenerFlagsFor), so the log names the fallback
+    // (NoEligibleOpener, or NoOpeningSpell) instead of the step silently
+    // holding.
     struct DmOpenerPick
     {
         Player* opener = nullptr;    // the member PickOpener chose, if any
         bool    anyBagRoom = false;  // some party bot's bags can hold item 5397
         bool    anyEligible = false; // some party bot is out of combat and not a healer
+        bool    anyOpeningSpell = false;  // OpenerFlagsFor: true with a pick, false when
+                                          // nobody who could go knows a spell for the lock
     };
 
-    DmOpenerPick DmPickOpener(Player* bot)
+    DmOpenerPick DmPickOpener(Player* bot, GameObject* chest)
     {
         using DcDefiasGunpowder::Looter;
-        auto looterOf = [](Player* p)
+        auto looterOf = [chest](Player* p)
         {
             Looter l;
+            // No chest in range reads as known: the step reports NoChest first.
+            l.knowsOpening = !chest || DmFindOpeningSpell(p, chest) != 0;
             ItemPosCountVec dest;
             l.canStore = p->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest,
                                             DcDefiasGunpowder::ITEM_GUNPOWDER, 1) == EQUIP_ERR_OK;
@@ -328,17 +336,14 @@ namespace
                 members.push_back(member);
                 looters.push_back(looterOf(member));
             }
-        DmOpenerPick pick{};
-        for (Looter const& l : looters)
-        {
-            bool const eligible = !l.inCombat && !l.isHealer;
-            pick.anyBagRoom = pick.anyBagRoom || eligible && l.canStore;
-            pick.anyEligible = pick.anyEligible || eligible;
-        }
         int const i = DcDefiasGunpowder::PickOpener(looters.data(), looters.size());
+        DcDefiasGunpowder::OpenerFlags const flags =
+            DcDefiasGunpowder::OpenerFlagsFor(looters.data(), looters.size(), i);
+        DmOpenerPick pick{};
         pick.opener = i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
-        pick.anyBagRoom = pick.anyBagRoom && (i >= 0);
-        pick.anyEligible = pick.anyEligible && (i >= 0);
+        pick.anyBagRoom = flags.hasRoom;
+        pick.anyEligible = flags.eligible;
+        pick.anyOpeningSpell = flags.hasOpeningSpell;
         return pick;
     }
 
@@ -425,10 +430,12 @@ namespace
         GameObject* cannon = bot->FindNearestGameObject(GO_CANNON, EVENT_AREA_RADIUS);
         in.cannonFound = cannon != nullptr;
 
+        GameObject* chest = bot->FindNearestGameObject(GO_GUNPOWDER, EVENT_AREA_RADIUS);
         Player* carrier = DmFindGunpowderCarrier(bot, in.carrier);
-        // Nobody carries it: a party bot whose bags can hold it opens the chest
-        // (DmPickOpener). The chest inputs are the opener's.
-        DmOpenerPick const pick = carrier ? DmOpenerPick{} : DmPickOpener(bot);
+        // Nobody carries it: a party bot whose bags can hold it, and who knows a
+        // spell that opens the chest, opens it (DmPickOpener). The chest inputs
+        // are the opener's.
+        DmOpenerPick const pick = carrier ? DmOpenerPick{} : DmPickOpener(bot, chest);
         Player* opener = pick.opener;
         in.openerHasRoom = carrier != nullptr || pick.anyBagRoom;
         in.openerEligible = carrier != nullptr || pick.anyEligible;
@@ -436,7 +443,6 @@ namespace
         in.actorCasting = actor->IsNonMeleeSpellCast(false);
         in.actorToCannon = cannon ? actor->GetExactDist(cannon) : 0.0f;
 
-        GameObject* chest = bot->FindNearestGameObject(GO_GUNPOWDER, EVENT_AREA_RADIUS);
         in.chest = DmChestState(chest);
         in.botToChest = chest ? actor->GetExactDist(chest) : 0.0f;
         ObjectGuid const lootGuid = actor->GetLootGUID();
@@ -450,7 +456,10 @@ namespace
             (opener && chest && (in.chest == Chest::Lootable || in.chest == Chest::Opened))
                 ? DmFindOpeningSpell(opener, chest)
                 : 0;
-        in.hasOpeningSpell = openSpell != 0;
+        // With no opener, the pick's flag: false when an eligible bot with room
+        // was passed over only for want of an Opening spell, so the step names
+        // that (NoOpeningSpell) at the cannon instead of walking to the chest.
+        in.hasOpeningSpell = opener ? openSpell != 0 : pick.anyOpeningSpell;
 
         Plan const plan = Decide(in);
         switch (plan.action)
