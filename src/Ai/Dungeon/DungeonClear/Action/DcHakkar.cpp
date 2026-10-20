@@ -317,15 +317,14 @@ bool DungeonClearHakkarLootBloodAction::Execute(Event /*event*/)
                         MovementPriority::MOVEMENT_NORMAL);
     }
 
-    // Loot the blood for real — no fabrication. Hakkari Blood (10460) is a 100%
-    // drop on the Bloodkeeper (creature_loot_template 8438), so generating the
-    // corpse's own loot (what opening it does) and taking that item is the genuine
-    // article, not a granted copy. FillLoot only when the corpse hasn't been
-    // opened yet; then StoreLootItem the blood slot.
+    // Loot the blood for real: take it from the loot the core rolled on this
+    // corpse, and nothing else. Hakkari Blood (10460) is a 100% drop on the
+    // Bloodkeeper (creature_loot_template 8438), and the core rolls that loot when
+    // a player's party kills it (Unit::Kill). A corpse with no rolled loot (not
+    // tapped by a player, or killed by others) has no blood for anyone, so it is
+    // never rolled here: rolling it again would hand the party loot a player
+    // standing at that corpse could not have. Then StoreLootItem the blood slot.
     Loot& loot = keeper->loot;
-    if (loot.items.empty() && loot.gold == 0)
-        loot.FillLoot(keeper->GetCreatureTemplate()->lootid, LootTemplates_Creature,
-                      bot, /*personal*/ true, /*noEmptyError*/ true);
 
     bool got = false;
     bool sawBlood = false;

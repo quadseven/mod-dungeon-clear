@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
+#include "DcSourceScan.h"
 
 // The Deadmines cannon step earns the Defias Gunpowder from its chest
 // (DcDefiasGunpowder::Decide), and the module grants nothing a player could not
@@ -588,57 +589,7 @@ TEST(DcDefiasGunpowder, ARefusedCastIsItsOwnReport)
 
 namespace
 {
-    std::filesystem::path ModuleSrc()
-    {
-        return std::filesystem::path(DC_FIXTURE_DIR) / ".." / ".." / "src";
-    }
-
-    std::string ReadFile(std::filesystem::path const& p)
-    {
-        std::ifstream in(p);
-        std::stringstream ss;
-        ss << in.rdbuf();
-        return ss.str();
-    }
-
-    // Source with comments blanked out (so prose may still name AddItem) and
-    // string literals left alone. Newlines survive, so line numbers hold.
-    std::string StripComments(std::string const& src)
-    {
-        std::string out;
-        out.reserve(src.size());
-        enum { Code, Line, Block, Str, Chr } st = Code;
-        for (std::size_t i = 0; i < src.size(); ++i)
-        {
-            char const c = src[i];
-            char const n = i + 1 < src.size() ? src[i + 1] : '\0';
-            switch (st)
-            {
-                case Code:
-                    if (c == '/' && n == '/') { st = Line; ++i; continue; }
-                    if (c == '/' && n == '*') { st = Block; ++i; continue; }
-                    if (c == '"') st = Str;
-                    else if (c == '\'') st = Chr;
-                    out += c;
-                    break;
-                case Line:
-                    if (c == '\n') { st = Code; out += c; }
-                    break;
-                case Block:
-                    if (c == '*' && n == '/') { st = Code; ++i; }
-                    else if (c == '\n') out += c;
-                    break;
-                case Str:
-                case Chr:
-                    out += c;
-                    if (c == '\\' && i + 1 < src.size()) { out += n; ++i; }
-                    else if ((st == Str && c == '"') || (st == Chr && c == '\''))
-                        st = Code;
-                    break;
-            }
-        }
-        return out;
-    }
+    using namespace DcSourceScan;
 
     // "file:line" of every AddItem( call in `p`.
     std::vector<std::string> AddItemCalls(std::filesystem::path const& p)
@@ -650,12 +601,6 @@ namespace
             if (line.find("AddItem(") != std::string::npos)
                 hits.push_back(p.filename().string() + ":" + std::to_string(n));
         return hits;
-    }
-
-    bool IsSource(std::filesystem::path const& p)
-    {
-        std::string const ext = p.extension().string();
-        return ext == ".cpp" || ext == ".h";
     }
 }
 

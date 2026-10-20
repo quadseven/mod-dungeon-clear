@@ -884,7 +884,9 @@ void DcDungeonQueueFillJob::TickSanitizing()
         }
         if (bot->IsInCombat())
             bot->CombatStop(true);
-        bot->SetFullHealth();
+        // No health top-up: the finder accepts a member at any health, and a bot
+        // standing in the capital regenerates (or eats) the way a player does.
+        // A full restore is a grant (#25).
 
         // Refresh the bot's own lock map so GetCompatibleDungeons judges it on
         // the level and gear it has NOW. Randomize's GiveLevel fires the level
@@ -1030,7 +1032,7 @@ std::size_t DcDungeonQueueFillJob::RequeueDroppedBots()
         }
         if (bot->IsInCombat())
             bot->CombatStop(true);
-        bot->SetFullHealth();
+        // No health top-up here either (see TickSanitizing).
 
         slot.queued = false;
         slot.queueSent = false;
