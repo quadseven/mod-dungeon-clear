@@ -637,16 +637,48 @@ TEST(DungeonEventRegistryTest, DeadminesCannonEventShape)
     // 1. step onto the cannon.
     EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
     EXPECT_FLOAT_EQ(e->steps[0].x, -107.56f);
+    EXPECT_EQ(e->steps[0].timeoutMs, 30000u);
 
     // 2. fire it (Custom -> FireDefiasCannon hook id 2).
     EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
     EXPECT_EQ(e->steps[1].hookId, 2u);
+    EXPECT_EQ(e->steps[1].timeoutMs, 30000u);
 
     // 3. hold until the Iron Clad Door opens (GO_STATE_ACTIVE_ALTERNATIVE).
     EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForGameObjectState);
     EXPECT_EQ(e->steps[2].goEntry, 16397u);
     EXPECT_EQ(e->steps[2].wantState, 2u);
     EXPECT_EQ(e->steps[2].timeoutMs, 30000u);
+}
+
+TEST(DungeonEventRegistryTest, DeadminesWithoutChestOpenerEndsRun)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    DungeonEventProgress p = Prog(e->id, 1, 1000);
+
+    // No party member can open the gunpowder chest, so firing never succeeds.
+    // The run must end after the cannon step's 30-second budget.
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, 31000, 30000),
+              EventDriveOutcome::Aborted);
+
+    DungeonEventProgress blocked = Prog(e->id, 1, 1000);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, blocked, StepResult::Blocked, 1000, 30000),
+              EventDriveOutcome::Aborted);
+}
+
+TEST(DungeonEventRegistryTest, FailedDeadminesCannonEndsBeforeFiveMinutes)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    DungeonEventProgress p = Prog(e->id, 2, 1000);
+
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, 30999, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Blocked, 30999, 30000),
+              EventDriveOutcome::Aborted);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, 31000, 30000),
+              EventDriveOutcome::Aborted);
 }
 
 // Wailing Caverns drop to Lord Serpentis: settle on the lip, then jump the

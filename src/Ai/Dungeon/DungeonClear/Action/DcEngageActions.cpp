@@ -2128,6 +2128,17 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         return true;
     }
 
+    if (outcome == EventDriveOutcome::Aborted)
+    {
+        auto const& prog =
+            context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+        std::string const reason = "Dungeon event '" + ev->name + "' failed at step " +
+            std::to_string(prog.stepIndex) + "; ending dungeon clear.";
+        LOG_WARN("playerbots.dungeonclear", "[DC:{}] {}", bot->GetName(), reason);
+        DisableDungeonClear(botAI, reason);
+        return true;
+    }
+
     if (outcome == EventDriveOutcome::Stalled)
     {
         // The event needs the human (something the bot can't drive). Stall so
@@ -2300,6 +2311,7 @@ bool DcRunEventAction::Execute(Event /*event*/)
         outcome == EventDriveOutcome::Running   ? "running"
         : outcome == EventDriveOutcome::Completed ? "completed"
         : outcome == EventDriveOutcome::Stalled ? "stalled"
+        : outcome == EventDriveOutcome::Aborted ? "aborted"
                                                 : "skipped";
     LOG_DEBUG("playerbots.dungeonclear",
               "[DC:{}] run-event '{}' step {}/{} -> {}",
@@ -2313,6 +2325,15 @@ bool DcRunEventAction::Execute(Event /*event*/)
         // while a conditional event runs correctly.
         ClearStall(context);
         SetPhase(context, "event");
+        return true;
+    }
+
+    if (outcome == EventDriveOutcome::Aborted)
+    {
+        std::string const reason = "Dungeon event '" + ev->name + "' failed at step " +
+            std::to_string(prog.stepIndex) + "; ending dungeon clear.";
+        LOG_WARN("playerbots.dungeonclear", "[DC:{}] {}", bot->GetName(), reason);
+        DisableDungeonClear(botAI, reason);
         return true;
     }
 
