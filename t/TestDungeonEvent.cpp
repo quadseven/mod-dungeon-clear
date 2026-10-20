@@ -673,8 +673,8 @@ TEST(DungeonEventRegistryTest, FailedDeadminesCannonEndsBeforeFiveMinutes)
     ASSERT_NE(e, nullptr);
     DungeonEventProgress p = Prog(e->id, 2, 1000);
 
-    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, 30999, 30000),
-              EventDriveOutcome::Running);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Blocked, 30999, 30000),
+              EventDriveOutcome::Aborted);
     EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, 31000, 30000),
               EventDriveOutcome::Aborted);
 }
