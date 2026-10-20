@@ -58,6 +58,10 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
         EventBuilder(36, 1, "Iron Clad Door (Defias Cannon)")
             .Anchored(/*encounterIndex*/ 3)
             .Persistent()
+            // A failed cannon ends the run with a logged reason instead of
+            // stalling for a person: the retries below bound it to about five
+            // minutes, and nobody is at the door to sort it (#54).
+            .AbortOnFailure()
             .StepsOwnMovement()
             // 1. Step up onto the cannon (the objective's arrive radius may
             //    leave the tank ~10yd off; the cannon GO is at this spot).
