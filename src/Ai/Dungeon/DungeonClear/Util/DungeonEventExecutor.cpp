@@ -1333,10 +1333,12 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
     }
 
     if (result == StepResult::Blocked)
-        return EventDriveOutcome::Stalled;
+        return ev.abortOnFailure ? EventDriveOutcome::Aborted : EventDriveOutcome::Stalled;
 
-    // Failed (or timed out): required events stall for the human; optional ones
-    // skip the rest of the event and let the clear advance.
+    // Failed (or timed out): abort-marked events end the run, other required
+    // events stall for the human, and optional ones let the clear advance.
+    if (ev.abortOnFailure)
+        return EventDriveOutcome::Aborted;
     return ev.required ? EventDriveOutcome::Stalled : EventDriveOutcome::Skipped;
 }
 

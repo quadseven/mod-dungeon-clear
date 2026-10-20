@@ -34,6 +34,8 @@
 // Custom step. A non-persistent event would rewind to step 0 across that gap and
 // re-fire the cannon (summoning two more each time); persistence keeps the step
 // progress so the cannon fires exactly once.
+// If the cannon or door cannot be opened, each step has a 30s budget and the
+// event ends the run with a logged reason rather than waiting for a human.
 
 void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
 {
@@ -45,12 +47,15 @@ void RegisterDeadminesEvents(std::vector<DungeonEvent>& out)
         EventBuilder(36, 1, "Iron Clad Door (Defias Cannon)")
             .Anchored(/*encounterIndex*/ 3)
             .Persistent()
+            .AbortOnFailure()
             // 1. Step up onto the cannon (the objective's arrive radius may
             //    leave the tank ~10yd off; the cannon GO is at this spot).
             .MoveTo(-107.56f, -659.67f, 7.21f, /*radius*/ 5.0f)
+            .Timeout(30000)
             // 2. Fire it. The hook casts spell 6250 at the cannon GO -> its
             //    SmartAI opens the door + summons the Squallshapers.
             .Custom(DM_FIRE_CANNON_HOOK)
+            .Timeout(30000)
             // 3. Hold until the Iron Clad Door is confirmed open, then the clear
             //    advances through it to Mr. Smite and the rest of the ship.
             .WaitForGOState(DM_GO_IRON_CLAD_DOOR, DM_DOOR_OPEN_STATE)
