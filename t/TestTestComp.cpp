@@ -439,3 +439,20 @@ TEST(DcTestComp, UnfillableRoleNamesTheRole)
     EXPECT_STREQ(DcTestComp::UnfillableRole(bits({1, 2, 5, 7}), Roster::NoDeathKnights, 0), "heal");
     EXPECT_EQ(DcTestComp::UnfillableRole(bits({1, 2, 5, 7}), Roster::NoDeathKnights, 10), nullptr);
 }
+
+// The classic comp needs three DPS classes left after the tank and healer are
+// drawn. Excluding paladin, shaman, warlock, druid (tank = warrior, healer =
+// priest only) leaves hunter, rogue and mage: exactly three, so fillable. One
+// more exclusion leaves two, so the dps role is named.
+TEST(DcTestComp, UnfillableRoleDpsBoundaryIsThree)
+{
+    auto bits = [](std::initializer_list<std::uint8_t> classes)
+    {
+        std::uint32_t m = 0;
+        for (std::uint8_t c : classes)
+            m |= DcTestComp::ClassBit(c);
+        return m;
+    };
+    EXPECT_EQ(DcTestComp::UnfillableRole(bits({2, 7, 9, 11}), Roster::NoDeathKnights, 0), nullptr);
+    EXPECT_STREQ(DcTestComp::UnfillableRole(bits({2, 7, 8, 9, 11}), Roster::NoDeathKnights, 0), "dps");
+}
