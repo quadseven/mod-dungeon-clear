@@ -79,7 +79,10 @@ namespace DcTestRunRecord
           << ",\"heroic\":" << (rec.heroic ? "true" : "false")
           << ",\"size\":" << rec.size
           << ",\"compSeed\":" << rec.compSeed
-          << ",\"gearIlvl\":" << rec.gearIlvl
+          << ",\"excludeMask\":" << rec.excludeMask
+          << ",\"startBoss\":";
+        AppendEscaped(s, rec.startBoss);
+        s << ",\"gearIlvl\":" << rec.gearIlvl
           << ",\"gearQuality\":" << rec.gearQuality
           << ",\"roster\":" << (rec.roster ? "true" : "false")
           << ",\"comp\":[";

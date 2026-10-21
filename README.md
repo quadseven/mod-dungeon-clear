@@ -179,6 +179,9 @@ Every run records its seed, so a run that hits a bug can be replayed with the
 exact same party, and `.dc test plan` runs the same dungeon N times to give you
 a success *rate* rather than an anecdote.
 
+- `exclude=<class>[,<class>...]` leaves classes out of the party (`exclude=rogue`); a role left with no class is refused.
+- `from=<boss>` starts the run at that boss, with the earlier bosses marked skipped (`from=Mr. Smite`).
+
 **[Test Runs](https://github.com/jrad7/mod-dungeon-clear/wiki/Test-Runs)** —
 the full command reference, gear and party options, plans, watching, the
 headless test-driver character, and where the results are written.

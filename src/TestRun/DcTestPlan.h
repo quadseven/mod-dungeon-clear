@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "TestRun/DcTestGearTiers.h"
+#include "TestRun/DcTestStartOptions.h"
 
 // Pure kernel for `.dc test plan` campaigns: a plan keeps up to `concurrent`
 // test runs of one dungeon in flight until `total` have completed, then the
@@ -36,6 +37,9 @@ namespace DcTestPlan
         // per-child on purpose: a campaign exists to compare runs against each
         // other, which only means anything at one ceiling.
         DcTestGearTiers::Spec gear;
+        // exclude= / from=, plan-wide for the same reason: every child runs the
+        // same classes-out, same-starting-boss setup, or the runs do not compare.
+        DcTestStartOptions::Options start;
     };
 
     struct Counters
@@ -113,7 +117,8 @@ namespace DcTestPlan
     }
 
     // `.dc test plan start <token> [heroic] total=N [concurrent=N] [level=N]
-    // [seed=N] [size=N] [ilvl=N|none] [quality=N|epic|…]`. Fills the whole Spec except
+    // [seed=N] [size=N] [ilvl=N|none] [quality=N|epic|…]
+    // [exclude=<class>[,<class>...]] [from=<boss>]`. Fills the whole Spec except
     // planId. ok is false with a usage-shaped err on a missing token/total, a
     // duplicate bare word, or a malformed key=value.
     struct ParseResult

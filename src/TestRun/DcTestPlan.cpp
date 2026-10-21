@@ -30,14 +30,31 @@ namespace DcTestPlan
             out.ok = false;
             out.err = why +
                 " — usage: .dc test plan start <dungeon> [heroic] total=N [concurrent=N] [level=N]"
-                " [seed=N] [size=N] [ilvl=N|none] [quality=rare|epic|…]";
+                " [seed=N] [size=N] [ilvl=N|none] [quality=rare|epic|…]"
+                " [exclude=<class>[,<class>...]] [from=<boss>]";
             return out;
         };
 
+        DcTestStartOptions::Parser startOpts;
         std::istringstream in{args};
         std::string word;
         while (in >> word)
         {
+            // exclude= and from= (whose boss name may run over several words).
+            // The dungeon token is the first bare word, so it is never a name
+            // continuation.
+            std::string startErr;
+            switch (startOpts.Consume(word, word == "heroic" || out.spec.dungeonToken.empty(),
+                                      &startErr))
+            {
+                case DcTestStartOptions::Parser::Result::Consumed:
+                    continue;
+                case DcTestStartOptions::Parser::Result::Error:
+                    return usage(startErr);
+                case DcTestStartOptions::Parser::Result::NotMine:
+                    break;
+            }
+
             std::size_t const eq = word.find('=');
             if (eq == std::string::npos)
             {
@@ -100,6 +117,7 @@ namespace DcTestPlan
                 return usage("unknown option '" + key + "'");
         }
 
+        out.spec.start = startOpts.options();
         if (out.spec.dungeonToken.empty())
             return usage("missing dungeon");
         if (out.spec.total == 0)

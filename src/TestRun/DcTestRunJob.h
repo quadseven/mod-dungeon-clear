@@ -21,6 +21,7 @@
 #include "TestRun/DcTestRunLiveJson.h"
 #include "TestRun/DcTestRunRecord.h"
 #include "TestRun/DcTestRunVerdict.h"
+#include "TestRun/DcTestStartOptions.h"
 #include "TestRun/DcWipeContext.h"
 
 class Player;
@@ -56,6 +57,11 @@ public:
     // say", which is what every run did before the option existed. It is
     // resolved against the conf ONCE here, so a mid-run `.reload config` cannot
     // change what a run was geared to.
+    // `opts.excludeMask` keeps those classes out of the draw AND out of the
+    // substitutes tried when a drawn class has no free pool character. `start`
+    // (resolved by DcTestRunManager::ResolveStartOptions, null = begin at the
+    // entrance) moves the drop-in point and names the anchors to mark skipped
+    // once the run is live.
     // `size` = party size (raid-support Plan D): 0 keeps the classic 5-man
     // comp; 2-40 draws a sized comp with role quotas (DcTestComp::RoleQuota),
     // grouped as a RAID past 5 members.
@@ -64,7 +70,9 @@ public:
                                                  bool heroic,
                                                  DcTestGearTiers::Spec const& gear,
                                                  std::unordered_set<ObjectGuid> const& reservedGuids,
-                                                 std::string const& planId, std::string* err);
+                                                 std::string const& planId, std::string* err,
+                                                 DcTestStartOptions::Options const& opts = {},
+                                                 DcTestStartOptions::StartPlan const* start = nullptr);
 
     // One hand-picked party slot: a real player character and the role the human
     // marked it for. Resolved (name -> guid, faction/liveness checked) by
@@ -215,6 +223,9 @@ private:
     void TickGrouping();
     void TickTeleporting();
     void TickStarting();
+    // `from=`: mark the anchors before the start boss skipped, the way `dc skip`
+    // records them, and drop the route state `dc on` already built for the first.
+    void ApplyStartSkips(Player* tank, AiObjectContext* ctx);
     void TickMonitoring(uint32 dt);
     void TrackDeaths(Player* tank);
     void TrackEngagement(Player* tank);
@@ -340,6 +351,8 @@ private:
     bool _followersTeleported = false; // wave 2 (everybody else) has been sent
     uint32 _destInstanceId = 0;        // the copy the leader landed in; 0 until it does
     bool _dcOnIssued = false;
+    std::uint32_t _excludeMask = 0;               // `exclude=`: classes left out of the comp
+    std::vector<std::uint32_t> _startSkips;       // `from=`: entries marked skipped at start
     // One-shot so ReassertMaster's diagnostic names the first repair per run
     // instead of once a second forever.
     bool _masterRepairLogged = false;
