@@ -24,6 +24,7 @@
 #include "TestRun/DcTestStartOptions.h"
 #include "TestRun/DcWipeContext.h"
 
+class AiObjectContext;
 class Player;
 
 // One `.dc test` run in flight: a single 5-bot party driven through the full
