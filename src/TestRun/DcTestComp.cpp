@@ -33,21 +33,37 @@ namespace DcTestComp
         // so dropping them leaves the pre-Wrath candidate list byte-identical
         // to what it was before the class was added and every recorded seed
         // still replays its original comp.
-        bool Eligible(Slot const& slot, Roster roster)
+        // `excludeMask` is a second, independent filter: a class the run was told
+        // to leave out is never a candidate, whatever the role. Mask 0 filters
+        // nothing, so a run without `exclude=` draws exactly as it always did.
+        bool Eligible(Slot const& slot, Roster roster, std::uint32_t excludeMask)
         {
+            if ((excludeMask & ClassBit(slot.classId)) != 0)
+                return false;
             return roster == Roster::WithDeathKnights || slot.classId != kDeathKnightClassId;
+        }
+
+        // Distinct eligible classes of a pool.
+        std::set<std::uint8_t> EligibleClasses(Slot const* pool, std::size_t count,
+                                               Roster roster, std::uint32_t excludeMask)
+        {
+            std::set<std::uint8_t> out;
+            for (std::size_t i = 0; i < count; ++i)
+                if (Eligible(pool[i], roster, excludeMask))
+                    out.insert(pool[i].classId);
+            return out;
         }
 
         // Draw one entry from `pool` whose class is eligible and not already
         // used, advancing the PRNG. Callers guarantee at least one such entry
         // exists.
         Slot Draw(Slot const* pool, std::size_t count, std::set<std::uint8_t> const& used,
-                  Roster roster, std::uint32_t& state)
+                  Roster roster, std::uint32_t excludeMask, std::uint32_t& state)
         {
             std::vector<Slot> candidates;
             candidates.reserve(count);
             for (std::size_t i = 0; i < count; ++i)
-                if (Eligible(pool[i], roster) && used.find(pool[i].classId) == used.end())
+                if (Eligible(pool[i], roster, excludeMask) && used.find(pool[i].classId) == used.end())
                     candidates.push_back(pool[i]);
 
             // Defensive: should never happen given the pool sizes, but returning
@@ -57,7 +73,7 @@ namespace DcTestComp
             if (candidates.empty())
             {
                 for (std::size_t i = 0; i < count; ++i)
-                    if (Eligible(pool[i], roster))
+                    if (Eligible(pool[i], roster, excludeMask))
                         return pool[i];
                 return pool[0];
             }
@@ -70,12 +86,12 @@ namespace DcTestComp
         // the role pools permit instead of stacking one lucky class.
         Slot DrawSpread(Slot const* pool, std::size_t count,
                         std::map<std::uint8_t, std::size_t>& classUse,
-                        Roster roster, std::uint32_t& state)
+                        Roster roster, std::uint32_t excludeMask, std::uint32_t& state)
         {
             std::size_t best = SIZE_MAX;
             for (std::size_t i = 0; i < count; ++i)
             {
-                if (!Eligible(pool[i], roster))
+                if (!Eligible(pool[i], roster, excludeMask))
                     continue;
                 auto const it = classUse.find(pool[i].classId);
                 std::size_t const uses = it == classUse.end() ? 0 : it->second;
@@ -86,13 +102,17 @@ namespace DcTestComp
             candidates.reserve(count);
             for (std::size_t i = 0; i < count; ++i)
             {
-                if (!Eligible(pool[i], roster))
+                if (!Eligible(pool[i], roster, excludeMask))
                     continue;
                 auto const it = classUse.find(pool[i].classId);
                 std::size_t const uses = it == classUse.end() ? 0 : it->second;
                 if (uses == best)
                     candidates.push_back(pool[i]);
             }
+            // Same defensive shape as Draw: only reachable when the caller skipped
+            // UnfillableRole, and a valid slot beats a modulo by zero.
+            if (candidates.empty())
+                return pool[0];
             Slot const pick = candidates[NextRand(state) % candidates.size()];
             ++classUse[pick.classId];
             return pick;
@@ -118,28 +138,86 @@ namespace DcTestComp
         return q;
     }
 
-    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed, Roster roster)
+    std::uint8_t ClassIdFromName(std::string_view name)
+    {
+        struct Named
+        {
+            std::string_view name;
+            std::uint8_t classId;
+        };
+        static constexpr Named kNames[] = {
+            {"warrior", 1}, {"paladin", 2}, {"hunter", 3},  {"rogue", 4},   {"priest", 5},
+            {"deathknight", 6}, {"dk", 6},  {"shaman", 7},  {"mage", 8},    {"warlock", 9},
+            {"druid", 11},
+        };
+        for (Named const& n : kNames)
+            if (n.name == name)
+                return n.classId;
+        return 0;
+    }
+
+    char const* UnfillableRole(std::uint32_t excludeMask, Roster roster, std::size_t size)
+    {
+        auto const tanks = EligibleClasses(kTankPool, std::size(kTankPool), roster, excludeMask);
+        auto const heals = EligibleClasses(kHealPool, std::size(kHealPool), roster, excludeMask);
+        auto const dps = EligibleClasses(kDpsPool, std::size(kDpsPool), roster, excludeMask);
+        if (tanks.empty())
+            return "tank";
+        if (heals.empty())
+            return "heal";
+        if (dps.empty())
+            return "dps";
+        if (size != 0)
+            return nullptr;  // a sized comp may repeat a class: one per role is enough
+
+        // Classic 5-man: tank, then healer, then three DPS, all on distinct
+        // classes, drawn in that order. Walk every tank/healer pair the draw can
+        // land on and ask whether the three DPS still have classes left.
+        for (std::uint8_t t : tanks)
+        {
+            std::size_t healsLeft = 0;
+            for (std::uint8_t h : heals)
+            {
+                if (h == t)
+                    continue;
+                ++healsLeft;
+                std::size_t dpsLeft = 0;
+                for (std::uint8_t d : dps)
+                    if (d != t && d != h)
+                        ++dpsLeft;
+                if (dpsLeft < kPartySize - 2)
+                    return "dps";
+            }
+            if (healsLeft == 0)
+                return "heal";
+        }
+        return nullptr;
+    }
+
+    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed, Roster roster,
+                                           std::uint32_t excludeMask)
     {
         std::uint32_t state = seed;
         std::set<std::uint8_t> used;
         std::array<Slot, kPartySize> comp{};
 
-        comp[0] = Draw(kTankPool, std::size(kTankPool), used, roster, state);
+        comp[0] = Draw(kTankPool, std::size(kTankPool), used, roster, excludeMask, state);
         used.insert(comp[0].classId);
 
-        comp[1] = Draw(kHealPool, std::size(kHealPool), used, roster, state);
+        comp[1] = Draw(kHealPool, std::size(kHealPool), used, roster, excludeMask, state);
         used.insert(comp[1].classId);
 
         for (std::size_t i = 2; i < kPartySize; ++i)
         {
-            comp[i] = Draw(kDpsPool, std::size(kDpsPool), used, roster, state);
+            comp[i] = Draw(kDpsPool, std::size(kDpsPool), used, roster, excludeMask, state);
             used.insert(comp[i].classId);
         }
 
         return comp;
     }
 
-    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size, Roster roster)
+    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size, Roster roster,
+                                std::uint32_t excludeMask)
     {
         Quota const q = RoleQuota(size);
         std::uint32_t state = seed;
@@ -148,15 +226,15 @@ namespace DcTestComp
         comp.reserve(q.tanks + q.healers + q.dps);
 
         for (std::size_t i = 0; i < q.tanks; ++i)
-            comp.push_back(DrawSpread(kTankPool, std::size(kTankPool), classUse, roster, state));
+            comp.push_back(DrawSpread(kTankPool, std::size(kTankPool), classUse, roster, excludeMask, state));
         for (std::size_t i = 0; i < q.healers; ++i)
-            comp.push_back(DrawSpread(kHealPool, std::size(kHealPool), classUse, roster, state));
+            comp.push_back(DrawSpread(kHealPool, std::size(kHealPool), classUse, roster, excludeMask, state));
         for (std::size_t i = 0; i < q.dps; ++i)
-            comp.push_back(DrawSpread(kDpsPool, std::size(kDpsPool), classUse, roster, state));
+            comp.push_back(DrawSpread(kDpsPool, std::size(kDpsPool), classUse, roster, excludeMask, state));
         return comp;
     }
 
-    std::vector<Slot> RolePool(std::string_view role, Roster roster)
+    std::vector<Slot> RolePool(std::string_view role, Roster roster, std::uint32_t excludeMask)
     {
         Slot const* pool = nullptr;
         std::size_t count = 0;
@@ -181,7 +259,7 @@ namespace DcTestComp
         std::vector<Slot> out;
         out.reserve(count);
         for (std::size_t i = 0; i < count; ++i)
-            if (Eligible(pool[i], roster))
+            if (Eligible(pool[i], roster, excludeMask))
                 out.push_back(pool[i]);
         return out;
     }

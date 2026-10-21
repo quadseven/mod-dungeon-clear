@@ -137,7 +137,8 @@ namespace DcTestRunRecord
         //     boundary without checking the version first; tr-20260902-121659-12
         //     and -13 are the reference pre-12 records where it reads LEGIT about
         //     a Flame Breath Trigger that wedged the run for ten minutes.
-        std::uint32_t schema = 12;
+        // 13: added excludeMask (`exclude=`) and startBoss (`from=`).
+        std::uint32_t schema = 13;
         std::string runId;
         std::string planId;       // owning `.dc test plan`, "" for ad-hoc runs
         std::string dungeon;      // registry token
@@ -151,6 +152,11 @@ namespace DcTestRunRecord
         // records; read comp[].length there.
         std::uint32_t size = 0;
         std::uint32_t compSeed = 0;  // seed BuildComp rolled this comp from (for replay)
+        // `exclude=`: DcTestComp::ClassBit of every class left out of the draw. A
+        // replay needs it with compSeed to roll the same party. 0 = none.
+        std::uint32_t excludeMask = 0;
+        // `from=`: the boss the run began at, "" when it began at the entrance.
+        std::string startBoss;
         // Gear ceiling the bots were rolled to, already resolved against the
         // AutoGear* conf values (0 ilvl = uncapped; quality is 1..5). Both stay
         // 0 on roster runs, which are never re-geared. The pair belongs in the

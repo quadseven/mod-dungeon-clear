@@ -176,13 +176,14 @@ TEST(DcTestRunRecordTest, BossRosterSerializesInProgressionOrder)
               std::string::npos);
 }
 
-TEST(DcTestRunRecordTest, SchemaIsTwelve)
+TEST(DcTestRunRecordTest, SchemaIsThirteen)
 {
     // 12: added combatHolders[].trigger, and with it a change of meaning in the
     // sibling `legitimate` field — a trigger creature now sinks the verdict. The
     // bump is what lets a reader tell a pre-fix record (where a Flame Breath
     // Trigger scored LEGITIMATE and wedged the run) from a post-fix one.
-    EXPECT_NE(ToJsonl(SampleRecord()).find("\"schema\":12"), std::string::npos);
+    // 13: added excludeMask and startBoss (`exclude=` / `from=`).
+    EXPECT_NE(ToJsonl(SampleRecord()).find("\"schema\":13"), std::string::npos);
     EXPECT_NE(ToJsonl(SampleRecord()).find("\"size\":"), std::string::npos);
 }
 
@@ -328,4 +329,16 @@ TEST(DcTestRunRecordTest, DefaultCapturePath)
     // The env override is exercised operationally; here just pin the default.
     if (!std::getenv("DC_TESTRUNS_FILE"))
         EXPECT_EQ(DcTestRunRecord::CapturePath(), "dc_testruns.jsonl");
+}
+
+// `exclude=` and `from=` ride out on the record so a replay knows to pass them.
+TEST(DcTestRunRecordTest, StartOptionsSerialize)
+{
+    Record r = SampleRecord();
+    r.excludeMask = 1u << 4;
+    r.startBoss = "Mr. Smite";
+
+    std::string const line = ToJsonl(r);
+    EXPECT_NE(line.find("\"excludeMask\":16"), std::string::npos);
+    EXPECT_NE(line.find("\"startBoss\":\"Mr. Smite\""), std::string::npos);
 }

@@ -45,9 +45,11 @@
 #include "Util/DcProvisionBudget.h"
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "TestRun/DcDiagSnapshot.h"
@@ -214,7 +216,9 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
                                                    bool heroic,
                                                    DcTestGearTiers::Spec const& gear,
                                                    std::unordered_set<ObjectGuid> const& reservedGuids,
-                                                   std::string const& planId, std::string* err)
+                                                   std::string const& planId, std::string* err,
+                                                   DcTestStartOptions::Options const& opts,
+                                                   DcTestStartOptions::StartPlan const* start)
 {
     // Caller (DcTestRunManager::Start) has already validated the registry row
     // (including that heroic is only requested where heroicLevel is set) and
@@ -238,26 +242,41 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_record.gearIlvl = job->_gear.ilvl;
     job->_record.gearQuality = job->_gear.quality;
 
+    // Options the caller already validated (DcTestRunManager::ResolveStartOptions).
+    job->_excludeMask = opts.excludeMask;
+    job->_record.excludeMask = opts.excludeMask;
+    if (start)
+    {
+        job->_record.startBoss = start->bossName;
+        job->_startSkips = start->skipEntries;
+        // Entrance coordinates stay when nothing precedes the boss; otherwise the
+        // party drops in at the resolved spot (the entrance orientation is kept,
+        // which is only a facing).
+        if (!start->atEntrance)
+        {
+            job->_x = start->x;
+            job->_y = start->y;
+            job->_z = start->z;
+        }
+    }
+
     // Death knights are a Wrath class whose kit starts at 55, so they are on
     // the table only for a WotLK row — and only when the run's LEVEL actually
     // reaches the floor, because `level=N` can drop a WotLK run under it and
     // the factory levels every test bot to whatever the run asked for.
     DcTestComp::Roster const roster =
-        DcTestDungeonRegistry::ExpansionOf(row) >= DcTestDungeonRegistry::kExpansionWrath &&
-                level >= DcTestComp::kDeathKnightMinLevel
-            ? DcTestComp::Roster::WithDeathKnights
-            : DcTestComp::Roster::NoDeathKnights;
+        DcTestComp::RosterFor(DcTestDungeonRegistry::ExpansionOf(row), level);
 
     // size 0 keeps the classic 5-man draw (distinct classes) bit-for-bit; a
     // requested size uses the quota'd raid comp (duplicates spread evenly).
     std::vector<DcTestComp::Slot> comp;
     if (size == 0)
     {
-        auto const classic = DcTestComp::BuildComp(seed, roster);
+        auto const classic = DcTestComp::BuildComp(seed, roster, opts.excludeMask);
         comp.assign(classic.begin(), classic.end());
     }
     else
-        comp = DcTestComp::BuildComp(seed, size, roster);
+        comp = DcTestComp::BuildComp(seed, size, roster, opts.excludeMask);
     job->_record.size = static_cast<uint32>(comp.size());
     for (DcTestComp::Slot const& c : comp)
     {
@@ -324,7 +343,7 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
             // is impossible anyway, so a raid-sized run may substitute a class
             // already in the party rather than fail the role.
             bool const allowDuplicates = job->_slots.size() > 9;
-            for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role, roster))
+            for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role, roster, opts.excludeMask))
             {
                 if (alt.classId == slot.classId)
                     continue;
@@ -1350,6 +1369,7 @@ void DcTestRunJob::TickStarting()
     tankAI->DoSpecificAction("dc on", Event("dc", "", FindGm()), true);
     if (DcRun::Of(ctx).enabled)
     {
+        ApplyStartSkips(tank, ctx);
         if (InstanceScript* inst = DcTargeting::GetInstanceScript(tank))
             _lastMask = inst->GetCompletedEncounterMask();
         _lastAnchors =
@@ -1368,6 +1388,38 @@ void DcTestRunJob::TickStarting()
 
     if (_stageMs >= START_TIMEOUT_MS)
         FailSetup("dc on did not take (look for 'DC command refused' in the DC log)");
+}
+
+// `from=<boss>`: the anchors before the start boss count as skipped, recorded
+// exactly as DcSkipAction records them (the entry goes into DcKey::Skipped, which
+// the next-boss pick and the all-cleared check already honor).
+//
+// Runs once `dc on` has taken, because NextDungeonBossValue wipes the skip set
+// the first time it sees a bot in a new instance; stamping the instance first
+// makes that wipe a no-op, so it cannot erase what is written here. Only the
+// leader owns the run state, so only its context is written.
+void DcTestRunJob::ApplyStartSkips(Player* tank, AiObjectContext* ctx)
+{
+    if (_startSkips.empty())
+        return;
+
+    DcTargeting::ResetCompletionLatchesForNewInstance(tank, ctx);
+    auto& skipped = ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
+    for (uint32 const entry : _startSkips)
+        skipped.insert(entry);
+
+    // `dc on` may already have aimed at the first boss: drop that target so the
+    // next pick, and the route to it, are rebuilt from the skip set.
+    DcRun::Of(ctx).selectedBossEntry = 0u;
+    ctx->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().Reset();
+    ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+    ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
+    ctx->GetValue<uint32>(DcKey::StickyBoss)->Set(0u);
+    ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
+
+    LOG_INFO("playerbots.dungeonclear", "TESTRUN {} from={}: {} earlier anchors marked skipped",
+             _record.runId, _record.startBoss, _startSkips.size());
+    _startSkips.clear();
 }
 
 // File a death for every member who went from standing to a corpse since the

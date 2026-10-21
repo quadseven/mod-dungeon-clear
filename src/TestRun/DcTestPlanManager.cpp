@@ -70,6 +70,16 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
         return fail("'" + std::string(row->token) +
                     "' has no heroic mode (classic dungeons have none)");
 
+    // exclude= / from= are checked against the dungeon here too, for the same
+    // reason: a refusal Start would repeat for every child fails the plan once.
+    {
+        DcTestStartOptions::StartPlan unused;
+        std::string optErr;
+        if (!DcTestRunManager::ResolveStartOptions(*row, spec.heroic, spec.level, spec.size,
+                                                   spec.start, &unused, &optErr))
+            return fail(optErr);
+    }
+
     uint32 const maxPlans = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxPlans");
     if (maxPlans != 0 && _plans.size() >= maxPlans)
         return fail("max active test plans reached (" + std::to_string(maxPlans) +
@@ -344,7 +354,8 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     bool const ok = DcTestRunManager::Instance().Start(gm, plan.spec.dungeonToken,
                                                        plan.spec.level, seed, plan.spec.heroic,
                                                        plan.spec.gear, &msg, plan.spec.planId,
-                                                       &err, &runId, plan.spec.size);
+                                                       &err, &runId, plan.spec.size,
+                                                       plan.spec.start);
     if (ok)
     {
         ++plan.counters.launched;
