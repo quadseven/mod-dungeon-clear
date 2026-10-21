@@ -349,6 +349,9 @@ struct DungeonEvent
     // Optional => such a step is skipped and the clear advances anyway (used for
     // best-effort events whose scripted trigger may not fire for bots).
     bool required{true};
+    // A failed required event can end the run when human intervention cannot
+    // make the automated party progress (Deadmines cannon).
+    bool abortOnFailure{false};
 
     // Conditional events only. A normal conditional event latches DONE the moment
     // its step list completes (DcRunEventAction inserts its ConditionalLatchKey),
@@ -512,6 +515,7 @@ public:
     EventBuilder& Anchored(uint32 orderIndex);
     EventBuilder& Conditional(EventCondition condition);
     EventBuilder& Optional();
+    EventBuilder& AbortOnFailure();
     EventBuilder& Repeatable();
     EventBuilder& Persistent();
     // Stand the whole pull system (and the scout-lag) down for as long as this

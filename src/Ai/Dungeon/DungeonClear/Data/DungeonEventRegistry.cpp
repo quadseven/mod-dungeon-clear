@@ -46,6 +46,12 @@ EventBuilder& EventBuilder::Optional()
     return *this;
 }
 
+EventBuilder& EventBuilder::AbortOnFailure()
+{
+    _ev.abortOnFailure = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::Repeatable()
 {
     _ev.repeatable = true;

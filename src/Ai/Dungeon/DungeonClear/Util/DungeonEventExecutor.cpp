@@ -1303,10 +1303,12 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
     }
 
     if (result == StepResult::Blocked)
-        return EventDriveOutcome::Stalled;
+        return ev.abortOnFailure ? EventDriveOutcome::Aborted : EventDriveOutcome::Stalled;
 
-    // Failed (or timed out): required events stall for the human; optional ones
-    // skip the rest of the event and let the clear advance.
+    // Failed (or timed out): abort-marked events end the run, other required
+    // events stall for the human, and optional ones let the clear advance.
+    if (ev.abortOnFailure)
+        return EventDriveOutcome::Aborted;
     return ev.required ? EventDriveOutcome::Stalled : EventDriveOutcome::Skipped;
 }
 
@@ -1485,7 +1487,8 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // must not be reported as one.
     else if (bot && active.timeoutRetries > 0 && !prog.timeoutFailLogged &&
              result == StepResult::Running &&
-             (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped))
+             (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped ||
+              outcome == EventDriveOutcome::Aborted))
     {
         prog.timeoutFailLogged = true;
         LOG_INFO("playerbots.dungeonclear",

@@ -709,15 +709,15 @@ TEST(DungeonEventAdvance, DeadminesCannonCustomTimeoutRewindsThenFails)
             ++rewinds;
         }
     }
-    EXPECT_EQ(out, EventDriveOutcome::Stalled)
-        << "once the retries are spent the required event fails (stalls with a reason)";
+    EXPECT_EQ(out, EventDriveOutcome::Aborted)
+        << "once the retries are spent the event ends the run with a reason (#54)";
     EXPECT_EQ(rewinds, 2) << "two retries from the MoveTo, then the failure";
     EXPECT_EQ(p.stepIndex, 1u) << "the failure reports the step that timed out";
 
     // And it stays failed: a later tick does not quietly start another retry.
     EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Running, now + 5000,
                                             kDefaultTimeout),
-              EventDriveOutcome::Stalled);
+              EventDriveOutcome::Aborted);
 }
 
 // Deadmines Defias Cannon, live regression (mod-dungeon-clear#39): a slow
@@ -726,6 +726,47 @@ TEST(DungeonEventAdvance, DeadminesCannonCustomTimeoutRewindsThenFails)
 // step timed out, and the 3x no-progress watchdog then stalled the run until
 // `dc skip`. A round trip longer than 30s but inside the new bound keeps the
 // hook's Running holding: no timeout, no rewind, no stall line.
+// mod-dungeon-clear#54: a party with no opener for the gunpowder chest never
+// fires the cannon. The hook keeps returning Running, so the step's bounded
+// retries are what end it, and the event must then END THE RUN with a reason
+// within five minutes, never stall for a person nobody sends.
+TEST(DungeonEventAdvance, DeadminesWithoutChestOpenerEndsRunWithinFiveMinutes)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    ASSERT_TRUE(e->abortOnFailure);
+    uint32 const timeout = e->steps[1].timeoutMs;
+
+    constexpr uint32 kDefaultTimeout = 30000;
+    uint32 const start = 1000;
+    uint32 now = start;
+    DungeonEventProgress p = Prog(e->id, 1, now);
+    EventDriveOutcome out = EventDriveOutcome::Running;
+    for (int i = 0; i < 10 && out == EventDriveOutcome::Running; ++i)
+    {
+        now += timeout;
+        out = DungeonEventExecutor::Advance(*e, p, StepResult::Running, now, kDefaultTimeout);
+        if (out != EventDriveOutcome::Running)
+            break;
+        // The retry walks back onto the cannon (a few seconds), then fires again.
+        now += 5000;
+        ASSERT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Done, now, kDefaultTimeout),
+                  EventDriveOutcome::Running);
+    }
+    EXPECT_EQ(out, EventDriveOutcome::Aborted);
+    EXPECT_LT(now - start, 5u * 60u * 1000u) << "the run must end within five minutes";
+}
+
+// A cannon step the hook reports Blocked ends the run at once (#54).
+TEST(DungeonEventAdvance, DeadminesBlockedCannonEndsRunAtOnce)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
+    ASSERT_NE(e, nullptr);
+    DungeonEventProgress p = Prog(e->id, 1, 1000);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, p, StepResult::Blocked, 1000, 30000),
+              EventDriveOutcome::Aborted);
+}
+
 TEST(DungeonEventAdvance, DeadminesCannonSlowChestRoundTripDoesNotStall)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(36, 1);
@@ -883,7 +924,7 @@ TEST(DungeonEventAdvance, DeadminesRefusedCannonUseReportsOnEachBoundedAttempt)
             DungeonEventExecutor::Advance(*e, p, StepResult::Running, now, timeout);
         if (attempt == e->steps[1].timeoutRetries)
         {
-            EXPECT_EQ(outcome, EventDriveOutcome::Stalled);
+            EXPECT_EQ(outcome, EventDriveOutcome::Aborted);
             EXPECT_EQ(p.stepIndex, 1u);
             break;
         }

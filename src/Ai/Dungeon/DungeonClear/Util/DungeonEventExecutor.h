@@ -32,6 +32,7 @@ enum class EventDriveOutcome : uint8
     Completed,  // all steps done — latch the anchor cleared and advance
     Stalled,    // a required step is blocked/failed — stall for the human
     Skipped,    // an optional step failed — latch cleared and advance anyway
+    Aborted,    // a required step failed; disable the run with a reason
 };
 
 // Per-run progress through one event, owned by a DungeonClear value (leader-
