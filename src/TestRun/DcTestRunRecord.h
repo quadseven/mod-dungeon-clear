@@ -144,7 +144,8 @@ namespace DcTestRunRecord
         //     running event filled — DcRunState::SetTestExtra). On a scenario
         //     run bossesTotal / bossRoster count the FOCUS only, so do not
         //     compare them with a full-dungeon run of the same map.
-        std::uint32_t schema = 13;
+        // 14: added excludeMask (`exclude=`) and startBoss (`from=`).
+        std::uint32_t schema = 14;
         std::string runId;
         std::string planId;       // owning `.dc test plan`, "" for ad-hoc runs
         std::string dungeon;      // registry token
@@ -158,6 +159,11 @@ namespace DcTestRunRecord
         // records; read comp[].length there.
         std::uint32_t size = 0;
         std::uint32_t compSeed = 0;  // seed BuildComp rolled this comp from (for replay)
+        // `exclude=`: DcTestComp::ClassBit of every class left out of the draw. A
+        // replay needs it with compSeed to roll the same party. 0 = none.
+        std::uint32_t excludeMask = 0;
+        // `from=`: the boss the run began at, "" when it began at the entrance.
+        std::string startBoss;
         // Gear ceiling the bots were rolled to, already resolved against the
         // AutoGear* conf values (0 ilvl = uncapped; quality is 1..5). Both stay
         // 0 on roster runs, which are never re-geared. The pair belongs in the

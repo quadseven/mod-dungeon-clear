@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "TestRun/DcTestGearTiers.h"
+#include "TestRun/DcTestStartOptions.h"
 
 // Pure kernel for `.dc test plan` campaigns: a plan keeps up to `concurrent`
 // test runs in flight until `total` have completed, then the outcomes are
@@ -74,6 +75,9 @@ namespace DcTestPlan
         // per-child on purpose: a campaign exists to compare runs against each
         // other, which only means anything at one ceiling.
         DcTestGearTiers::Spec gear;
+        // exclude= / from=, plan-wide for the same reason: every child runs the
+        // same classes-out, same-starting-boss setup, or the runs do not compare.
+        DcTestStartOptions::Options start;
     };
 
     struct Counters
@@ -205,7 +209,8 @@ namespace DcTestPlan
     std::vector<bool> EligibleEntries(Spec const& s, bool guardActive);
 
     // `.dc test plan start <token> [heroic] total=N [concurrent=N] [level=N]
-    // [seed=N] [size=N] [ilvl=N|none] [quality=N|epic|…]`, or
+    // [seed=N] [size=N] [ilvl=N|none] [quality=N|epic|…] [exclude=<class>,…]
+    // [from=<boss>]`, or
     // `.dc test plan start pool=<token[:heroic|:hc]>,… [total=0|N] [pick=bag|random] …`.
     // Fills the whole Spec except planId (and the pool entries' size /
     // resetSensitive, which need the catalogue). ok is false with a

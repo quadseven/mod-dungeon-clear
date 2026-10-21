@@ -5,11 +5,14 @@
 
 #include "TestRun/DcTestRunManager.h"
 
+#include <algorithm>
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <unordered_set>
 
 #include "CharacterCache.h"
+#include "DBCStores.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
 #include "ObjectMgr.h"
@@ -18,6 +21,11 @@
 #include "Playerbots.h"
 #include "PlayerbotMgr.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
 #include "TestRun/DcTestComp.h"
@@ -44,11 +52,127 @@ DcTestRunManager& DcTestRunManager::Instance()
     return instance;
 }
 
+namespace
+{
+    // The dungeon's boss list as `from=` sees it: the same auto-derived list plus
+    // roster patch the run builds (DungeonBossesValue), in progression order,
+    // read without a map so it exists before the instance does. Wing-isolated
+    // maps keep only the row's wing. Each anchor carries the spot the party can
+    // be dropped at to begin there: an objective's own position, or the first
+    // waypoint of a boss's registered route.
+    std::vector<DcTestStartOptions::Anchor> FromAnchors(DcTestDungeonRegistry::Row const& row,
+                                                        bool heroic)
+    {
+        Difficulty const diff = heroic ? DUNGEON_DIFFICULTY_HEROIC : DUNGEON_DIFFICULTY_NORMAL;
+        std::vector<DungeonBossInfo> bosses = BossRosterRegistry::Apply(
+            row.mapId, DcDiffKey::Dungeon(diff), BossSpawnIndex::Get(row.mapId, diff));
+
+        // Wing-isolated maps keep only the row's wing, the way DungeonBossesValue
+        // narrows the live list: an Explicit-select map (Blackrock Spire) takes
+        // the wing whose token is the row's, a Proximity one (Dire Maul,
+        // Scarlet Monastery) the wing the row names. A connected map is not split.
+        std::unordered_set<uint32> wingKeep;
+        bool filterWing = false;
+        if (DungeonWingLayout const* layout = DungeonWingRegistry::Get(row.mapId);
+            layout && layout->isolated)
+        {
+            if (layout->select == WingSelect::Explicit)
+            {
+                if (DungeonWing const* wing = DungeonWingRegistry::FindWing(*layout, row.token))
+                {
+                    bosses = DcRunWing::FilterToWing(bosses, *wing);
+                }
+            }
+            else if (row.wing[0] != '\0')
+            {
+                std::string const want = row.wing;
+                for (DungeonWing const& wing : layout->wings)
+                    if (wing.name.find(want) != std::string::npos)
+                    {
+                        wingKeep.insert(wing.bossEntries.begin(), wing.bossEntries.end());
+                        filterWing = true;
+                    }
+            }
+        }
+
+        std::vector<DcTestStartOptions::Anchor> out;
+        for (DungeonBossInfo const& b : bosses)
+        {
+            DcTestStartOptions::Anchor a;
+            a.name = b.name;
+            a.entry = b.entry;
+            a.isBoss = b.kind == DungeonAnchorKind::Boss;
+            if (a.isBoss && filterWing && !wingKeep.count(b.entry))
+                continue;
+            if (!a.isBoss)
+            {
+                a.hasStart = true;
+                a.x = b.x;
+                a.y = b.y;
+                a.z = b.z;
+            }
+            else if (std::vector<WaypointHint> const* route =
+                         DungeonClearRouteRegistry::Get(row.mapId, diff, b.entry);
+                     route && !route->empty())
+            {
+                a.hasStart = true;
+                a.x = route->front().x;
+                a.y = route->front().y;
+                a.z = route->front().z;
+            }
+            out.push_back(std::move(a));
+        }
+        return out;
+    }
+}
+
+bool DcTestRunManager::ResolveStartOptions(DcTestDungeonRegistry::Row const& row, bool heroic,
+                                           uint32 levelOverride, uint32 size,
+                                           DcTestStartOptions::Options const& opts,
+                                           DcTestStartOptions::StartPlan* startOut,
+                                           std::string* err)
+{
+    if (opts.excludeMask != 0)
+    {
+        // The level decides whether death knights are on the table, so use the
+        // one the run will be created with (Create clamps the override at 80).
+        uint32 const level = levelOverride ? std::min<uint32>(levelOverride, 80u)
+                                           : (heroic ? row.heroicLevel : row.recommendedLevel);
+        DcTestComp::Roster const roster = DcTestRunJob::RosterFor(row, level);
+        if (!DcTestStartOptions::CheckExclude(opts.excludeMask, roster, size, err))
+            return false;
+    }
+
+    if (!opts.startBoss.empty())
+    {
+        // A scenario row already names where its run begins (its focus).
+        if (DcTestDungeonRegistry::IsScenario(row))
+        {
+            if (err)
+                *err = "from= does not apply to a scenario row (its focus is its start)";
+            return false;
+        }
+        // A raid's difficulty ids and encounter ordering are a different space;
+        // `from=` is built and checked for 5-man dungeons only.
+        MapEntry const* mapEntry = sMapStore.LookupEntry(row.mapId);
+        if (mapEntry && mapEntry->IsRaid())
+        {
+            if (err)
+                *err = "from= is not supported for raid runs";
+            return false;
+        }
+        if (!DcTestStartOptions::ResolveFrom(FromAnchors(row, heroic), opts.startBoss, startOut,
+                                             err))
+            return false;
+    }
+    return true;
+}
+
 bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
                              uint32 levelOverride, uint32 seed, bool heroic,
                              DcTestGearTiers::Spec const& gear, std::string* msg,
                              std::string const& planId, StartErr* errOut, std::string* runIdOut,
-                             uint32 size)
+                             uint32 size, DcTestStartOptions::Options const& opts)
 {
     if (errOut)
         *errOut = StartErr::None;
@@ -81,6 +205,12 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
         return fail(StartErr::UnknownDungeon,
                     "'" + std::string(row->token) + "' admits at most " + std::to_string(cap) +
                     " players (size=" + std::to_string(runSize) + ")");
+    // exclude= / from=: refused here, before any bot is claimed, so a bad option
+    // never costs a pool character or a concurrency slot.
+    DcTestStartOptions::StartPlan startPlan;
+    std::string optErr;
+    if (!ResolveStartOptions(*row, heroic, levelOverride, size, opts, &startPlan, &optErr))
+        return fail(StartErr::BadOption, optErr);
 
     if (!gm || !GET_PLAYERBOT_MGR(gm))
         return fail(StartErr::NoMgr, "no playerbot manager on this account");
@@ -101,7 +231,7 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     std::string err;
     std::unique_ptr<DcTestRunJob> job =
         DcTestRunJob::Create(gm, *row, levelOverride, seed, size, heroic, gear, _reservedGuids,
-                             planId, &err);
+                             planId, &err, opts, opts.startBoss.empty() ? nullptr : &startPlan);
     if (!job)
         return fail(StartErr::PoolExhausted, err);
 

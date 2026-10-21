@@ -128,26 +128,60 @@ namespace DcTestComp
     };
     Quota RoleQuota(std::size_t size);
 
+    // Roster for a run: death knights only for a WotLK row (`expansion` is the
+    // dungeon's Map.dbc expansion id, 2 = Wrath) whose LEVEL reaches
+    // kDeathKnightMinLevel. One definition for the draw, the substitution and
+    // the `exclude=` check, so they can never disagree about who is on the table.
+    inline Roster RosterFor(std::uint32_t expansion, std::uint32_t level)
+    {
+        return expansion >= 2 && level >= kDeathKnightMinLevel ? Roster::WithDeathKnights
+                                                                : Roster::NoDeathKnights;
+    }
+
+    // Classes a run may be told to leave out (`exclude=<class>`), as a bitmask
+    // with bit `classId` set. The names are DcBotProvisioning::ClassToken's
+    // spellings ("rogue", "deathknight", ...), lower case; "dk" is accepted for
+    // death knight. 0 for a name no class answers to.
+    inline constexpr std::uint32_t ClassBit(std::uint8_t classId)
+    {
+        return 1u << classId;
+    }
+    std::uint8_t ClassIdFromName(std::string_view name);
+
+    // The role `exclude` leaves unfillable ("tank" | "heal" | "dps"), or nullptr
+    // when every role can still be fielded. `size` 0 is the classic 5-man, whose
+    // classes are all distinct, so a role also counts as unfillable when the
+    // earlier draws can take every class it had left; a sized comp may repeat a
+    // class, so there a role only needs one class that is not excluded.
+    char const* UnfillableRole(std::uint32_t excludeMask, Roster roster, std::size_t size);
+
     // Deterministically pick a party for the given seed: one tank, one healer,
     // three DPS, all five on DISTINCT classes (maximises class diversity and
     // keeps the addclass-pool draw from needing several chars of one class).
     // Pure — no globals, no I/O — so the same seed always yields the same comp.
-    // `roster` is the only thing that changes which classes are on the table.
-    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed, Roster roster);
+    // `roster` and `excludeMask` (ClassBit of every class to leave out; 0 = none)
+    // are the only things that change which classes are on the table. The caller
+    // refuses a mask UnfillableRole flags: a role with no class left cannot be
+    // drawn.
+    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed, Roster roster,
+                                           std::uint32_t excludeMask = 0);
 
     // Sized form: RoleQuota(size) slots, seed-deterministic. Distinct classes
     // while the pools allow, then duplicates spread as evenly as possible (9
     // classes — 10 with death knights — < 25 slots; 6 healers over 4 heal
     // classes force duplicates) — the least-used class of the role pool is
     // always preferred. size is clamped to [kMinPartySize, kMaxPartySize].
-    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size, Roster roster);
+    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size, Roster roster,
+                                std::uint32_t excludeMask = 0);
 
     // The pool backing a role token ("tank" | "heal" | "dps"), for callers that
     // must substitute an alternative class when the drawn one has no available
     // pool character. Empty for an unknown token. Takes `roster` for the same
     // reason BuildComp does: a substitution must not smuggle a death knight
-    // into a run the draw itself would never have given one to.
-    std::vector<Slot> RolePool(std::string_view role, Roster roster);
+    // into a run the draw itself would never have given one to. `excludeMask`
+    // likewise keeps an `exclude=` class out of the substitutes.
+    std::vector<Slot> RolePool(std::string_view role, Roster roster,
+                               std::uint32_t excludeMask = 0);
 }
 
 #endif  // _PLAYERBOT_DCTESTCOMP_H
