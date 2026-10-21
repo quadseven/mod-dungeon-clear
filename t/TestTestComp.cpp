@@ -326,3 +326,116 @@ TEST(DcTestComp, WrathCompKeepsDistinctClassesAndRoleLayout)
         EXPECT_EQ(classes.size(), kPartySize) << "duplicate class, seed=" << seed;
     }
 }
+
+// --- exclude=<class> ------------------------------------------------------------
+
+namespace
+{
+    constexpr std::uint8_t kRogue = 4;
+
+    bool HasClass(std::vector<Slot> const& comp, std::uint8_t classId)
+    {
+        return std::any_of(comp.begin(), comp.end(),
+                           [classId](Slot const& s) { return s.classId == classId; });
+    }
+}
+
+// `exclude=rogue` keeps the class out of every role, over many seeds, in the
+// classic 5-man and in a raid-sized comp, with and without death knights.
+TEST(DcTestComp, ExcludedClassIsNeverFielded)
+{
+    std::uint32_t const mask = DcTestComp::ClassBit(kRogue);
+    for (std::uint32_t seed = 1; seed <= 200; ++seed)
+    {
+        for (Roster roster : {Roster::NoDeathKnights, Roster::WithDeathKnights})
+        {
+            auto const c = BuildComp(seed, roster, mask);
+            EXPECT_FALSE(HasClass({c.begin(), c.end()}, kRogue))
+                << "rogue fielded in a 5-man, seed=" << seed;
+            EXPECT_FALSE(HasClass(BuildComp(seed, 25, roster, mask), kRogue))
+                << "rogue fielded in a raid comp, seed=" << seed;
+        }
+    }
+}
+
+// Pure: the same seed and the same options give the same party, and an excluded
+// run keeps the usual shape (tank, healer, three DPS, all distinct classes).
+TEST(DcTestComp, ExcludedCompIsDeterministicAndKeepsItsShape)
+{
+    std::uint32_t const mask = DcTestComp::ClassBit(kRogue) | DcTestComp::ClassBit(5);
+    for (std::uint32_t seed : {1u, 7u, 42u, 1000u, 0xABCDEF12u})
+    {
+        auto const a = BuildComp(seed, Roster::WithDeathKnights, mask);
+        auto const b = BuildComp(seed, Roster::WithDeathKnights, mask);
+        std::set<std::uint8_t> classes;
+        for (std::size_t i = 0; i < kPartySize; ++i)
+        {
+            EXPECT_EQ(a[i].classId, b[i].classId) << "seed=" << seed << " slot=" << i;
+            EXPECT_STREQ(a[i].specName, b[i].specName) << "seed=" << seed << " slot=" << i;
+            classes.insert(a[i].classId);
+        }
+        EXPECT_STREQ(a[0].role, "tank");
+        EXPECT_STREQ(a[1].role, "heal");
+        EXPECT_EQ(classes.size(), kPartySize) << "duplicate class, seed=" << seed;
+    }
+}
+
+// No exclusion is not a different draw: the mask only filters.
+TEST(DcTestComp, EmptyExcludeMaskDrawsTheSameComp)
+{
+    for (std::uint32_t seed : {1u, 7u, 99u})
+    {
+        auto const plain = BuildComp(seed, Roster::NoDeathKnights);
+        auto const masked = BuildComp(seed, Roster::NoDeathKnights, 0u);
+        for (std::size_t i = 0; i < kPartySize; ++i)
+            EXPECT_EQ(plain[i].classId, masked[i].classId) << "seed=" << seed << " slot=" << i;
+    }
+}
+
+// A substitute class tried when a drawn one has no free character must honor the
+// exclusion too.
+TEST(DcTestComp, RolePoolHonorsExclusion)
+{
+    for (char const* role : {"tank", "heal", "dps"})
+        for (Slot const& s : RolePool(role, Roster::WithDeathKnights,
+                                      DcTestComp::ClassBit(2) | DcTestComp::ClassBit(kRogue)))
+        {
+            EXPECT_NE(s.classId, 2) << role;
+            EXPECT_NE(s.classId, kRogue) << role;
+        }
+}
+
+TEST(DcTestComp, ClassNamesResolve)
+{
+    EXPECT_EQ(DcTestComp::ClassIdFromName("rogue"), kRogue);
+    EXPECT_EQ(DcTestComp::ClassIdFromName("deathknight"), kDk);
+    EXPECT_EQ(DcTestComp::ClassIdFromName("dk"), kDk);
+    EXPECT_EQ(DcTestComp::ClassIdFromName("druid"), 11);
+    EXPECT_EQ(DcTestComp::ClassIdFromName("bard"), 0);
+}
+
+// The role an exclusion cannot fill is named. Tanks are warrior, paladin, druid
+// (and a death knight on Wrath); healers are priest, paladin, shaman, druid.
+TEST(DcTestComp, UnfillableRoleNamesTheRole)
+{
+    auto bits = [](std::initializer_list<std::uint8_t> classes)
+    {
+        std::uint32_t m = 0;
+        for (std::uint8_t c : classes)
+            m |= DcTestComp::ClassBit(c);
+        return m;
+    };
+    EXPECT_EQ(DcTestComp::UnfillableRole(0, Roster::NoDeathKnights, 0), nullptr);
+    EXPECT_EQ(DcTestComp::UnfillableRole(bits({kRogue}), Roster::NoDeathKnights, 0), nullptr);
+    EXPECT_STREQ(DcTestComp::UnfillableRole(bits({1, 2, 11}), Roster::NoDeathKnights, 0), "tank");
+    // A death knight keeps the tank role open on a Wrath run.
+    EXPECT_EQ(DcTestComp::UnfillableRole(bits({1, 2, 11}), Roster::WithDeathKnights, 0), nullptr);
+    EXPECT_STREQ(DcTestComp::UnfillableRole(bits({5, 2, 7, 11}), Roster::NoDeathKnights, 0), "heal");
+    // Paladin, druid and warrior out leaves no tank; priest, shaman out leaves
+    // paladin and druid to heal, which the classic comp can still split.
+    EXPECT_EQ(DcTestComp::UnfillableRole(bits({5, 7}), Roster::NoDeathKnights, 0), nullptr);
+    // Only the druid can heal and the druid is the only tank left: the classic
+    // comp needs two distinct classes, a sized comp does not.
+    EXPECT_STREQ(DcTestComp::UnfillableRole(bits({1, 2, 5, 7}), Roster::NoDeathKnights, 0), "heal");
+    EXPECT_EQ(DcTestComp::UnfillableRole(bits({1, 2, 5, 7}), Roster::NoDeathKnights, 10), nullptr);
+}
