@@ -86,10 +86,6 @@ struct RoomAggroBoss
     // her wake wakes the boss. 0 => use the computed sphere alone (every other row).
     float  skirtRadius{0.0f};
 
-    // Count elites only. Set on a synthesized boss-neighbour room
-    // (RoomAggroRegistry::NeighbourRoom), never on an authored row: an authored
-    // room is the script's own pull, which takes every hostile in it.
-    bool   elitesOnly{false};
     // Optional absolute world-XY box every advanced-pull camp must stand inside
     // while this boss's room is being pre-cleared. The skirt pushes the camp away
     // from the boss, and the drag walks it back along the trail, i.e. out of the
@@ -133,6 +129,14 @@ struct RoomAggroBoss
     // sk-20261019-003633 was a wake there with 16-21 balcony mobs still alive to
     // answer his CallForHelp. 0 (every other row) = no boss-side ordering.
     float  bossSideLastRadius{0.0f};
+
+    // Count elites only. Set on a synthesized boss-neighbour room
+    // (RoomAggroRegistry::NeighbourRoom), never on an authored row: an authored
+    // room is the script's own pull, which takes every hostile in it. LAST, and
+    // set by name only: the authored rows initialize by position, and a field
+    // ahead of hasCampBox shifted every camp box and the Emperor's
+    // detourReachable / bossSideLastRadius one slot.
+    bool   elitesOnly{false};
 };
 
 class RoomAggroRegistry

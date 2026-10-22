@@ -1367,16 +1367,18 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            // 3. Grant the item. A bot never ran Chromie's questline, and on this
-            //    fork her gossip's grant (spell 49591, a spell_dbc row) is the only
-            //    other source — so the step must not depend on it having landed.
+            // 3. The item is the bot's own. The module creates no item a player
+            //    could not earn (DcNoGrant): the Arcane Disruptor comes from
+            //    Chromie's gossip (spell 49591), as it does for a player. A bot
+            //    without one waits here, and the step's timeout ends the wait.
             Item* item = bot->GetItemByEntry(step.itemId);
             if (!item)
             {
-                bot->AddItem(step.itemId, 1);
-                item = bot->GetItemByEntry(step.itemId);
-                if (!item)
-                    return StepResult::Running;  // bags full this tick — retry
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step UseItemAt: no item {} in the bags; "
+                          "waiting (the module creates none)",
+                          bot->GetName(), step.itemId);
+                return StepResult::Running;
             }
 
             // 4. WAIT OUT THE ITEM'S OWN COOLDOWN. 37888 carries a 10s

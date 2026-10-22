@@ -145,9 +145,9 @@ void RegisterCullingOfStratholmeEvents(std::vector<DungeonEvent>& out)
     // second option anywhere — 9586's "skip us ahead" — is condition-gated on
     // quest 13151 REWARDED, which a bot never has, so it is not even in the menu).
     //
-    // SkipIfTargetMissing because the whole event must not deadlock on her: the
-    // crate steps grant the item themselves, so a dead or missing Chromie costs
-    // nothing but her dialogue.
+    // SkipIfTargetMissing because the whole event must not deadlock on her. The
+    // crate steps do NOT make the item (DcNoGrant): with Chromie dead or missing
+    // the tank has no Disruptor, each crate step waits, and its timeout ends it.
     //
     // THEN THE FIVE CRATES, in road order. Each step walks to its crate, waits out
     // the Disruptor's 10-second cooldown, uses it, and latches on the Plagued

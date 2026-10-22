@@ -5305,7 +5305,8 @@ namespace DcOculus
     constexpr float  GIVER_SCAN     = 60.0f;
 
     // A member on Drakos's ring still without its essence this long into the
-    // muster is handed it (FABRICATE_ESSENCE_OFF_RING's item). The on-foot tank's
+    // muster stops waiting quietly: FabricateEssence asks the giver again, loudly
+    // (no item is made, DcNoGrant). The on-foot tank's
     // muster has no timeout of its own, so a giver that never answers must not be
     // able to hold the whole party. Live tp-20260913-003200-1 (tr-…-3): the tank
     // stood 63.9yd from Belgaristrasz, outside GIVER_SCAN, and four mounted riders
@@ -5354,10 +5355,10 @@ namespace DcOculus
         return isTank ? Colour::Ruby : (isHealer ? Colour::Emerald : Colour::Amber);
     }
 
-    // Essences come from gossip. A member that lacks one while it is NOT standing
-    // on Drakos's ring (the givers never leave it) is handed the item instead,
-    // loudly: walking it back is not possible from an island, and the item is
-    // exactly what the gossip would have produced.
+    // Essences come from gossip, and only from gossip: the module makes no item
+    // (DcNoGrant). FabricateEssence, the action this enables, no longer hands the
+    // item over; it warns and asks the giver again, or walks to the giver's post.
+    // A member off the ring without an essence stays on foot.
     constexpr bool FABRICATE_ESSENCE_OFF_RING = true;
 
     // --- gameobjects -----------------------------------------------------------------

@@ -136,12 +136,15 @@ namespace DcDungeonAccess
             }
         }
 
+        // Items are not granted, not even here (DcNoGrant: the module creates no
+        // item). A bot without a required key is logged and stays out.
         for (ProgressionRequirement const* req : ar->items)
         {
             if (!applies(req) || bot->HasItemCount(req->id, 1))
                 continue;
-            if (bot->AddItem(req->id, 1))
-                Append(summary, Acore::StringFormat("item {}", req->id));
+            LOG_INFO("playerbots.dungeonclear",
+                     "ACCESS {} lacks item {} for map {}: not granted", bot->GetName(), req->id,
+                     mapId);
         }
 
         if (!summary.empty())

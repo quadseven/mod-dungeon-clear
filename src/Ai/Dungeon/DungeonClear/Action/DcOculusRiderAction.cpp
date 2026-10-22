@@ -442,19 +442,22 @@ bool DungeonClearOculusRiderAction::Execute(Event /*event*/)
         }
 
         case RiderAction::FabricateEssence:
-            bot->AddItem(colour.essence, 1);
-            if (in.island == SITE_R1_GIVERS)
-                LOG_WARN("playerbots.dungeonclear",
-                         "[DC:{}] DcOc WARN essence fabricated: {} has had no {} essence for {}s on Drakos's "
-                         "ring (giver {}, {:.1f}yd, gossip flag {}; post {:.1f}yd) — handing over item {}",
-                         bot->GetName(), bot->GetName(), colour.name, GIVER_WAIT_MS / 1000,
-                         in.giverPresent ? "in scan" : "NOT in scan", in.giverDist, in.giverFlagged ? 1 : 0,
-                         in.postDist, colour.essence);
-            else
-                LOG_WARN("playerbots.dungeonclear",
-                         "[DC:{}] DcOc WARN essence fabricated: {} has no {} essence and is not on Drakos's ring "
-                         "(the givers never leave it) — handing over item {}",
-                         bot->GetName(), bot->GetName(), colour.name, colour.essence);
+            // No essence is made from nothing (DcNoGrant): the givers' gossip is
+            // the only source, as it is for a player. So the long wait asks the
+            // giver again, or walks back to the post when none is in the scan.
+            if (st.Throttled(DcThrottle::OcGossip, GOSSIP_RETRY_MS))
+                return true;
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] DcOc WARN no {} essence after {}s (giver {}, {:.1f}yd, gossip flag {}; "
+                     "post {:.1f}yd): asking the giver again, the module creates no item",
+                     bot->GetName(), colour.name, GIVER_WAIT_MS / 1000,
+                     in.giverPresent ? "in scan" : "NOT in scan", in.giverDist, in.giverFlagged ? 1 : 0,
+                     in.postDist);
+            if (!giver)
+                return WalkTo(bot, botAI, st, colour.postX, colour.postY, colour.postZ);
+            if (bot->isMoving())
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+            DungeonEventExecutor::SelectGossip(bot, giver, colour.gossipOption);
             return true;
 
         case RiderAction::LeaveMount:
