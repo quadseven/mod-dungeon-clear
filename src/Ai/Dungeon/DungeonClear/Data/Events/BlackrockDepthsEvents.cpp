@@ -1436,16 +1436,6 @@ void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
             { 9543, 12 },  // Ribbly Screwspigot
             { 9502, 13 },  // Phalanx
         };
-        // THE GRIM GUZZLER'S THREE ARE NOT FOUGHT. Phalanx (9502, bit 12) and
-        // Ribbly Screwspigot (9543, bit 13) stand friendly (factions 35 and
-        // 735) and Plugger Spazzring (9499, bit 14) neutral (674), the bar's
-        // bartender. Phalanx turns hostile only when Private Rocknot, given
-        // three Dark Iron Ales bought from Plugger, breaks the bar door
-        // (npc_rocknot); Ribbly only when a player denounces him (gossip
-        // 1970). Left in the roster each is an anchor the clear can never
-        // satisfy, and the run parks on it as it did on Dire Maul's Cho'Rush
-        // and Maraudon's Rotgrip. The bar's events are a pass of their own.
-        p.remove = {9502, 9543, 9499};
         t.push_back(std::move(p));
     }
 }

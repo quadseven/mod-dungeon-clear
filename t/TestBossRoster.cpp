@@ -439,70 +439,56 @@ TEST(BossRosterRegistryTest, ShadowforgeLockSortsBetweenBaelGarAndAngerforge)
     EXPECT_EQ(out[angerIdx].encounterIndex, 9u) << "Angerforge keeps kill-bit 9";
 }
 
-// Blackrock Depths' back half: the Tomb of the Seven objective (event 3)
-// shares the Seven's bit (16, credited to Anger'rel) and the Shadowforge
-// Braziers objective (event 4) Magmus' bit (17). The objective-before-boss
-// tie-break puts each ahead of the boss it unlocks: Anger'rel turns hostile
-// only on Doom'rel's challenge, and Magmus stands behind the Golem Room doors
-// the braziers open. The Grim Guzzler's three (Phalanx, Ribbly Screwspigot,
-// Plugger Spazzring) are friendly or neutral until the bar's own events and
-// leave the roster, as Cho'Rush and Rotgrip did.
-TEST(BossRosterRegistryTest, BlackrockDepthsBackHalfIsOrderedAndTheBarIsLeftOut)
+// Blackrock Depths' back half: the Tomb of the Seven objective (event 6)
+// shares the Seven's bit (16, credited to Anger'rel) and the two Lyceum
+// brazier objectives (events 7 and 8) Magmus' bit (17). The objective-before-
+// boss tie-break puts each ahead of the boss it unlocks: Anger'rel turns
+// hostile only on Doom'rel's challenge, and Magmus stands behind the Golem Room
+// doors the braziers open. The Grim Guzzler's order is TestRunWing's.
+TEST(BossRosterRegistryTest, BlackrockDepthsBackHalfIsOrdered)
 {
     std::vector<DungeonBossInfo> base = {
         Boss(9156, 15, "Ambassador Flamelash", 230),
         Boss(9035, 16, "Anger'rel", 230),
         Boss(9938, 17, "Magmus", 230),
         Boss(9019, 18, "Emperor Dagran Thaurissan", 230),
-        Boss(9502, 12, "Phalanx", 230),
-        Boss(9543, 13, "Ribbly Screwspigot", 230),
-        Boss(9499, 14, "Plugger Spazzring", 230),
-        Boss(9537, 11, "Hurley Blackbreath", 230),
     };
     std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
 
-    int flamelash = -1, tomb = -1, angerrel = -1, braziers = -1, magmus = -1, emperor = -1;
+    int flamelash = -1, tomb = -1, angerrel = -1, south = -1, north = -1, magmus = -1, emperor = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
         DungeonBossInfo const& b = out[i];
-        EXPECT_NE(b.entry, 9502u) << "Phalanx must leave the roster";
-        EXPECT_NE(b.entry, 9543u) << "Ribbly Screwspigot must leave the roster";
-        EXPECT_NE(b.entry, 9499u) << "Plugger Spazzring must leave the roster";
         if (b.entry == 9156)
             flamelash = i;
-        if (b.kind == DungeonAnchorKind::Objective && b.eventId == 3u)
+        if (b.kind == DungeonAnchorKind::Objective && b.eventId == 6u)
             tomb = i;
         if (b.entry == 9035)
             angerrel = i;
-        if (b.kind == DungeonAnchorKind::Objective && b.eventId == 4u)
-            braziers = i;
+        if (b.kind == DungeonAnchorKind::Objective && b.eventId == 7u)
+            south = i;
+        if (b.kind == DungeonAnchorKind::Objective && b.eventId == 8u)
+            north = i;
         if (b.entry == 9938)
             magmus = i;
         if (b.entry == 9019)
             emperor = i;
     }
     ASSERT_GE(tomb, 0) << "Tomb of the Seven objective missing";
-    ASSERT_GE(braziers, 0) << "Shadowforge Braziers objective missing";
+    ASSERT_GE(south, 0) << "Lyceum south brazier objective missing";
+    ASSERT_GE(north, 0) << "Lyceum north brazier objective missing";
     ASSERT_GE(flamelash, 0);
     ASSERT_GE(angerrel, 0);
     ASSERT_GE(magmus, 0);
     ASSERT_GE(emperor, 0);
     EXPECT_LT(flamelash, tomb);
     EXPECT_LT(tomb, angerrel) << "Doom'rel's challenge comes before the Seven";
-    EXPECT_LT(angerrel, braziers);
-    EXPECT_LT(braziers, magmus) << "the braziers come before Magmus";
+    EXPECT_LT(angerrel, south);
+    EXPECT_LT(south, north) << "same-index objectives keep their order";
+    EXPECT_LT(north, magmus) << "the braziers come before Magmus";
     EXPECT_LT(magmus, emperor);
 
-    // Hurley Blackbreath is hostile where he stands and stays a boss.
-    bool hurley = false;
-    for (DungeonBossInfo const& b : out)
-        hurley = hurley || b.entry == 9537;
-    EXPECT_TRUE(hurley);
-
-    // And the brain's expectation (mod-overseer's guild run clears on it) holds
-    // no bit the clear can never credit.
     uint32 const expected = DungeonBossesExpectedEncounterMask(out);
-    EXPECT_EQ(expected & ((1u << 12) | (1u << 13) | (1u << 14)), 0u);
     EXPECT_NE(expected & (1u << 16), 0u) << "the Seven";
     EXPECT_NE(expected & (1u << 17), 0u) << "Magmus";
     EXPECT_NE(expected & (1u << 18), 0u) << "the Emperor";

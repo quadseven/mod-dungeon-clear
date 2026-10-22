@@ -1214,61 +1214,12 @@ TEST(DungeonEventIntegrityTest, RingOfLawGarrisonsTheCentreAndCanRestartItself)
         << "the Ring of Law hold references unregistered hook " << hold->hookId;
 }
 
-// The BRD Tomb of the Seven (event 3): Doom'rel's challenge taken at his
-// spawn, then a come-to-you hold until TYPE_TOMB_OF_SEVEN (4) reads DONE (3),
-// with the start hook running inside the hold because CheckTombReset puts the
-// tomb back to NOT_STARTED when a released dwarf idles 15 seconds.
-TEST(DungeonEventIntegrityTest, TombOfTheSevenIsChallengedAndHeldUntilDone)
+// The BRD Shadowforge Braziers ride lock 799, so a brazier click is a torch
+// holder's (EventClickNeedsKey). Upstream's Lyceum events 7 and 8 light them
+// with looted torches (TestDungeonEvent's BlackrockLyceumBrazierEventShapes);
+// the Tomb of the Seven is event 6 there.
+TEST(DungeonEventIntegrityTest, ShadowforgeBraziersAreATorchHoldersClick)
 {
-    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 230, /*eventId*/ 3);
-    ASSERT_NE(ev, nullptr) << "Blackrock Depths (230) event 3 (Tomb of the Seven) is missing";
-    EXPECT_EQ(ev->activation, EventActivation::Anchored);
-    EXPECT_TRUE(ev->persistent) << "a dwarf fight is a combat gap; it must not rewind the event";
-
-    bool challenged = false;
-    EventStep const* hold = nullptr;
-    for (EventStep const& s : ev->steps)
-    {
-        if (s.kind == EventStepKind::Custom && s.hookId == 29u)
-            challenged = true;
-        if (s.kind == EventStepKind::MoveTo && s.instanceDataId >= 0)
-            hold = &s;
-    }
-    EXPECT_TRUE(challenged) << "the event must take Doom'rel's challenge (hook 29)";
-    ASSERT_NE(hold, nullptr) << "the tomb must hold on TYPE_TOMB_OF_SEVEN";
-    EXPECT_EQ(hold->instanceDataId, 4) << "TYPE_TOMB_OF_SEVEN";
-    EXPECT_EQ(hold->instanceDataMin, 3u) << "DONE: the seventh dwarf dead";
-    EXPECT_EQ(hold->hookId, 29u) << "a reset tomb must be challenged again from inside the hold";
-    EXPECT_TRUE(ObjectiveHookRegistry::Has(29));
-}
-
-// The BRD Shadowforge Braziers (event 4): both braziers lit, then the Golem
-// Room door open, before Magmus. The braziers ride lock 799, so the click is a
-// torch holder's (EventClickNeedsKey).
-TEST(DungeonEventIntegrityTest, ShadowforgeBraziersAreLitBeforeTheGolemRoom)
-{
-    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 230, /*eventId*/ 4);
-    ASSERT_NE(ev, nullptr) << "Blackrock Depths (230) event 4 (Shadowforge Braziers) is missing";
-    EXPECT_EQ(ev->activation, EventActivation::Anchored);
-    EXPECT_TRUE(ev->persistent);
-
-    int south = -1, north = -1, door = -1;
-    for (int i = 0; i < static_cast<int>(ev->steps.size()); ++i)
-    {
-        EventStep const& s = ev->steps[i];
-        if (s.kind == EventStepKind::UseGameObject && s.goEntry == 174744u)
-            south = i;
-        if (s.kind == EventStepKind::UseGameObject && s.goEntry == 174745u)
-            north = i;
-        if (s.kind == EventStepKind::WaitForGameObjectState && s.goEntry == 170573u)
-            door = i;
-    }
-    ASSERT_GE(south, 0) << "the south brazier must be lit";
-    ASSERT_GE(north, 0) << "the north brazier must be lit";
-    ASSERT_GE(door, 0) << "the event must wait for the Golem Room door to open";
-    EXPECT_LT(south, door);
-    EXPECT_LT(north, door);
-    EXPECT_EQ(ev->steps[door].wantState, 0u) << "GO_STATE_ACTIVE: open";
     EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174744u));
     EXPECT_TRUE(DcEventDoorRegistry::EventClickNeedsKey(174745u));
 }
