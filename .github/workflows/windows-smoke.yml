@@ -44,7 +44,7 @@ on:
       - 'CMakeLists.txt'
       - '.github/workflows/windows-smoke.yml'
   push:
-    branches: [ master ]
+    branches: [ master, quadseven/prod ]
     paths:
       - 'src/**'
       - 't/**'

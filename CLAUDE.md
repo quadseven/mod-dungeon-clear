@@ -1,5 +1,12 @@
 # mod-dungeon-clear — development workflow
 
+**In the quadseven fork, `quadseven/prod` is the production branch.** It is
+upstream master plus every production fix, and the worldserver image is pinned
+to its head (infra UPSTREAM-PINS.env). Branch a module fix from
+`quadseven/prod` and open its pull request against it. An upstream sync is a
+merge of upstream master into `quadseven/prod`, never a rebase, so no
+production commit changes its sha. Read "master" below as `quadseven/prod`.
+
 These rules exist because uncommitted work was getting orphaned across sessions
 and feature branches got stacked on each other, forcing painful cherry-pick
 untangling. Follow them exactly.

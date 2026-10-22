@@ -14,7 +14,7 @@ name: testdeck
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, quadseven/prod ]
     paths:
       - 'testdeck/**'
       - '.github/workflows/testdeck.yml'

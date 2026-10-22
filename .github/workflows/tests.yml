@@ -7,10 +7,10 @@
 #
 # The pins live in the job matrix below, one leg per pin set this branch must
 # build on. `deployed` is what the image is built from today (the infra
-# UPSTREAM-PINS core and mod-playerbots SHAs), and must pass. `upstream-catchup`
-# is the next roll's pins; it is allowed to fail (continue-on-error) so a break
-# there is visible without blocking, but the catch-up cannot land until it is
-# green. Move both legs when the pins move.
+# UPSTREAM-PINS core and mod-playerbots SHAs), and must pass. `previous` is the
+# pin set before it (the fork core before the 2026-10 catch-up); it is allowed
+# to fail (continue-on-error), so a break there is visible without blocking.
+# Move both legs when the pins move.
 env:
   CORE_REPO: mod-playerbots/azerothcore-wotlk   # playerbots core fork
   # ccache is the whole game: a warm cache turns the ~1h cold build into mostly
@@ -26,7 +26,7 @@ env:
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, quadseven/prod ]
   pull_request:
   workflow_dispatch:   # allow manual runs
 
@@ -44,14 +44,14 @@ jobs:
       matrix:
         include:
           - pins: deployed
-            core_ref: 7f12e89ee5f467a50e62eba1d525eac7dc953d03
-            playerbots_repo: quadseven/mod-playerbots
-            playerbots_ref: 7a593fa254840221f1d63b7beb8d9735e55309ba
-            allow_failure: false
-          - pins: upstream-catchup
             core_ref: 8a4e76eac8c4ccebf547113afe7b51d6c3e91641
             playerbots_repo: quadseven/mod-playerbots
             playerbots_ref: 40884e9c135c1daf27ffd894a6047502a5701130
+            allow_failure: false
+          - pins: previous
+            core_ref: 7f12e89ee5f467a50e62eba1d525eac7dc953d03
+            playerbots_repo: quadseven/mod-playerbots
+            playerbots_ref: 7a593fa254840221f1d63b7beb8d9735e55309ba
             allow_failure: true
     steps:
       # 1. Assemble the tree: core at the workspace root, modules underneath.
