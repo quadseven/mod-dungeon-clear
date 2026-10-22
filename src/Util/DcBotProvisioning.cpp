@@ -13,6 +13,7 @@
 #include "PlayerbotFactory.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 namespace DcBotProvisioning
 {
@@ -78,7 +79,7 @@ namespace DcBotProvisioning
         PlayerbotFactory factory(bot, level, quality, gearScoreLimit);
 
         // Strip the equipped set first. Randomize() only wipes items when
-        // AiPlayerbot.EquipAndSpecPersistence is off (it defaults on), and
+        // Playerbots.EquipAndSpecPersistence is off (it defaults on), and
         // InitEquipment leaves a slot alone when no candidate passes the filters — so
         // a pool bot geared by an earlier run under a looser ceiling would keep those
         // pieces and the new limit would look ignored. Every test bot starts bare and

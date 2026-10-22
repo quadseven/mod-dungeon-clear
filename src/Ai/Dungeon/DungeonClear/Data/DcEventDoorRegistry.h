@@ -243,26 +243,160 @@ namespace DcEventDoorRegistry
             case 192174:  // Utgarde Pinnacle — Ymiron's Door (opens on Ymiron's death)
                 return true;
 
-            // BLACKROCK DEPTHS (230): the five doors instance_blackrock_depths
-            // caches and drives. All five ride the empty lock 85 that
-            // CanOpenSlots rates "opens for anyone", so a door-blocked tank
-            // force-opened them and walked past the encounter each one waits
-            // on:
+            // PIT OF SARON (658) — the Ice Wall, and a row authored from a
+            // MEASUREMENT rather than from a resemblance.
             //
-            //   170573 / 170574 Golem Room North / South, opened by
-            //     SetData(TYPE_LYCEUM, DONE), which go_shadowforge_brazier
-            //     sets when both Shadowforge Braziers are lit (map-230 event 4).
-            //     Magmus stands behind them.
-            //   170575 Throne Room Doors, opened by SetData(TYPE_IRON_HALL,
-            //     DONE) on Magmus' death. The Emperor stands behind them.
-            //   170576 / 170577 Tomb of the Seven, in and out, shut by
-            //     TYPE_TOMB_OF_SEVEN IN_PROGRESS (Doom'rel's challenge, map-230
-            //     event 3) and opened again on DONE, the seventh dwarf's death.
-            case 170573:  // Blackrock Depths, Golem Room North (the braziers)
-            case 170574:  // Blackrock Depths, Golem Room South (the braziers)
-            case 170575:  // Blackrock Depths, Throne Room Doors (Magmus' death)
-            case 170576:  // Blackrock Depths, Tomb of the Seven, entrance
-            case 170577:  // Blackrock Depths, Tomb of the Seven, exit
+            // 201885 Ice Wall (932.27, -80.67, 591.68) is a real
+            // GAMEOBJECT_TYPE_DOOR with lockId 0 and autoCloseTime 0, spawned
+            // state 1 (SHUT) and opened ONCE, permanently, by
+            // instance_pit_of_saron the moment Garfrost and Ick are both DONE —
+            // from SetData on either boss, and again from OnGameObjectCreate so a
+            // reload re-opens it. There is no auto-close and therefore no
+            // IsSelfClearing case.
+            //
+            // It is on the DESIGNED LEG, not beside it: the wave-2 ambush is
+            // fought on the ground it stands in, ~9yd from the near spawn line, so
+            // the authored route passes well inside DungeonClearBlockingDoorValue's
+            // 12yd same-floor fallback band.
+            //
+            // A BOT MUST NEVER CLICK IT. Lock-free type-0 doors are exactly what
+            // BotCanOpenDoorLikePlayer will happily open, and this one is the
+            // instance script's sole property.
+            //
+            // DELIBERATELY NOT IsNavigationIgnored, for the Utgarde Pinnacle
+            // reason. By the time anything in this module reaches it the wall is
+            // already open — the gauntlet's own activation predicate requires both
+            // bosses DONE — so the row is belt-and-braces, and a run that DOES
+            // pause here has regressed somewhere the module should be told about.
+            // Hiding the door from navigation would mask that instead of
+            // preventing it.
+            case 201885:  // Pit of Saron — Ice Wall (opens on Garfrost + Ick)
+                return true;
+
+            // --- Halls of Reflection (668) --------------------------------
+            //
+            // FOUR DOORS, all of them the instance's alone, and one of them is
+            // the reason this map needs the rows at all.
+            //
+            // GO 201976, the FRONT DOOR, is a real DOOR_TYPE_ROOM the party
+            // stands behind for nine minutes on purpose. instance_halls_of
+            // _reflection shuts it at the end of the intro and again for EVERY
+            // wave, and re-opens it when a wave wipes or when Marwyn dies. So it
+            // is shut for most of the first two thirds of the run with the whole
+            // party on the inside — and the one thing the module must never do
+            // there is treat it as a corridor blocker and auto-pause the run in
+            // front of it, or click it and fight the script for the state.
+            //
+            // DELIBERATELY NOT IsNavigationIgnored, for the Pit of Saron reason:
+            // the party never needs to path THROUGH any of these, so a run that
+            // does pause at one has regressed somewhere the module should be
+            // told about, and hiding them from navigation would mask that rather
+            // than prevent it.
+            case 201976:  // front door (shuts for the intro's end and every wave)
+            case 197341:  // the Arthas door (opens on Marwyn's death)
+            case 197342:  // the door before the throne (spawned open, never scripted)
+            case 201385:  // Ice Wall (SUMMONED at an Ice Wall Target; opens on WallCompleted)
+            // The Culling of Stratholme (map 595) — the two objects the instance
+            // owns. Both are GAMEOBJECT_TYPE_DOOR, both spawned shut, and neither
+            // is ever clickable by anybody:
+            //
+            //   188686 the TOWN HALL BOOKCASE, the secret passage to the last
+            //     third of the dungeon. Opened by exactly two lines of the core —
+            //     npc_arthasAI's waypoint-36 handler, and ReorderInstance for a
+            //     state at or past KILLED_EPOCH — and the intended flow is that
+            //     the party follows Arthas to it and he opens it. A bot Use()
+            //     would toggle the server state with the client still drawing it
+            //     shut, AND would do so while Arthas is still walking, which is the
+            //     one thing this event must not race. ALSO navigation-ignored
+            //     below; see the row there for why one row is not enough.
+            //
+            //   191788 the CITY ENTRANCE GATE (the exit). Opened only when the
+            //     counter reaches FINISHED, after Mal'ganis. Never on the critical
+            //     path — the run is over by then — so this row exists purely so a
+            //     stray door-blocked walk-in can never single it out.
+            case 188686:  // CoS — Town Hall bookcase (opens at Arthas's waypoint 36)
+            case 191788:  // CoS — City Entrance Gate (opens at PROGRESS_FINISHED)
+            // Trial of the Champion (map 650) — the four arena gates. All four
+            // are opened and shut by instance_trial_of_the_champion alone (the
+            // champions' and soldiers' entrances, the Knight's exit, every
+            // cleanup), and none is ever the party's to open. Also
+            // navigation-ignored below.
+            case 195647:  // ToC — Main Gate (north wall; the soldiers come through it)
+            case 195648:  // ToC — East Portcullis
+            case 195649:  // ToC — South Portcullis
+            case 195650:  // ToC — North Portcullis (the entrance; shuts at progress 1)
+            // Karazhan (map 532) — Gamesman's Hall Exit Door (184277, guid at
+            // the Chess room's far side). Lock 0, faction 1375, flags 32
+            // (NODESPAWN), and the only thing that ever opens it is
+            // instance_karazhan's SetData(DATA_CHESS_EVENT, DONE) handler. It is
+            // the only way to Prince Malchezaar, which is why the roster skips
+            // Prince while Chess is skipped. Lock-free already refuses it; this
+            // row keeps it refused if a future edit lists lock-free doors more
+            // loosely, so nobody walks past Chess to Prince.
+            case 184277:  // Karazhan — Gamesman's Hall Exit Door (opens on Chess DONE)
+            // Blackrock Depths (map 230) — the Bar Door (170571, lock 739, the
+            // Grim Guzzler Key). npc_rocknot breaks it to state 2 with his last
+            // kick; 7s later Phalanx is woken and runs to it, turning hostile
+            // when he arrives, and TYPE_BAR goes DONE. A click that
+            // opened it early would let the party walk out past a Phalanx who is
+            // still faction 35 — unattackable, and blocking his own credit. The
+            // key-item lock already refuses a bot without the key (only a
+            // pickpocketed Plugger drops it); this row keeps it refused if that
+            // ever changes. Map-230 event 5 owns it.
+            case 170571:  // Blackrock Depths — Bar Door (opens at the end of Rocknot's ale run)
+            // The Summoner's Tomb doors, both empty-lock-85 and both driven only by
+            // instance_blackrock_depths' TYPE_TOMB_OF_SEVEN: IN_PROGRESS shuts both,
+            // DONE opens both, a reset reopens the entrance. 170576 spawns open, so
+            // it is only ever "blocking" while the Seven are up — and a bot that
+            // clicked it then would let the party walk out mid-encounter into the
+            // 15s reset. 170577 (the exit) spawns shut and is the way on to the
+            // Lyceum; opening it early would skip the Seven. Map-230 event 6 owns both.
+            case 170576:  // Blackrock Depths — Summoner's Tomb entrance (shut while the Seven are up)
+            case 170577:  // Blackrock Depths — Summoner's Tomb exit (opens on the Seven DONE)
+            // The two Golem Room doors out of the Lyceum to Magmus, empty-lock-85,
+            // opened only by TYPE_LYCEUM DONE (both braziers lit). A click would
+            // skip the braziers and leave the Lyceum's respawn running behind a
+            // party that never earned its way out. Map-230 events 7/8 own them.
+            case 170573:  // Blackrock Depths — Golem Room North (opens on TYPE_LYCEUM DONE)
+            case 170574:  // Blackrock Depths — Golem Room South (opens on TYPE_LYCEUM DONE)
+            // The Throne Room doors (empty-lock-85), opened only by TYPE_IRON_HALL
+            // DONE — Magmus's death. Clicking them would walk the party past
+            // Magmus to the Emperor.
+            case 170575:  // Blackrock Depths — Throne Room doors (opens on Magmus's death)
+            // Upper Blackrock Spire (map 229) — the event-owned doors. Every one
+            // is a lock-free TYPE_DOOR that BotCanOpenDoorLikePlayer could read as
+            // clickable, and every one is moved by the instance script or by a
+            // DC event that enters the script's own entry points
+            // (BlackrockSpireEvents.cpp):
+            //
+            //   164725 DRAGONSPINE DOOR — spawns open on the stock core, shut
+            //     under mod-individual-progression (opened by its AT 2046 seal
+            //     check). Event 1 owns it: it arms the hall's rune tracking
+            //     before it opens the door, which a walker click would skip, and
+            //     under IP a bare click would open it without the braziers or
+            //     the saved flag. The run reaches it as the door objective, so
+            //     the walker's pause only ever sees it if that event failed.
+            //   175244 EMBERSEER IN / 175705 DOORS — opened when all seven hall
+            //     runes are out; shut again when the incarcerators aggro.
+            case 164725:  // Upper Blackrock Spire — Dragonspine Door
+            case 175244:  // Upper Blackrock Spire — Emberseer In (hall runes)
+            case 175705:  // Upper Blackrock Spire — Doors (ramp into Emberseer's room)
+            //   175153 EMBERSEER OUT — spawns shut, opens on Emberseer's death:
+            //     the way on into the Rookery. A click would skip him.
+            case 175153:  // Upper Blackrock Spire — Emberseer Out (opens on his death)
+            //   164726 STADIUM PORTCULLIS — shuts 1s after AT 2026, reopens on
+            //     Rend's death or a FAIL; 175185 the pen gate the waves come
+            //     through (auto-close 10s); 175186 TOBOSSROOMS, a PASSAGE door
+            //     on Rend — the way on to The Beast. Event 4 owns all three.
+            case 164726:  // Upper Blackrock Spire — Doodad_PortcullisActive01 (stadium entry)
+            case 175185:  // Upper Blackrock Spire — the pen portcullis (wave gate)
+            case 175186:  // Upper Blackrock Spire — TOBOSSROOMS (opens on Rend's death)
+            //   175946 / 175947 — PASSAGE doors on General Drakkisath, opened by
+            //     his death. They gate nothing on the way in (the Furnace enters
+            //     his room by the south archway), but must not read as an
+            //     openable blocker.
+            case 175946:  // Upper Blackrock Spire — Drakkisath's door 1 (opens on his death)
+            case 175947:  // Upper Blackrock Spire — Drakkisath's door 2 (opens on his death)
                 return true;
             default:
                 return false;
@@ -337,6 +471,96 @@ namespace DcEventDoorRegistry
             // which is what opens the real Main Chambers Door (183049).
             case 184125:  // Hydromancer Thespia's panel
             case 184126:  // Mekgineer Steamrigger's panel
+                return true;
+            // Halls of Reflection (map 668) — the Frostmourne Altar. The
+            // Steamvault shape again, and the most expensive version of it yet:
+            // a decorative DAIS whose template is GAMEOBJECT_TYPE_DOOR
+            // (displayId 9294, startOpen 0, lock 0), spawned state 1 and left
+            // there forever. instance_halls_of_reflection carries it in
+            // objectData purely so GetGameObject can find it — there is no
+            // HandleGameObject, no SetGoState, no doorData row anywhere in the
+            // core, and the only altar code path at all is the glow spell cast
+            // on the altar bunny. So IsDoorClosed reads it shut on every tick
+            // of every run, permanently, and nothing will ever open it.
+            //
+            // It blocks nothing — the party fights all three altar waves
+            // standing around it — but Leg A of the authored route begins at
+            // CenterPos, which is 0.13yd in xy from the altar's own origin, so
+            // the corridor's FIRST leg transits its footprint the instant the
+            // route to the Frostsworn General is seeded. Lock-free and not
+            // IsLockFreeClickable, so BotCanOpenDoorLikePlayer refuses, and the
+            // walk-in park lands "at door (0.0yd along path)" on tick one and
+            // falls straight through to the auto-pause.
+            //
+            // That is unconditional, and it ended ALL TEN runs of plan
+            // tp-20260907-212113-1 at 3/6 bosses, every one of them within a
+            // second of Marwyn dying and none of them ever reaching the Arthas
+            // door: tr-20260907-212118-1/-2 and -212119-3/-4/-5/-6/-7/-8/-9/-10,
+            // each flagging the same GUID 0xf1100315fc000003 and auto-pausing
+            // on "a closed door is blocking the path".
+            //
+            // IsNavigationIgnored and NOT IsScriptOnly, for the Chromaggus
+            // reason above: IsScriptOnly suppresses only the CLICK, and it is
+            // the auto-pause underneath it that actually kills the run.
+            case 202236:  // Halls of Reflection — Frostmourne Altar
+            // ...and its TWIN, which is why the altar row alone was not enough.
+            // GO 202302 'Frostmourne' — the sword — is a SECOND
+            // GAMEOBJECT_TYPE_DOOR spawned at (5309.36, 2006.55), 0.03yd from
+            // the altar's own origin and on the same first leg. Whitelisting
+            // only the altar just handed the flag to the sword: plan
+            // tp-20260907-214408-1 repeated tp-20260907-212113-1 exactly — all
+            // ten runs paused at 3/6 bosses seconds after Marwyn died, this time
+            // flagging GUID 0xf11003163e000002 entry 202302.
+            //
+            // Unlike the altar the sword IS scripted — but it is scripted SHUT.
+            // instance_halls_of_reflection's OnGameObjectCreate closes it, the
+            // intro opens it for the cutscene, and EVENT_INTRO_LK_4_2/4_3 close
+            // it again and SetPhaseMask(2) it out of the party's phase. That
+            // chain runs on the SKIPPED intro too — it is what spawns Falric —
+            // so from the end of the intro onward the sword is shut and phased
+            // away forever, blocking nothing and opening never.
+            //
+            // The phase is the real tell, and the scan now skips out-of-phase
+            // gameobjects for exactly that reason (see the InSamePhase guard in
+            // DungeonClearBlockingDoorValue). This row stays anyway: it is the
+            // cheap, map-specific statement of a fact the generic guard only
+            // implies, and it holds even for the ticks BEFORE the intro phases
+            // the sword out, when it is in phase and still unopenable.
+            case 202302:  // Halls of Reflection — Frostmourne (the sword)
+            // The Culling of Stratholme (map 595) — the TOWN HALL BOOKCASE, and
+            // this is the Halls of Reflection Frostmourne lesson applied before it
+            // cost a run rather than after.
+            //
+            // 188686 at (2473.27, 1121.36, 149.96) is an interact-THROUGH gate in
+            // the fullest sense: the party's job at it is to have talked to Arthas
+            // forty yards earlier, and ARTHAS is what opens it — his waypoint-36
+            // handler, about six seconds after he walks up. So for those six
+            // seconds a shut TYPE_DOOR is standing directly on the party's path
+            // with the escort walking INTO it.
+            //
+            // IsScriptOnly alone does not cover that. It only stops the bot
+            // CLICKING the door; the blocking-door value still flags it, and the
+            // auto-pause underneath that is what ends the run — in front of a door
+            // that is about to open on its own. A paused run then cannot drive the
+            // event that would open it, which is the same deadlock shape nine
+            // Blackwing Lair runs died of at Chromaggus's cage.
+            //
+            // So it needs BOTH rows, and the reason it needs both is the reason
+            // Thrall's prison door and the Chromaggus portcullis do.
+            case 188686:  // CoS — Town Hall bookcase (Arthas opens it at waypoint 36)
+                return true;
+            // Trial of the Champion (map 650) — the four arena gates, and here the
+            // row is about WHERE THEY STAND, not about passing through them. The
+            // run never leaves the bowl, so no route needs any of them open; but
+            // the North Portcullis is 2.6yd from where the party lands and shuts
+            // behind it at progress 1, and the Main Gate is 17yd behind the
+            // soldier line. A shut TYPE_DOOR that close to the fighting is exactly
+            // what the blocking-door value flags and the auto-pause halts on — in
+            // front of a door the run has no use for.
+            case 195647:  // ToC — Main Gate
+            case 195648:  // ToC — East Portcullis
+            case 195649:  // ToC — South Portcullis
+            case 195650:  // ToC — North Portcullis (the entrance)
                 return true;
             // The Violet Hold (map 608) — the six Activation Crystals. Like the
             // Steamvault access panels these are wall CONTROLS, not doors, but
@@ -749,6 +973,17 @@ namespace DcEventDoorRegistry
             case 175351:  // Doodad_SmallPortcullis03 — gate trap 1, Scarlet side
             case 175354:  // Doodad_SmallPortcullis09 — gate trap 2, undead side
             case 175355:  // Doodad_SmallPortcullis08 — gate trap 2, undead side
+            // --- Karazhan (map 532) — Shade of Aran's Private Library Door ---
+            // 184517 at (-11189.5, -1880.9, 233.3), lock 0, spawned SHUT. Aran's
+            // Reset() opens it and clears NOT_SELECTABLE, so it opens by itself
+            // as soon as his grid loads under the approaching tank; his JustDied
+            // opens it too. 15s after he is engaged it shuts again and goes
+            // NOT_SELECTABLE for the fight. Nobody ever clicks it. Holding is
+            // right in every one of those states: before his grid loads, the
+            // wait is a second or two; during a fight, a member left outside is
+            // locked out whatever it does (the sealed-encounter muster is what
+            // prevents that); after a wipe, his Reset reopens it.
+            case 184517:  // Karazhan — Private Library Door (Aran's Reset opens it)
                 return true;
             default:
                 return false;
@@ -1016,6 +1251,32 @@ namespace DcEventDoorRegistry
             case 175618:  // Iron Gate
             case 175619:  // Door
             case 175620:  // Iron Gate
+            // Karazhan (map 532) — Gatehouse Door (183450, guid 27565, at
+            // (-11100.6,-1992.9,49.8)), the front portcullis 11yd from the Main
+            // Entrance zone-in (areatrigger 4131) and the first thing on EVERY
+            // route into the raid. Lock 0, startOpen 0, autoClose 3000ms, template
+            // addon flags 0, no ScriptName/AIName, no smart_scripts or conditions
+            // row, and instance_karazhan never registers it (its door table covers
+            // the stage, library, Netherspite, Gamesman's Hall and terrace doors
+            // only) — nothing but a click ever opens it. Refused as lock-free, it
+            // auto-paused tr-20260923-165858-1 14s in, parked 7.8yd short of it,
+            // 0/10 bosses.
+            case 183450:  // Karazhan — Gatehouse Door
+            // Karazhan — Strange Bookcase (184453, guid 26721, at
+            // (-11151.0,-1753.6,202.5)), the secret door into Terestian
+            // Illhoof's room. Lock 0, no flags, no ScriptName/AIName, no
+            // smart_scripts row, and instance_karazhan never mentions it. It is
+            // the ONLY way in: with the navmesh around it cut, both
+            // Curator->Terestian and Midnight->Terestian become unroutable, and
+            // the room behind it is a dead end. A player opens it by clicking.
+            case 184453:  // Karazhan — Strange Bookcase (Terestian's room)
+            // Karazhan — Gamesman's Hall Door (184276, guid 28214, at
+            // (-11120.0,-1826.9,241.8)), the way into the chess hall from its west
+            // balcony. Lock 0, spawns CLOSED (state 1), autoClose 3000ms, template
+            // addon flags 0, no ScriptName/AIName, no smart_scripts or conditions
+            // row, and instance_karazhan never registers it (it tracks only the
+            // hall's EXIT door, 184277). Nothing but a click ever opens it.
+            case 184276:  // Karazhan — Gamesman's Hall Door (chess hall entry)
                 return true;
             default:
                 return false;

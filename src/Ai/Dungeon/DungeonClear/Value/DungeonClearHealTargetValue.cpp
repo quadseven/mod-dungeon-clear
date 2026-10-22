@@ -13,6 +13,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 ObjectGuid DungeonClearHealTargetValue::Calculate()
 {

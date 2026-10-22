@@ -162,6 +162,35 @@ namespace DcStrategyGate
             botAI->ChangeStrategy("-dungeon clear combat", BOT_STATE_NON_COMBAT);
     }
 
+    void ApplyEntryDefaults(Player* bot)
+    {
+        if (!DcModule::IsEnabled() || !bot)
+            return;
+
+        PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+        if (!botAI)
+            return;
+
+        Map* map = bot->GetMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        // Eat/drink. A bot inside a dungeon that is missing playerbots' `food`
+        // non-combat strategy never consumes between pulls: it stands at the
+        // rest spot and regens at the passive tick rate, which stretches a run
+        // from minutes to hours. The strategy is a stock default but can be
+        // missing (a bot whose saved strategy list predates it). Install it on
+        // entry only — a manual `nc -food` afterwards is the player's choice
+        // and sticks until the next entry.
+        if (!botAI->HasStrategy("food", BOT_STATE_NON_COMBAT))
+            botAI->ChangeStrategy("+food", BOT_STATE_NON_COMBAT);
+
+        // No `worldbuff` here. Upstream installs it on raid entry (its raid
+        // consumable stand-in); this branch never installs it, because its
+        // simulated flask/food auras are grants nobody earned (natural
+        // progression, issue 534), and Reconcile strips it inside instances.
+    }
+
     void ReconcileAllBots()
     {
         if (!DcModule::IsEnabled())

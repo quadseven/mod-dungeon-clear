@@ -14,6 +14,7 @@ class Creature;
 class GameObject;
 class GossipMenu;
 class AiObjectContext;
+struct DungeonBossInfo;
 
 // Result of running ONE event step on a tick.
 enum class StepResult : uint8
@@ -110,6 +111,33 @@ struct DungeonEventProgress
     int32  lastLoggedStep{-1};
     int32  lastLoggedResult{-1};
     uint32 lastLogMs{0};
+
+    // Re-base every per-activation clock for a NEW event id, leaving only the
+    // fields that outlive an event (instanceId, lastDriveMs, the log throttle).
+    //
+    // THE ESCORT CLOCKS BELONG HERE and leaving them out cost a live run to read.
+    // DriveEscortCreature's dead-air watchdog is meant to give a new escort leg 15
+    // seconds before it declares the escortee unreachable, but escortProgressMs is
+    // only ever stamped by escort PROGRESS — never by entering an escort. Carried
+    // across events it is a clock from the PREVIOUS leg: on tr-20260910-073715-4
+    // the Culling of Stratholme Town Hall leg inherited the city-gate leg's stamp
+    // from eleven minutes earlier, so the first tick that could not see Arthas was
+    // already eleven minutes into a fifteen-second window and stalled instantly. A
+    // leg that would have recovered — an escortee mid-respawn, or one a moment from
+    // walking back into search range — never got its grace.
+    void BeginEvent(uint32 newEventId, uint32 now)
+    {
+        eventId = newEventId;
+        stepIndex = 0;
+        attempts = 0;
+        stepStartMs = now;
+        maxStepIndex = 0;
+        progressMs = now;
+        escortProgressMs = 0;
+        escortCombatWedgeMs = 0;
+        timeoutRewinds = 0;
+        timeoutFailLogged = false;
+    }
 
     void Reset()
     {
@@ -259,6 +287,15 @@ public:
     // so pass the context of the bot whose run state you mean (the leader's).
     static bool IsPersistentAnchoredEventActive(AiObjectContext* context);
 
+    // True when the tank has ARRIVED at objective `next`: a persistent anchored
+    // event is already driving it, the tank is within its arriveRadius, or its
+    // gate creature is up anywhere on the map. The one arrival predicate — the
+    // at-objective trigger fires on it and the objective action re-checks it,
+    // because the action can run on a later tick than the trigger that queued it,
+    // by which time NextDungeonBoss may have advanced to the NEXT objective.
+    static bool ObjectiveArrived(Player* bot, AiObjectContext* context,
+                                 DungeonBossInfo const& next);
+
     // True while an event that OWNS THE PULL is driving this run — either the
     // anchored case above, or a CONDITIONAL event whose row carries
     // DungeonEvent::ownsThePull and whose activation predicate reads true right
@@ -270,6 +307,11 @@ public:
     // Needs the bot as well as the context: the conditional half re-evaluates
     // activation predicates, which are written against a Player.
     static bool IsPullOwningEventDriving(Player* bot, AiObjectContext* context);
+
+    // IsPullOwningEventDriving, minus a conditional event whose row carries
+    // DungeonEvent::yieldsTheApproach. The question the off-line route rejoin
+    // asks: "has an event taken the party's movement away from the route?"
+    static bool PullOwningEventHoldsTheApproach(Player* bot, AiObjectContext* context);
 
     // If `context`'s current objective drives an event with a KillCreature ENGAGE
     // step (KillCreatureEngage — .engage set), report true and fill `outEntry` /

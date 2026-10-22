@@ -8,6 +8,8 @@
 #include "Player.h"
 #include "PlayerScript.h"
 #include "ScriptMgr.h"
+#include "ServerScript.h"
+#include "WorldSession.h"
 #include "WorldScript.h"
 
 #include "DungeonQueueFill/DcDungeonQueueFillManager.h"
@@ -55,10 +57,13 @@ public:
 
 // Answer the dungeon proposal for the bots this fill owns.
 //
-// OnPlayerbotPacketSent is the one hook that sees a packet addressed to a BOT.
+// The packet-sent hook is the one hook that sees a packet addressed to a BOT.
 // WorldSession::SendPacket calls it before the `if (!m_Socket) return;` that
 // ends the journey for every socket-less playerbot session, so it is the only
-// place a module can watch what the core is telling a bot.
+// place a module can watch what the core is telling a bot. The upstream core
+// spells it ServerScript::OnPacketSent; the playerbots fork core spelled it
+// PlayerbotScript::OnPlayerbotPacketSent (see Util/DcCoreCompat.h). A core
+// with both takes the upstream one, so the proposal is answered once.
 //
 // Why the fill answers at all, rather than trusting the bot to: see
 // DcDungeonQueueFillManager::OnBotProposal. In short, playerbots' `lfg accept`

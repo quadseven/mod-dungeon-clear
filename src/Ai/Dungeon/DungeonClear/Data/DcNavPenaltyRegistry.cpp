@@ -75,7 +75,95 @@ namespace
     // makes the router prefer the open floor around it, never strands anyone.
     // costMult 40 (a spot a real player can't be, same class as the LBRS/Sethekk
     // shortcut rows above).
-    constexpr std::array<DcNavPenaltyVolume, 9> kVolumes = {{
+    //
+    // Pit of Saron (map 658) — the north bridge between Krick's arena and the
+    // ambush ramp, the shortcut that makes the tank climb out of the arena's
+    // south-east corner instead of walking round to the ramp's foot.
+    //
+    // MEASURED AGAINST THE MAP'S OWN MMTILES, not eyeballed. The arena floor
+    // (z~510-522) and the ramp that climbs east to Tyrannus (z~522-565) are
+    // separated by a chasm for the whole stretch y 64..94, and EXACTLY THREE
+    // walkable links cross it:
+    //     y 84.5   (862.20, 84.53, 517.34) -> (869.07, 84.27, 520.91)   +3.6yd
+    //     y 76.8   (865.87, 76.75, 524.31) -> (869.69, 75.11, 527.40)   +3.1yd
+    //     y 52.9   (861.93, 52.93, 517.07) -> (871.13, 58.27, 522.07)   +5.0yd
+    // The last one is the ramp's real foot, the ground the party walks after
+    // gate 1 (anchors 6 -> 7 of Leg A). The y 84.5 link opens onto a dead-end
+    // tongue. The y 76.8 link is the bad one: A* takes it, and the corridor it
+    // produces — arena -> (862.2, 84.5) -> (861.5, 79.3) -> (865.9, 76.8) ->
+    // (872.8, 74.1, 528.87) -> east up the ramp — is 145yd against 189yd for
+    // the way round, so the search prefers it by 44yd every time.
+    //
+    // IT IS ALREADY DOCUMENTED, from the other end: the Leg A header in
+    // PitOfSaronEvents notes that "the corridor A* actually prefers between
+    // Krick and the ledge climbs the ramp at y ~ 76". The anchors were authored
+    // to walk round it; this row is what stops everything that does NOT follow
+    // the anchors — stragglers, recovery paths, the StridedPathfinder fallback —
+    // from taking it and clipping the party through the arena wall.
+    //
+    // THE BOX IS SMALL BECAUSE IT ONLY HAS TO CUT ONE LINK. x 862..873,
+    // y 71..81, z 520..531 covers the y 76.8 crossing and nothing else:
+    //   - four navmesh polys fall inside it, all of them the bridge itself;
+    //   - hard-removing every one of them leaves ZERO walkable polys cut off
+    //     from the arena (marooned = 0), and that still holds under the stricter
+    //     "ban a poly if ANY corner is inside" reading of the StridedPathfinder
+    //     point screen, which bans 10 polys and still maroons nothing;
+    //   - no point of the intended route is taxed. The nearest legitimate
+    //     corridor point is (860.00, 69.40, 518.47), outside on all three axes,
+    //     and anchors 3..8 (846.6/84.7 through 882.6/57.5) are all clear.
+    // Z FLOOR 520 IS LOAD-BEARING: the descent from the arena to gate 1 runs
+    // z 517..519 directly under the west half of the box, so a ceiling above it
+    // is what keeps the way round untaxed.
+    //
+    // Verified reroute: Ick -> the top of the ambush ramp goes 145yd -> 189yd
+    // and now crosses at (861.93, 52.93) -> (871.13, 58.27), i.e. the ramp foot
+    // by gate 1. Ick -> gate 1 (88yd) and gate 1 -> ramp top (100yd) are
+    // unchanged. costMult 40, the shortcut class.
+    //
+    // Blackrock Spire (map 229) — the LBRS / UBRS WING REGIONS, the only
+    // wing-tagged rows (see the header). A "ubrs" row keeps an LBRS run's routes
+    // out of Upper Blackrock Spire, an "lbrs" row keeps a UBRS run out of Lower;
+    // the same boxes tell DcRunWing's fallback which half the party stands in.
+    //
+    // MEASURED OFF THE MAP'S OWN MMTILES AND SPAWNS (2026-09-28): all six 229
+    // tiles (5,294 polys) parsed into a poly graph, cross-tile links matched on
+    // edge position AND height (without the height check a z111 edge joined a
+    // z-35 one). With the polys within 8yd of the Dragonspine Door (GO 164725,
+    // 126.9, -319.1, 70.9) blocked, everything still reachable from Emberseer is
+    // UBRS (1,019 polys, walled off from LBRS); the rest reachable from the
+    // portal is LBRS or the shared entry hall (1,944). Every UBRS poly centre is
+    // inside a ubrs box and no UBRS vertex inside an lbrs one; every LBRS centre
+    // outside the hall is inside an lbrs box and no hall poly is.
+    //
+    // THE SHARED ENTRY HALL IS UNFENCED FOR BOTH: portal nook, main hall, stairs
+    // and the door approach, roughly x 56..130, y -392..-215, z 44..76. A UBRS
+    // run (and its rez recovery) walks portal -> door through it; the LBRS run
+    // leaves it by the west stairs (x 52..55, y -307..-326), its only other exit.
+    // It holds Scarshield packs (two flank the door approach), fightable by either.
+    //
+    // The halves are STACKED, so the Z bands carry the split where XY overlaps:
+    // UBRS west of x15 starts at z111 while LBRS peaks at z95 (Wyrmthalak) -> the
+    // z104 floor of the first ubrs box and the z100 cap of the west lbrs box; the
+    // rookery above the hall starts at z89.9 over a hall at <= z73.6 -> z82 / z80.
+    // The door approach and the Dragonspine Hall share a height (z65-74 vs 71), so
+    // there the cut is the plane x = 128.5 plus two side boxes for rune rooms 1
+    // and 3, which clear the approach lane (y -312.3..-325.6) by ~1.9yd.
+    //
+    // Route checks over the poly graph: portal -> Omokk -> ... -> Wyrmthalak (521
+    // points) touches no ubrs box; portal -> door -> Emberseer -> Father Flame ->
+    // Rend -> Beast -> Drakkisath (258) touches no lbrs box; portal -> door touches
+    // neither. costMult 40, the shortcut class; a party that somehow stands inside
+    // the other wing still routes out (a fence never cages — see the header).
+    //
+    // NOT HERE, ON PURPOSE: the Upper Blackrock Spire Rookery eggs. Boxing the
+    // five egg clusters that flank the measured north lane made the raw corridor
+    // from Emberseer Out to the upper floor WORSE: A* left the lane (whose polys
+    // straddle the boxes) and went round the south half, through the clusters
+    // nobody boxed — 193yd, 0.22yd from an egg — where the untaxed corridor is
+    // 113yd and keeps 3.29yd off every egg (t/TestBlackrockSpireRouteProbe,
+    // 2026-10-19). The tank's leg is an authored anchor route instead
+    // (RegisterBlackrockSpireRoute), and the probe pins the untaxed corridor.
+    constexpr std::array<DcNavPenaltyVolume, 18> kVolumes = {{
         { 229, -134.0f, -406.0f, 33.0f, -118.0f, -374.0f, 56.0f, 40.0f },
         { 229,  -65.5f, -384.0f, 49.4f,  -60.5f, -377.0f, 54.2f, 40.0f },
         { 556,   25.0f,  150.0f, -5.0f,   68.0f,  248.0f, 30.0f, 40.0f },
@@ -85,6 +173,23 @@ namespace
         { 552,  242.3f,  -83.3f, 10.5f,  286.3f,  -39.3f, 34.5f,  8.0f },
         { 552,  314.5f,    5.4f, 36.4f,  358.5f,   49.4f, 60.4f,  8.0f },
         { 552,  373.4f,   -3.8f, 36.3f,  417.4f,   40.2f, 60.3f,  8.0f },
+        { 658,  862.0f,   71.0f, 520.0f,  873.0f,   81.0f, 531.0f, 40.0f },
+        // 229 UBRS: upper floor z>=104 — Drakkisath hall, Rend/Gyth stadium, The Beast
+        { 229,  -35.0f, -595.0f, 104.0f,  245.0f, -225.0f, 140.0f, 40.0f, "ubrs" },
+        // 229 UBRS: rookery / Father Flame above the hall, Emberseer's room, ramps
+        { 229,   15.0f, -372.0f,  82.0f,  245.0f, -225.0f, 104.0f, 40.0f, "ubrs" },
+        // 229 UBRS: Dragonspine Hall past the door (x>128.5), rune rooms 2, 4-7, Emberseer In
+        { 229,  128.5f, -372.0f,  66.0f,  245.0f, -225.0f, 104.0f, 40.0f, "ubrs" },
+        // 229 UBRS: rune room 1, south of the door approach
+        { 229,  110.0f, -372.0f,  66.0f,  128.5f, -327.5f,  82.0f, 40.0f, "ubrs" },
+        // 229 UBRS: rune room 3, north of the door approach
+        { 229,  110.0f, -310.5f,  66.0f,  128.5f, -225.0f,  82.0f, 40.0f, "ubrs" },
+        // 229 LBRS: the west — Omokk, Vosh, Voone, spiders, Urok, Zigris, Halycon, Wyrmthalak
+        { 229, -235.0f, -600.0f, -45.0f,   10.0f, -215.0f, 100.0f, 40.0f, "lbrs" },
+        // 229 LBRS: middle strip, capped under the rookery (UBRS there starts at z89.9)
+        { 229,   10.0f, -600.0f, -45.0f,   55.0f, -215.0f,  80.0f, 40.0f, "lbrs" },
+        // 229 LBRS: the east, south of the entry hall
+        { 229,   55.0f, -600.0f, -45.0f,  140.0f, -393.0f,  80.0f, 40.0f, "lbrs" },
     }};
 
     // ---- polygonal no-go regions ----------------------------------------
@@ -294,48 +399,70 @@ namespace
     }
 }
 
-bool DcNavPenaltyRegistry::HasVolumes(uint32 mapId)
+bool DcNavPenaltyRegistry::RowActive(char const* rowWing, std::string_view runWing)
+{
+    if (!rowWing || !*rowWing)
+        return true;
+    return !runWing.empty() && runWing != rowWing;
+}
+
+bool DcNavPenaltyRegistry::HasVolumes(uint32 mapId, std::string_view runWing)
 {
     for (auto const& v : kVolumes)
-        if (v.mapId == mapId)
+        if (v.mapId == mapId && RowActive(v.wing, runWing))
             return true;
     for (auto const& p : kPolygons)
-        if (p.mapId == mapId)
+        if (p.mapId == mapId && RowActive(p.wing, runWing))
             return true;
     return false;
 }
 
-bool DcNavPenaltyRegistry::IsInsideRegion(uint32 mapId, float x, float y, float z)
+bool DcNavPenaltyRegistry::IsInsideRegion(uint32 mapId, float x, float y, float z, std::string_view runWing)
 {
-    return PenaltyAt(mapId, x, y, z) > 1.0f;
+    return PenaltyAt(mapId, x, y, z, runWing) > 1.0f;
 }
 
-float DcNavPenaltyRegistry::PenaltyAt(uint32 mapId, float x, float y, float z)
+namespace
+{
+    bool InVolume(DcNavPenaltyVolume const& v, float x, float y, float z)
+    {
+        return x >= v.minX && x <= v.maxX && y >= v.minY && y <= v.maxY && z >= v.minZ &&
+               z <= v.maxZ;
+    }
+
+    bool InPolygon(DcNavPenaltyPolygon const& p, float x, float y, float z)
+    {
+        return z >= p.minZ && z <= p.maxZ && PointInPolygonXY(p, x, y);
+    }
+}
+
+float DcNavPenaltyRegistry::PenaltyAt(uint32 mapId, float x, float y, float z, std::string_view runWing)
 {
     float worst = 1.0f;
     for (auto const& v : kVolumes)
     {
-        if (v.mapId != mapId)
-            continue;
-        if (x < v.minX || x > v.maxX)
-            continue;
-        if (y < v.minY || y > v.maxY)
-            continue;
-        if (z < v.minZ || z > v.maxZ)
+        if (v.mapId != mapId || !RowActive(v.wing, runWing) || !InVolume(v, x, y, z))
             continue;
         if (v.costMult > worst)
             worst = v.costMult;
     }
     for (auto const& p : kPolygons)
     {
-        if (p.mapId != mapId)
-            continue;
-        if (z < p.minZ || z > p.maxZ)
-            continue;
-        if (!PointInPolygonXY(p, x, y))
+        if (p.mapId != mapId || !RowActive(p.wing, runWing) || !InPolygon(p, x, y, z))
             continue;
         if (p.costMult > worst)
             worst = p.costMult;
     }
     return worst;
+}
+
+char const* DcNavPenaltyRegistry::WingRegionAt(uint32 mapId, float x, float y, float z)
+{
+    for (auto const& v : kVolumes)
+        if (v.mapId == mapId && v.wing && *v.wing && InVolume(v, x, y, z))
+            return v.wing;
+    for (auto const& p : kPolygons)
+        if (p.mapId == mapId && p.wing && *p.wing && InPolygon(p, x, y, z))
+            return p.wing;
+    return nullptr;
 }

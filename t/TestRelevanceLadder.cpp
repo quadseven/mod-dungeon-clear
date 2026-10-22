@@ -229,6 +229,94 @@ TEST(DungeonClearRelevanceTest, HazardVacateOutranksNonCombatDrivers)
     EXPECT_LT(DcRel::HazardVacate, DcRel::Chat);
 }
 
+// Blackrock Depths' Iron Hall: the safe-spot hop has to beat every mover that can
+// park a bot in a Guardian's circle — the follow, the role repositions, stock
+// MoveChase — and stays under the camp owners, which never contend there (the
+// hall is a fight-in-place zone). Map-partitioned from the HoR step and the
+// vacate, so sitting a rung above them is order, not a tie.
+TEST(DungeonClearRelevanceTest, TheIronHallHopOutranksEveryMoverThatParksInTheFire)
+{
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::HealReposition);
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::AssistCampCombat);
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::RegroupCombat);
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::FollowTank);
+    EXPECT_GT(DcRel::IronHallSafeSpot, 30.0f) << "stock MoveChase";
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::HorStayAhead) << "no tie";
+    EXPECT_GT(DcRel::IronHallSafeSpot, DcRel::HazardVacate);
+    EXPECT_LT(DcRel::IronHallSafeSpot, DcRel::PullManeuver);
+    EXPECT_LT(DcRel::IronHallSafeSpot, DcRel::StayAtCamp);
+    EXPECT_LT(DcRel::IronHallSafeSpot, DcRel::PartyDied);
+    EXPECT_LT(DcRel::IronHallSafeSpot, DcRel::Chat);
+}
+
+// Blackrock Depths' Lyceum close-up: the walk back to the tank has to beat every
+// mover that holds a member out at range — stock MoveChase / reach, the reach-heal
+// (40), the heal reposition, the DC assist / regroup — and lose to the hazard
+// vacate, so standing in something that hurts still wins.
+TEST(DungeonClearRelevanceTest, TheLyceumCloseUpOutranksTheRangeMoversButNotAHazard)
+{
+    EXPECT_GT(DcRel::LyceumCloseUp, 40.0f) << "stock reach party member to heal";
+    EXPECT_GT(DcRel::LyceumCloseUp, DcRel::HealReposition);
+    EXPECT_GT(DcRel::LyceumCloseUp, DcRel::AssistCampCombat);
+    EXPECT_GT(DcRel::LyceumCloseUp, DcRel::RegroupCombat);
+    EXPECT_GT(DcRel::LyceumCloseUp, 30.0f) << "stock MoveChase";
+    EXPECT_LT(DcRel::LyceumCloseUp, DcRel::HazardVacate);
+    EXPECT_LT(DcRel::LyceumCloseUp, DcRel::IronHallSafeSpot);
+    EXPECT_LT(DcRel::LyceumCloseUp, DcRel::PullManeuver);
+    EXPECT_NE(DcRel::LyceumCloseUp, DcRel::StrandedRecovery) << "no tie";
+}
+
+// HALLS OF REFLECTION's forward step sits ONE RUNG ABOVE the generic vacate, and
+// the gap has to be exactly that: they answer the SAME danger — the Lich King's
+// Remorseless Winter ring — with opposite bearings, so whichever wins the tick is
+// the direction the bot actually moves.
+//
+// The generic vacate retreats radially, away from the emitter. On this encounter
+// the party is walking a path that runs -x -y with the Lich King following, and
+// every 2 seconds each player whose (p.x - lk.x) + (p.y - lk.y) exceeds 20 takes
+// 10 000 damage plus a KNOCKBACK THAT THROWS THEM FURTHER BEHIND. So for a bot
+// that is already behind him, "away from him" is deeper into a self-reinforcing
+// rule. The forward step has to outrank it, on the one map where both are armed.
+//
+// It stays under the camp owners (60), which never contend — both of map 668's
+// events carry OwnsThePull, so there is no camp — and under the terminal bailouts.
+TEST(DungeonClearRelevanceTest, TheHorForwardStepOutranksTheRadialVacateItReplaces)
+{
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::HazardVacate)
+        << "the two answer the same emitter with opposite bearings; if the radial vacate "
+           "wins the tick it walks a bot that is behind the Lich King further behind him";
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::PullManeuver);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::StayAtCamp);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::PartyDied);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::Chat);
+
+    // Above everything it has to beat to move a follower mid-fight: the stock
+    // combat movers, and DC's own role repositions.
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::HealReposition);
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::AssistCampCombat);
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::Advance);
+}
+
+// THE OCULUS rider rung flies every member's drake. It has to outrank every DC
+// rung a rider could otherwise be handed in either engine, and it sits half a rung
+// over the Hakkar suppressor rather than on it so the ladder carries no new tie.
+TEST(DungeonClearRelevanceTest, TheOculusRiderOutranksEveryLadderItFliesOver)
+{
+    EXPECT_GT(DcRel::OcRider, DcRel::HakkarSuppressorCombat) << "a tie with no partition test";
+    EXPECT_GT(DcRel::OcRider, DcRel::EventDueCombat);
+    EXPECT_GT(DcRel::OcRider, DcRel::PullManeuver);
+    EXPECT_GT(DcRel::OcRider, DcRel::StayAtCamp);
+    EXPECT_GT(DcRel::OcRider, DcRel::HazardVacate);
+    EXPECT_GT(DcRel::OcRider, DcRel::StrandedRecovery);
+    EXPECT_GT(DcRel::OcRider, DcRel::RezParty);
+    EXPECT_GT(DcRel::OcRider, DcRel::EventDue);
+    EXPECT_GT(DcRel::OcRider, DcRel::FollowTank);
+    EXPECT_GT(DcRel::OcRider, DcRel::Advance);
+    EXPECT_LT(DcRel::OcRider, DcRel::BreakStuckCombat);
+    EXPECT_LT(DcRel::OcRider, DcRel::PartyDied);
+    EXPECT_LT(DcRel::OcRider, DcRel::Chat);
+}
+
 // The pull maneuver is dual-engine for the same reason HazardVacate and
 // BreakStuckCombat are: stock `drop target` (99) can move a still-flagged bot onto
 // the NON-combat engine, and every watchdog the maneuver owns lives inside its

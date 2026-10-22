@@ -10,6 +10,7 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 namespace
 {

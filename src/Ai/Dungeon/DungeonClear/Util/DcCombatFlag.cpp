@@ -238,9 +238,22 @@ namespace DcCombatFlag
             float const dist = p->GetExactDist(other);
             if (!scan.found || dist < scan.nearestDist)
                 scan.nearestDist = dist;
+            if (dist < scan.nearestSeenDist && p->IsWithinLOSInMap(other))
+                scan.nearestSeenDist = dist;
             scan.found = true;
         }
         return scan;
+    }
+
+    bool HasSeenAttacker(Player* p)
+    {
+        if (!p)
+            return false;
+        for (Unit* const attacker : p->getAttackers())
+            if (attacker && attacker->IsInWorld() && attacker->GetMap() == p->GetMap() &&
+                p->IsWithinLOSInMap(attacker))
+                return true;
+        return false;
     }
 
     bool IsHeldByLiveEnemy(Player* p, float radius)
@@ -314,6 +327,16 @@ namespace DcCombatFlag
         DcApproachState& appr = context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
         return DungeonClearMath::MayDriveWhileFlagged(
             bot->IsInCombat(), AnyPartyEngagement(bot), getMSTime(),
+            DC_FLAGGED_NO_ENGAGE_GRACE_MS, appr.flaggedNoEngageSinceMs);
+    }
+
+    bool MayDriveEvent(Player* bot, AiObjectContext* context, bool drivesInCombat)
+    {
+        if (!bot || !context)
+            return false;
+        DcApproachState& appr = context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+        return DungeonClearMath::EventDueGateOpen(
+            drivesInCombat, bot->IsInCombat(), AnyPartyEngagement(bot), getMSTime(),
             DC_FLAGGED_NO_ENGAGE_GRACE_MS, appr.flaggedNoEngageSinceMs);
     }
 

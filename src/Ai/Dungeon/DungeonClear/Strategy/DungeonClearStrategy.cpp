@@ -11,6 +11,7 @@
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsExclusionType.h"
 
 void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
 {
@@ -311,6 +312,43 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "dungeon clear surface for breath",
         { NextAction("dungeon clear surface for breath", DcRel::SurfaceForBreath) }));
+    // Halls of Reflection only: while the escape is running, step FORWARD out of
+    // the Lich King's ring rather than radially away from it. Registered in BOTH
+    // engines like the vacate it sits above — the escape is a permanent combat
+    // flag, but a bot whose last add just died can spend a tick on the non-combat
+    // engine, and that is exactly the tick a bot 18yd behind him must not spend
+    // standing still. Inert everywhere else: the trigger's first test is the map
+    // id. See DungeonClearHorStayAheadTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hor stay ahead",
+        { NextAction("dungeon clear hor stay ahead", DcRel::HorStayAhead) }));
+
+    // Blackrock Depths' Iron Hall only: never stop in the Ironhand Guardians'
+    // fire — hop to the next fire-free stop. BOTH engines: the walk is the
+    // non-combat engine, Magmus the combat one, and a combat-flagged bot with no
+    // attackers (the blind window) idles on the non-combat one. Inert
+    // everywhere else: the trigger's first test is the map id. See
+    // DungeonClearIronHallSafeSpotTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear iron hall safe spot",
+        { NextAction("dungeon clear iron hall safe spot", DcRel::IronHallSafeSpot) }));
+
+    // The Oculus only: the rider rung. Registered in BOTH engines — a rider never
+    // reaches the combat engine (the drake seat has no CAN_ATTACK), and a member
+    // mustering on foot can be on either. Inert everywhere else: the trigger's
+    // first test is the map id. See DungeonClearOculusRiderTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear oc rider",
+        { NextAction("dungeon clear oc rider", DcRel::OcRider) }));
+
+    // Karazhan only: the chess seat and conductor. Registered in BOTH engines —
+    // a controller is combat-flagged by its piece's fight half the time, and the
+    // rung has to own every tick of every bot in the hall either way. Inert
+    // everywhere else: the trigger's first test is the map id. See
+    // DungeonClearKzChessTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear kz chess",
+        { NextAction("dungeon clear kz chess", DcRel::KzChess) }));
 
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has
@@ -433,6 +471,7 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode("dungeon clear pull keyword", { NextAction("dc pull", chatRel) }));
     triggers.push_back(new TriggerNode("dc status",         { NextAction("dc status", chatRel) }));
     triggers.push_back(new TriggerNode("dc bosses",         { NextAction("dc bosses", chatRel) }));
+    triggers.push_back(new TriggerNode("dc wing",           { NextAction("dc wing",   chatRel) }));
 }
 
 void DungeonClearStrategy::InitMultipliers(std::vector<Multiplier*>& multipliers)
@@ -551,6 +590,53 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear surface for breath",
         { NextAction("dungeon clear surface for breath", DcRel::SurfaceForBreath) }));
+    // Halls of Reflection only: while the escape is running, step FORWARD out of
+    // the Lich King's ring rather than radially away from it. Registered in BOTH
+    // engines like the vacate it sits above — the escape is a permanent combat
+    // flag, but a bot whose last add just died can spend a tick on the non-combat
+    // engine, and that is exactly the tick a bot 18yd behind him must not spend
+    // standing still. Inert everywhere else: the trigger's first test is the map
+    // id. See DungeonClearHorStayAheadTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hor stay ahead",
+        { NextAction("dungeon clear hor stay ahead", DcRel::HorStayAhead) }));
+
+    // Blackrock Depths' Iron Hall only: never stop in the Ironhand Guardians'
+    // fire — hop to the next fire-free stop. BOTH engines: the walk is the
+    // non-combat engine, Magmus the combat one, and a combat-flagged bot with no
+    // attackers (the blind window) idles on the non-combat one. Inert
+    // everywhere else: the trigger's first test is the map id. See
+    // DungeonClearIronHallSafeSpotTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear iron hall safe spot",
+        { NextAction("dungeon clear iron hall safe spot", DcRel::IronHallSafeSpot) }));
+
+    // Blackrock Depths' Lyceum only, combat engine: in a fight inside the room,
+    // every member but the tank stays within 15yd of the tank — how a real group
+    // plays a room that refills behind it. The chase half (no stock reach toward
+    // a target outside that radius) is DungeonClearCombatMultiplier's. Combat
+    // only: between fights the event's pack leash and the follow own spacing.
+    // Inert everywhere else: the trigger's first test is the map id. See
+    // DungeonClearLyceumCloseUpTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear lyceum close up",
+        { NextAction("dungeon clear lyceum close up", DcRel::LyceumCloseUp) }));
+
+    // The Oculus only: the rider rung, combat side. See the non-combat copy; the
+    // stand-down exempts it by name (DcBossStandDown::ClassifyAction), because the
+    // Eregos fight is fought entirely from this rung.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear oc rider",
+        { NextAction("dungeon clear oc rider", DcRel::OcRider) }));
+
+    // Karazhan only: the chess seat and conductor. Registered in BOTH engines —
+    // a controller is combat-flagged by its piece's fight half the time, and the
+    // rung has to own every tick of every bot in the hall either way. Inert
+    // everywhere else: the trigger's first test is the map id. See
+    // DungeonClearKzChessTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear kz chess",
+        { NextAction("dungeon clear kz chess", DcRel::KzChess) }));
 
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has
@@ -655,7 +741,8 @@ bool DungeonClearCombatStrategy::HasTargetExclusions() const
 void DungeonClearCombatStrategy::AppendTargetExclusions(GuidSet& exclusions,
                                                         TargetValueExclusionType type)
 {
-    // DPS, ATTACKER and — for rows that ask for it — TANK pools.
+    // DPS, DEBUFF (attacker-without-aura) and — for rows that ask for it — TANK
+    // pools, plus the AoE count that mod-playerbots #2912 added.
     //
     // The tank was untouched wholesale, on the reasoning that the encounters
     // needing this are the ones where somebody must still HOLD the creature
@@ -664,19 +751,24 @@ void DungeonClearCombatStrategy::AppendTargetExclusions(GuidSet& exclusions,
     // a creature two rooms ahead is the thing that walks the raid there. So the
     // carve-out moved into the row (`alsoTank`) rather than staying here.
     //
-    // The pools are spelled through DcPlayerbotCompat: mod-playerbots #2912
-    // renamed them (DpsTarget / DebuffTarget / TankTarget) and added an Aoe
-    // pool, which DC leaves alone.
-    if (type != DcPlayerbotCompat::kDpsTargetExclusions &&
-        type != DcPlayerbotCompat::kDebuffTargetExclusions &&
-        type != DcPlayerbotCompat::kTankTargetExclusions)
-        return;
-
-    bool const forTank = type == DcPlayerbotCompat::kTankTargetExclusions;
-
+    // The AoE type carries no role, so it is answered from the pool the bot would
+    // read for a single target: a barred creature should not be the reason a DPS
+    // starts a Blizzard, and the tank keeps counting whatever she is allowed to
+    // hold. The enumerators go through DcPbExclusion because #2912 renamed them
+    // and the module builds against playerbots on both sides of that change.
     Player* const self = botAI ? botAI->GetBot() : nullptr;
     if (!self)
         return;
+
+    bool const forAoe = DcPbExclusion::IsAoe(type);
+    if (!forAoe &&
+        type != DcPbExclusion::DpsTarget() &&
+        type != DcPbExclusion::DebuffTarget() &&
+        type != DcPbExclusion::TankTarget())
+        return;
+
+    bool const forTank = type == DcPbExclusion::TankTarget() ||
+                         (forAoe && PlayerbotAI::IsTank(self));
 
     uint32 const mapId = self->GetMapId();
     if (!DcTargetExclusionRegistry::HasRowsFor(mapId))

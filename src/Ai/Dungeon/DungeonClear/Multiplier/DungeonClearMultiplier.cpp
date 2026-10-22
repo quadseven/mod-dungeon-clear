@@ -7,14 +7,24 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Action.h"
+#include "AttackAction.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "FollowActions.h"
+#include "GenericSpellActions.h"
+#include "InstanceScript.h"
 #include "Player.h"
 #include "Playerbots.h"
 #include "Position.h"
+#include "ReachTargetActions.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEscapeLeap.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFlightLeg.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcOculusPlan.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -40,11 +50,256 @@
 // Free everywhere else — HoldsThePossession rejects on a map compare, and it reads
 // this bot's own charm field rather than any cross-bot signal, so no stale stamp
 // can drop the guard while the channel is still up.
+// Does `action` deal damage? Melee/attack actions, the stock target picker that
+// starts them, and any HARMFUL spell — judged by the spell itself, not by its
+// target: Frost Nova, Arcane Explosion, Consecration and the like are cast on
+// the caster and still hit the pack (the first threat-lead fix missed them —
+// a mage's Frost Nova 1.1s after the tank's first hit, lb-20261003-164447-1).
+// Heals and buffs are never held.
+static bool IsDamagingAction(PlayerbotAI* botAI, Action* action, std::string const& name)
+{
+    if (name == "dps assist" || dynamic_cast<AttackAction*>(action))
+        return true;
+    if (dynamic_cast<CastHealingSpellAction*>(action) || dynamic_cast<CastBuffSpellAction*>(action))
+        return false;
+    CastSpellAction* cast = dynamic_cast<CastSpellAction*>(action);
+    if (!cast)
+        return false;
+    uint32 const spellId = botAI->GetAiObjectContext()->GetValue<uint32>("spell id", cast->getSpell())->Get();
+    SpellInfo const* info = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
+    return info && !info->IsPositive();
+}
+
+// A mob already beating on a non-tank party member is peeled at once: the
+// threat lead protects the tank's grip on HIS mobs, and waiting it out while a
+// caster eats a Ghoul only leaves that mob unattended (Pull Lab O1 rose with
+// the first hold). Single-target actions only — an AoE has no one target.
+static bool PeelsAMobOffTheParty(Player* bot, PlayerbotAI* botAI, Action* action)
+{
+    Unit* target = nullptr;
+    if (CastSpellAction* cast = dynamic_cast<CastSpellAction*>(action))
+        target = cast->GetTarget();
+    else if (dynamic_cast<AttackAction*>(action))
+        target = botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
+    if (!target || target == bot)
+        return false;
+    Unit* victim = target->GetVictim();
+    Player* p = victim ? victim->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+    return p && p != bot && p->IsInSameRaidWith(bot) && !PlayerbotAI::IsTank(p);
+}
+
 static float RazorgorePossessionClamp(Player* bot, std::string const& name)
 {
     if (!DcBlackwingLair::HoldsThePossession(bot))
         return 1.0f;
     return name == "dungeon clear razorgore orb" ? 1.0f : 0.0f;
+}
+
+// KARAZHAN, the chess game: while this bot is held by the game, NOTHING but the
+// chess rung is worth doing — the Razorgore-possession shape, for the whole raid.
+//
+// The rung owns the tick at KzChess (64.25), but stock actions reach higher than
+// that — ACTION_EMERGENCY at 90, `drop target` at 99 — and a controller has lost
+// Game In Session, so its own rotation, a heal, a potion or a pet command could
+// all land on a piece. That is cheating and it breaks the game (H1, H5). So every
+// other action is zeroed on every bot the rung holds; the one carve-out is the
+// `dc ...` chat commands, so a human can still pause or stop the run.
+//
+// Free everywhere else, and cheap here: the map compare, then one stamp the rung
+// leaves on the bot's own run state (DcKarazhan::ChessHoldsTheBot).
+static float KaraChessClamp(Player* bot, PlayerbotAI* botAI, std::string const& name)
+{
+    if (bot->GetMapId() != DcKarazhan::MAP || !DcKarazhan::ChessHoldsTheBot(bot, botAI))
+        return 1.0f;
+    if (name == "dungeon clear kz chess" || name.rfind("dc ", 0) == 0)
+        return 1.0f;
+    return 0.0f;
+}
+
+// HALLS OF REFLECTION, the escape: BACKWARDS IS FATAL, so nothing may move
+// backwards.
+//
+// Stock `flee` and `runaway` both answer damage the same way — put distance
+// between the bot and the thing hurting it (FleeAction::Execute is
+// MoveAway(target, 5)). Everywhere else in the game that is correct. On this leg
+// it is the single worst thing a bot can do: the Lich King walks the party down a
+// path that runs -x and -y, so "away from the damage" is BEHIND HIM, and every
+// two seconds each player whose (p.x - lk.x) + (p.y - lk.y) exceeds 20 takes
+// 10 000 damage plus a knockback that throws them further behind still. A bot
+// that flees once is a bot that then keeps being knocked into fleeing again.
+//
+// So both are zeroed for the whole escape, on every member, in both engines. The
+// forward equivalent — DungeonClearHorStayAheadAction at relevance 56 — is what
+// actually moves an endangered bot, and it can only own the tick if the stock
+// backwards movers are not competing for it.
+//
+// Scoped as tightly as the harm: map compare first, then the escape's own boss
+// state, so this costs one integer compare everywhere else and is inert on map
+// 668 itself until the point-of-no-return gossip.
+//
+// `drop target` is deliberately NOT touched here. It is what lets a bot release
+// a Lich King it should never have acquired, and the hold-fire rung depends on
+// the release path staying intact.
+static bool HorEscapeBackwardsBanned(Player* bot, std::string const& name)
+{
+    if (name != "flee" && name != "runaway")
+        return false;
+    if (!bot || bot->GetMapId() != DcHallsOfReflection::MAP_ID)
+        return false;
+
+    InstanceScript* inst = bot->GetInstanceScript();
+    return inst &&
+           inst->GetBossState(DcHallsOfReflection::DATA_LICH_KING) == IN_PROGRESS;
+}
+
+// THE OCULUS: no ordinary mount for a bot that has a drake to board or sits on one.
+// Stock `check mount state` (timer 1 out of combat, 54 in, and the run-speed packet
+// handler) mounts every bot between fights on a map that allows it — and the
+// essence's Call spell is refused from a mount, so a mustering party never got a
+// single drake. The rider rung steps the bot off (LeaveMount); this keeps stock from
+// putting it straight back on for the muster, the settle and the whole flight.
+// Both multipliers ask it: the action is registered in both engines.
+//
+// AND NO STOCK DRAKE STEERING WHILE A DC RUN FLIES THE DRAKES. Stock `wotlk-occ`'s
+// master-gated drake actions fire as soon as the bot's playerbots master rides a
+// drake — which in a run with a party member as master is every leg:
+//   * `occ fly drake` MoveFollows each drake onto the master's at 15yd, dragging it
+//     off its lane and off its pad every tick. Live, first flight: 46-185 successful
+//     executions per bot in five minutes, the tank's drake pinned 15.7yd from the
+//     pad, the landing check flickering, nobody ever dismounting.
+//   * `dismount drake` is a bare ExitVehicle the moment the master is on foot —
+//     in mid-air for a rider still on its leg, with no parachute in an instance.
+// `mount drake` is deliberately NOT here: while a mounted master's
+// MountingDrakeMultiplier zeroes everything else on a bot left on foot, it is the
+// only action that bot has. The rider rung avoids that state instead (the master
+// mounts last and steps off first).
+static bool OculusMountBanned(Player* bot, std::string const& name)
+{
+    bool const mountState = name == "check mount state";
+    bool const stockDrake = name == "occ fly drake" || name == "dismount drake";
+    if ((!mountState && !stockDrake) || bot->GetMapId() != DcOculus::MAP_ID)
+        return false;
+    if (mountState && bot->GetVehicle())
+        return true;
+    DcOculusPlanView const plan = OculusPlanFor(bot);
+    if (!plan.valid)
+        return false;
+    if (stockDrake)
+        return true;
+    return plan.phase == DcOculusDriver::Phase::Muster || plan.phase == DcOculusDriver::Phase::Fly ||
+           plan.phase == DcOculusDriver::Phase::Eregos;
+}
+
+// THE RIDER-KILL GUARD, stock half. `occ drake attack` shoots its current target
+// or, with none, the FIRST in-combat possible target — and a drake bar spell on a
+// creature that cannot fly kills its rider (npc_oculus_drakeAI::SpellHitTarget).
+// The rider rung keeps the current target flying-safe; the fallback is the hole,
+// and a drake landing under ground fire is exactly when it would pick a Ring-Lord.
+// So the action is zeroed whenever the target stock would choose, chosen the same
+// way, is not flying-safe.
+static bool OculusDrakeAttackUnsafe(Player* bot, PlayerbotAI* botAI, AiObjectContext* context,
+                                    std::string const& name)
+{
+    if (name != "occ drake attack" || bot->GetMapId() != DcOculus::MAP_ID || !DcFlightLeg::OculusDrakeOf(bot))
+        return false;
+    Unit* target = context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get();
+    if (!target)
+    {
+        for (ObjectGuid const& guid : context->GetValue<GuidVector>(DcKey::Stock::PossibleTargets)->Get())
+        {
+            Unit* const unit = botAI->GetUnit(guid);
+            if (unit && unit->IsInCombat())
+            {
+                target = unit;
+                break;
+            }
+        }
+    }
+    return target && !DcFlightLeg::IsFlyingSafe(target);
+}
+
+// BLACKROCK DEPTHS' LYCEUM: no stock reach / chase toward a target further than
+// DcLyceumCloseUp::LEASH from the tank, for any member but the tank, while both
+// stand in the room. The other half of the close-up rung — see
+// DcLyceumCloseUpDecision.h. ReachTargetAction is every stock combat chase
+// (reach melee / reach spell / reach party member to heal all end in ChaseTo).
+static bool LyceumChaseLeavesThePack(Player* bot, AiObjectContext* context, Action* action)
+{
+    if (bot->GetMapId() != DcBlackrockDepths::MAP_ID)
+        return false;
+    auto* reach = dynamic_cast<ReachTargetAction*>(action);
+    if (!reach || !DcLyceumCloseUp::InRoom(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()))
+        return false;
+    Player* tank = context->GetValue<Player*>(DcKey::PartyTank)->Get();
+    if (!tank || tank == bot || !tank->IsAlive() || tank->GetInstanceId() != bot->GetInstanceId() ||
+        DcLeaderSignal::IsDungeonClearLeader(bot) ||
+        !DcLyceumCloseUp::InRoom(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ()))
+        return false;
+    Unit* target = context->GetValue<Unit*>(reach->GetTargetName())->Get();
+    return target && DcLyceumCloseUp::ChaseLeavesThePack(target->GetPositionX(), target->GetPositionY(),
+                                                         tank->GetPositionX(), tank->GetPositionY());
+}
+
+// ROOM-AGGRO PRE-CLEAR: no stock reach / chase toward a target standing inside the
+// sleeping boss's wake sphere, for any member, tank included. The room clear keeps
+// every DC driver out of that sphere, but a fight with room trash runs on the stock
+// combat movers, and those follow a mob wherever it stands. Live
+// (tr-20261018-230400-9): a pull that woke a Senator pack carried the fight south
+// until the tank stood 22yd from Emperor Dagran Thaurissan; he engaged, his
+// CallForHelp woke the room, and four of five died. A mob in there that cannot be
+// chased is shot by the ranged or walks out to the melee — and the boss sleeps.
+//
+// The ban rules on where the chase ENDS, not where the target stands: a caster's
+// `reach spell` stops at spell range on its own side, often well outside the
+// sphere. Testing the target's spot banned the ranged too, and a planted mob in
+// there (the throne-side Doomforge Dragoon, no combat movement) then could never
+// be killed — sk-20261019-105358 held three runs 900s on it at 46-98% HP.
+//
+// The GAP-CLOSERS too: Charge, Intercept, Feral Charge (bear and cat) are spell
+// casts (CastReachTargetSpellAction), not ReachTargetAction, and they cross the
+// same yards in one jump. Live (sk-20261019-003633, eight throne-room wipes, the
+// chase ban already in place): `reach melee` zeroed, then `feral charge - bear` /
+// `charge` landed the tank on a Senator or the planted Dragoon by the throne and
+// the Emperor engaged within three seconds, 16-22yd away.
+static bool ChaseWakesSleepingRoomBoss(Player* bot, AiObjectContext* context, Action* action)
+{
+    std::string targetName;
+    // How far short of the target the chase stops (ChaseEndToBoss). Only `reach
+    // spell` stops at range; melee and the leaps end on the target.
+    float range = 0.0f;
+    if (auto* reach = dynamic_cast<ReachTargetAction*>(action))
+    {
+        targetName = reach->GetTargetName();
+        if (action->getName() == "reach spell")
+            if (PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot))
+                range = botAI->GetRange("spell");
+    }
+    else if (auto* leap = dynamic_cast<CastReachTargetSpellAction*>(action))
+        targetName = leap->GetTargetName();
+    else
+        return false;
+    Player* tank = context->GetValue<Player*>(DcKey::PartyTank)->Get();
+    if (!tank || !tank->IsAlive() || tank->GetInstanceId() != bot->GetInstanceId())
+        return false;
+    PlayerbotAI* tankAI = GET_PLAYERBOT_AI(tank);
+    if (!tankAI)
+        return false;  // a real-player tank runs no room clear
+    AiObjectContext* tankCtx = tankAI->GetAiObjectContext();
+    if (!DcTargeting::IsRoomClearActive(tank, tankCtx))
+        return false;
+    std::optional<DungeonBossInfo> const next =
+        tankCtx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value())
+        return false;
+    Creature* const boss = DcTargeting::GetLiveBoss(tank, tankCtx, next->entry);
+    Unit* const target = context->GetValue<Unit*>(targetName)->Get();
+    if (!boss || !target || target == boss)
+        return false;
+    float const chaseEnd = DungeonClearMath::ChaseEndToBoss(
+        bot->GetPositionX(), bot->GetPositionY(), target->GetPositionX(), target->GetPositionY(),
+        boss->GetPositionX(), boss->GetPositionY(), range);
+    return DungeonClearMath::ChaseWakesSleepingBoss(
+        chaseEnd, DcEngageGeometry::RoomAggroSphereRadius(tank, boss), boss->IsInCombat());
 }
 
 float DungeonClearMultiplier::GetValue(Action* action)
@@ -56,6 +311,19 @@ float DungeonClearMultiplier::GetValue(Action* action)
 
     if (float const clamp = RazorgorePossessionClamp(bot, name); clamp != 1.0f)
         return clamp;
+
+    if (float const clamp = KaraChessClamp(bot, botAI, name); clamp != 1.0f)
+        return clamp;
+
+    // Halls of Reflection's escape: no backwards movement, ever. See
+    // HorEscapeBackwardsBanned above.
+    if (HorEscapeBackwardsBanned(bot, name))
+        return 0.0f;
+
+    if (OculusMountBanned(bot, name))
+        return 0.0f;
+    if (OculusDrakeAttackUnsafe(bot, botAI, context, name))
+        return 0.0f;
 
     // Rest-target cap. Applies to EVERY bot in an active DC run — the leader tank
     // AND its followers — so the whole group stops eating/drinking at the group's
@@ -107,6 +375,12 @@ float DungeonClearMultiplier::GetValue(Action* action)
         AI_VALUE(Player*, DcKey::PartyTank))
         return 0.0f;
 
+    // Blink / Disengage leap a fixed distance straight away from the bot's target
+    // and land it in whatever pack is behind — see DcEscapeLeap. Every member of an
+    // active run, same cross-bot gate as above.
+    if (DcEscapeLeap::IsBanned(name) && AI_VALUE(Player*, DcKey::PartyTank))
+        return 0.0f;
+
     // Wander-style autonomous navigation (grind / rpg / travel). This is what
     // drives the bot around the world on its own.
     bool const isWander =
@@ -145,6 +419,37 @@ float DungeonClearMultiplier::GetValue(Action* action)
         if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
             return 0.0f;
     }
+
+    // Stock group-target pickers while the camp hold is PASSIVE (the tank is
+    // tagging or dragging). "dps assist" / "tank assist" sit at relevance 50 in the
+    // non-combat engine — above hold-at-camp (28), where +passive does not apply —
+    // so they target the tank's attacker and flip the follower onto the combat
+    // engine before the hold can pin it. On a planned pull the +passive already on
+    // the combat engine caught that; on a scout aggro nothing did, and the casters
+    // opened on the pack at its spawn (tr-20260923-171623-1). The off-tank's
+    // "tank assist" is the same picker and ran it 27yd off camp. Only while
+    // passive: between pulls and at Engage the party must still defend itself.
+    if (name == "dps assist" || name == "tank assist")
+    {
+        Position camp;
+        bool passive = false;
+        if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive) && passive)
+            return 0.0f;
+    }
+
+    // Threat lead, damage side. A DPS follower holds ALL damage — stock rotation,
+    // melee, "dps assist", class reflexes — for PullPlayerReleaseDelay after the
+    // tank's first hit. The lead used to live only inside DC's own assist rung,
+    // so every stock damage action walked straight past it: the Pull Lab
+    // baseline (lb-20261003-162407-1) caught a DPS landing damage 0.0-1.2s after
+    // the tank's first hit in 20 of 33 scenarios. Movement is untouched (the
+    // assist still closes the gap), and a follower something is attacking, a
+    // tank below the panic HP and the tank itself are never held (a healer's heals
+    // are not damaging actions, its damage spells wait like a DPS's). Only
+    // damaging actions pay for the leader lookup.
+    if (IsDamagingAction(botAI, action, name) && DcLeaderSignal::ShouldHoldDpsDamage(bot) &&
+        !PeelsAMobOffTheParty(bot, botAI, action))
+        return 0.0f;
 
     // Stock follow-master (FollowAction, relevance ~1) points a bot at its MASTER —
     // the human party leader — NOT the dungeon-clear tank. While a DC run is active
@@ -208,11 +513,40 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
+    // Threat lead, combat engine. The non-combat multiplier can only hold the
+    // OPENER; once a follower is fighting, every damage action (rotation, Frost
+    // Nova, Blast Wave, Flamestrike...) runs here. Without this the hold never
+    // touched a bot that was already in combat — the Pull Lab still caught a
+    // mage's Frost Nova 0.9s after the tank's first hit with the non-combat
+    // gate in place (lb-20261003-165604-1). Same rule, same exemptions.
+    if (IsDamagingAction(botAI, action, name) && DcLeaderSignal::ShouldHoldDpsDamage(bot) &&
+        !PeelsAMobOffTheParty(bot, botAI, action))
+        return 0.0f;
+
     // The possession clamp, first and unconditional — see its definition above.
     // The runner is IN COMBAT for most of its window (the adds are on it), so the
     // combat engine is where this actually has to bite.
     if (float const clamp = RazorgorePossessionClamp(bot, name); clamp != 1.0f)
         return clamp;
+
+    // The chess clamp, for the same reason and in the same place: a controller is
+    // combat-flagged by its piece's fight half the time.
+    if (float const clamp = KaraChessClamp(bot, botAI, name); clamp != 1.0f)
+        return clamp;
+
+    // Halls of Reflection's escape: no backwards movement, ever. ABOVE the
+    // isDcAction fast path below, because `flee` and `runaway` are stock actions
+    // and that path returns 1.0 for everything that is not a DC action or
+    // `drop target`. See HorEscapeBackwardsBanned above.
+    if (HorEscapeBackwardsBanned(bot, name))
+        return 0.0f;
+
+    // Above the fast path for the same reason: `check mount state` and `occ drake
+    // attack` are stock actions.
+    if (OculusMountBanned(bot, name))
+        return 0.0f;
+    if (OculusDrakeAttackUnsafe(bot, botAI, context, name))
+        return 0.0f;
 
     // RAID BOSS STAND-DOWN — the one shared check that makes every DC combat
     // trigger node inert during a raid encounter, instead of a copy in each of
@@ -226,6 +560,26 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
     // Order of tests: the prefix compare is paid only after the cheap
     // exact-compare fast path fails, and IsActive itself is raid-gated +
     // leader-memoised, so dungeon runs pay one Map::IsRaid() at most.
+    // Blink / Disengage — see DcEscapeLeap. The ban has to live HERE: both are
+    // fired by combat-engine triggers ("enemy too close for spell/auto shot"), so
+    // the non-combat multiplier's copy never once met them. Live,
+    // tp-20261018-211235-1 cast 314 of them across eight runs with that copy in
+    // place, and 29 landed the leaper on a fresh Reservist within six seconds.
+    // Above the fast path (both are stock actions). A raid encounter's stand-down
+    // hands the fight to the playerbots raid strategy, which rules on its own leaps.
+    if (DcEscapeLeap::IsBanned(name) && AI_VALUE(Player*, DcKey::PartyTank) &&
+        !DcBossStandDown::IsActive(bot))
+        return 0.0f;
+
+    // The Lyceum's close-up, chase half — see LyceumChaseLeavesThePack above.
+    if (LyceumChaseLeavesThePack(bot, context, action))
+        return 0.0f;
+
+    // The sleeping room-aggro boss's sphere — see ChaseWakesSleepingRoomBoss above.
+    // A raid encounter's stand-down hands the fight to the raid strategy.
+    if (ChaseWakesSleepingRoomBoss(bot, context, action) && !DcBossStandDown::IsActive(bot))
+        return 0.0f;
+
     bool const isDcAction = name.compare(0, 13, "dungeon clear") == 0;
     if (!isDcAction && name != "drop target")
         return 1.0f;

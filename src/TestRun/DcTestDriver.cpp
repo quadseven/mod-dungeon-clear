@@ -18,6 +18,7 @@
 #include "Player.h"
 #include "Random.h"
 #include "Timer.h"
+#include "Util/DcPlayerbotsConfig.h"
 #include "WorldSession.h"
 
 #include "Playerbots.h"
@@ -252,7 +253,7 @@ namespace DcTestDriver
             if (std::find(rnd.begin(), rnd.end(), accountId) != rnd.end())
             {
                 *why = "test driver account '" + account +
-                       "' is one of AiPlayerbot.RandomBotAccounts — the bot rotation "
+                       "' is one of Playerbots.RandomBotAccounts — the bot rotation "
                        "would log the driver out mid-run. Point "
                        "DungeonClear.TestRun.DriverAccount at a plain account";
                 return Provision::Refused;

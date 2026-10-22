@@ -48,6 +48,11 @@ public:
         creators["dungeon clear heal reposition"] = &DungeonClearTriggerContext::heal_reposition;
         creators["dungeon clear hazard vacate"] = &DungeonClearTriggerContext::hazard_vacate;
         creators["dungeon clear surface for breath"] = &DungeonClearTriggerContext::surface_for_breath;
+        creators["dungeon clear hor stay ahead"] = &DungeonClearTriggerContext::hor_stay_ahead;
+        creators["dungeon clear iron hall safe spot"] = &DungeonClearTriggerContext::iron_hall_safe_spot;
+        creators["dungeon clear lyceum close up"] = &DungeonClearTriggerContext::lyceum_close_up;
+        creators["dungeon clear oc rider"] = &DungeonClearTriggerContext::oc_rider;
+        creators["dungeon clear kz chess"] = &DungeonClearTriggerContext::kz_chess;
         creators["dungeon clear razorgore orb"] = &DungeonClearTriggerContext::razorgore_orb;
         creators["dungeon clear razorgore camp"] = &DungeonClearTriggerContext::razorgore_camp;
         creators["dungeon clear transit pack"] = &DungeonClearTriggerContext::transit_pack;
@@ -65,6 +70,7 @@ public:
         creators["dc skip"] = &DungeonClearTriggerContext::dc_skip;
         creators["dc status"] = &DungeonClearTriggerContext::dc_status;
         creators["dc bosses"] = &DungeonClearTriggerContext::dc_bosses;
+        creators["dc wing"] = &DungeonClearTriggerContext::dc_wing;
         creators["dc pause"] = &DungeonClearTriggerContext::dc_pause;
         creators["dungeon clear pause"] = &DungeonClearTriggerContext::dungeon_clear_pause;
         creators["dc pull"] = &DungeonClearTriggerContext::dc_pull;
@@ -104,6 +110,11 @@ private:
     static Trigger* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionTrigger(ai); }
     static Trigger* hazard_vacate(PlayerbotAI* ai) { return new DungeonClearHazardVacateTrigger(ai); }
     static Trigger* surface_for_breath(PlayerbotAI* ai) { return new DungeonClearSurfaceForBreathTrigger(ai); }
+    static Trigger* hor_stay_ahead(PlayerbotAI* ai) { return new DungeonClearHorStayAheadTrigger(ai); }
+    static Trigger* iron_hall_safe_spot(PlayerbotAI* ai) { return new DungeonClearIronHallSafeSpotTrigger(ai); }
+    static Trigger* lyceum_close_up(PlayerbotAI* ai) { return new DungeonClearLyceumCloseUpTrigger(ai); }
+    static Trigger* oc_rider(PlayerbotAI* ai) { return new DungeonClearOculusRiderTrigger(ai); }
+    static Trigger* kz_chess(PlayerbotAI* ai) { return new DungeonClearKzChessTrigger(ai); }
     static Trigger* razorgore_orb(PlayerbotAI* ai) { return new DungeonClearRazorgoreOrbTrigger(ai); }
     static Trigger* razorgore_camp(PlayerbotAI* ai) { return new DungeonClearRazorgoreCampTrigger(ai); }
     static Trigger* transit_pack(PlayerbotAI* ai) { return new DungeonClearTransitPackTrigger(ai); }
@@ -120,6 +131,7 @@ private:
     static Trigger* dc_skip(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc skip"); }
     static Trigger* dc_status(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc status"); }
     static Trigger* dc_bosses(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc bosses"); }
+    static Trigger* dc_wing(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc wing"); }
     static Trigger* dc_pause(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc pause"); }
     static Trigger* dungeon_clear_pause(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear pause"); }
     static Trigger* dc_pull(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc pull"); }

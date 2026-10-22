@@ -48,6 +48,11 @@ public:
         creators["dungeon clear heal reposition"] = &DungeonClearActionContext::heal_reposition;
         creators["dungeon clear hazard vacate"] = &DungeonClearActionContext::hazard_vacate;
         creators["dungeon clear surface for breath"] = &DungeonClearActionContext::surface_for_breath;
+        creators["dungeon clear hor stay ahead"] = &DungeonClearActionContext::hor_stay_ahead;
+        creators["dungeon clear iron hall safe spot"] = &DungeonClearActionContext::iron_hall_safe_spot;
+        creators["dungeon clear lyceum close up"] = &DungeonClearActionContext::lyceum_close_up;
+        creators["dungeon clear oc rider"] = &DungeonClearActionContext::oc_rider;
+        creators["dungeon clear kz chess"] = &DungeonClearActionContext::kz_chess;
         creators["dungeon clear razorgore orb"] = &DungeonClearActionContext::razorgore_orb;
         creators["dungeon clear razorgore camp"] = &DungeonClearActionContext::razorgore_camp;
         creators["dungeon clear transit pack"] = &DungeonClearActionContext::transit_pack;
@@ -64,6 +69,7 @@ public:
         creators["dc pull"] = &DungeonClearActionContext::dc_pull;
         creators["dc status"] = &DungeonClearActionContext::dc_status;
         creators["dc bosses"] = &DungeonClearActionContext::dc_bosses;
+        creators["dc wing"] = &DungeonClearActionContext::dc_wing;
         creators["dc go"] = &DungeonClearActionContext::dc_go;
 
         // Override mod-playerbots' "loot roll": a bot in "bot self" mode does
@@ -115,6 +121,11 @@ private:
     static Action* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionAction(ai); }
     static Action* hazard_vacate(PlayerbotAI* ai) { return new DungeonClearHazardVacateAction(ai); }
     static Action* surface_for_breath(PlayerbotAI* ai) { return new DungeonClearSurfaceForBreathAction(ai); }
+    static Action* hor_stay_ahead(PlayerbotAI* ai) { return new DungeonClearHorStayAheadAction(ai); }
+    static Action* iron_hall_safe_spot(PlayerbotAI* ai) { return new DungeonClearIronHallSafeSpotAction(ai); }
+    static Action* lyceum_close_up(PlayerbotAI* ai) { return new DungeonClearLyceumCloseUpAction(ai); }
+    static Action* oc_rider(PlayerbotAI* ai) { return new DungeonClearOculusRiderAction(ai); }
+    static Action* kz_chess(PlayerbotAI* ai) { return new DungeonClearKzChessAction(ai); }
     static Action* razorgore_orb(PlayerbotAI* ai) { return new DungeonClearRazorgoreOrbAction(ai); }
     static Action* razorgore_camp(PlayerbotAI* ai) { return new DungeonClearRazorgoreCampAction(ai); }
     static Action* transit_pack(PlayerbotAI* ai) { return new DungeonClearTransitPackAction(ai); }
@@ -131,6 +142,7 @@ private:
     static Action* dc_pull(PlayerbotAI* ai) { return new DcPullAction(ai); }
     static Action* dc_status(PlayerbotAI* ai) { return new DcStatusAction(ai); }
     static Action* dc_bosses(PlayerbotAI* ai) { return new DcBossesAction(ai); }
+    static Action* dc_wing(PlayerbotAI* ai) { return new DcWingAction(ai); }
     static Action* dc_go(PlayerbotAI* ai) { return new DcGoAction(ai); }
 
     static Action* better_loot_roll(PlayerbotAI* ai) { return new DungeonClearBetterLootRollAction(ai); }

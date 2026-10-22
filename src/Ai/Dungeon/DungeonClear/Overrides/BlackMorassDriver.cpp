@@ -29,6 +29,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 // The Black Morass wave driver — the imperative half of map 269's clear.
 //

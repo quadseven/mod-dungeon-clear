@@ -10,7 +10,7 @@
  *
  * Improvement #2: roll on gear the bot will grow into. Stock rolling asks
  * ItemUsageValue, which rejects any weapon/armor whose RequiredLevel is above
- * the bot's current level (BotCanUseItem fails), so the bot greeds or passes
+ * the bot's current level (CanUseItem fails on level alone), so the bot greeds or passes
  * on its own future upgrades. Here, when the level requirement is the ONLY
  * thing blocking the item, the vote is computed as if the bot already were
  * that level: Need when the bot will have the proficiency at that level
@@ -20,7 +20,7 @@
  *
  * Improvement #3 (not in this class): bots roll immediately. Stock reaches
  * "loot roll" only off the "very often" RandomTrigger (a 1-in-3 chance checked
- * at most once per AiPlayerbot.RepeatDelay), so a pending roll sits unanswered
+ * at most once per Playerbots.RepeatDelay), so a pending roll sits unanswered
  * for many seconds. DungeonClearLootRollPendingTrigger fires this same action
  * every non-combat tick while a vote is pending — see DungeonClearTriggers.h
  * and the node in DungeonClearStrategy.cpp.

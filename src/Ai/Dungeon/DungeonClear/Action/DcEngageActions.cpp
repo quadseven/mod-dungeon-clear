@@ -57,6 +57,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPackLeashDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBreadcrumb.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -81,6 +82,7 @@
 #include "DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 using namespace DcActionShared;
 
@@ -384,7 +386,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
                                       /*normal_only*/ false, /*exact_waypoint*/ false,
                                       MovementPriority::MOVEMENT_NORMAL);
             if (moved || bot->isMoving() ||
-                IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+                DcMoveDeferred(MovementPriority::MOVEMENT_NORMAL))
                 return true;
             // else: detour unwalkable — fall through to the direct approach.
         }
@@ -453,7 +455,7 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
         // "couldn't move AND not moving" falls through so Advance's posStuck /
         // stall escalation can still catch a real wedge. Mirrors the direct-
         // pursuit branch in DungeonClearAdvanceAction.
-        if (moved || bot->isMoving() || IsWaitingForLastMove(prio))
+        if (moved || bot->isMoving() || DcMoveDeferred(prio))
             return true;
         return false;
     }
@@ -508,7 +510,8 @@ bool DungeonClearEngageActionBase::DriveObjectiveEngage()
     return EngageDirect(target);
 }
 
-std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* target)
+std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* target,
+                                                                        Position const* dest)
 {
     if (!target)
         return std::nullopt;
@@ -571,9 +574,14 @@ std::optional<Position> DungeonClearEngageActionBase::RoomAggroSkirtPoint(Unit* 
         appr.skirtOrbitDir = 0;
     }
 
-    std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
-        bot, boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ(),
-        safeRadius, target, &appr.skirtOrbitDir);
+    std::optional<Position> wp = dest
+        ? DcEngageGeometry::AggroSafeApproachPoint(
+              bot, boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ(),
+              safeRadius, dest->GetPositionX(), dest->GetPositionY(),
+              &appr.skirtOrbitDir)
+        : DcEngageGeometry::AggroSafeApproachPoint(
+              bot, boss->GetPositionX(), boss->GetPositionY(), boss->GetPositionZ(),
+              safeRadius, target, &appr.skirtOrbitDir);
     if (wp)
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] room-clear: skirting {}'s aggro sphere (r={:.1f}) -> "
@@ -612,7 +620,44 @@ bool DungeonClearEngageActionBase::MoveToSkirtingRoomAggro(Unit* target,
                               /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     // Own the tick while the move is in flight (a duplicate-move returns false but
     // the bot is still gliding) — mirrors EngageDirect's walk-branch semantics.
-    return moved || bot->isMoving() || IsWaitingForLastMove(prio);
+    return moved || bot->isMoving() || DcMoveDeferred(prio);
+}
+
+bool DungeonClearEngageActionBase::MoveToStandSkirtingRoomAggro(Unit* pack,
+                                                                Position const& dest,
+                                                                float packRadius,
+                                                                MovementPriority prio)
+{
+    if (!pack)
+        return false;
+
+    // Boss sphere first, as in MoveToSkirtingRoomAggro. Then the pack itself:
+    // the stand spot is on its commit ring, and the tank may be starting from
+    // its side or behind it, so round it on the ring instead of cutting across.
+    // Only on the pack's own floor: from another tier the ring is meaningless and
+    // the navmesh path to the stand spot is the way up (StandWalkRoundsPack).
+    std::optional<Position> wp = RoomAggroSkirtPoint(pack, &dest);
+    if (!wp && DungeonClearMath::StandWalkRoundsPack(bot->GetPositionZ(), pack->GetPositionZ(),
+                                                     DC_Z_LEVEL_TOLERANCE))
+    {
+        DcApproachState& appr =
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+        if (appr.standOrbitPack != pack->GetGUID())
+        {
+            appr.standOrbitPack = pack->GetGUID();
+            appr.standOrbitDir = 0;
+        }
+        wp = DcEngageGeometry::AggroSafeApproachPoint(
+            bot, pack->GetPositionX(), pack->GetPositionY(), pack->GetPositionZ(),
+            packRadius, dest.GetPositionX(), dest.GetPositionY(), &appr.standOrbitDir,
+            DcEngageGeometry::OrbitProfile::Bystander);
+    }
+    Position const to = wp ? *wp : dest;
+
+    bool const moved = DcMoveTo(pack->GetMapId(), to.GetPositionX(), to.GetPositionY(),
+                                to.GetPositionZ(), /*idle*/ false, /*react*/ false,
+                                /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    return moved || bot->isMoving() || DcMoveDeferred(prio);
 }
 
 // At the boss (close, on its floor) AND no anchored intermediate hops remain
@@ -703,12 +748,36 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 
     if (!target)
     {
+        // A quiet sticky the scan has left far behind is stale: the trigger is
+        // firing for `fresh`, so walking to the sticky instead drags the tank away
+        // from the very pack that keeps the trigger live (DungeonClearMath::
+        // ShouldDropTrashSticky, tr-20260927-201144-5).
+        if (sticky && fresh &&
+            DungeonClearMath::ShouldDropTrashSticky(
+                true, fresh == sticky, sticky->IsInCombat(), bot->GetDistance(sticky),
+                bot->GetDistance(fresh), DC_TRASH_STICKY_RETARGET_MARGIN))
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] engage trash: dropping stale sticky {} ({:.1f}yd) for the "
+                      "fresh pick {} ({:.1f}yd)",
+                      bot->GetName(), sticky->GetGUID().ToString(), bot->GetDistance(sticky),
+                      fresh->GetGUID().ToString(), bot->GetDistance(fresh));
+            sticky = nullptr;
+        }
+
         target = sticky;
         if (!target)
             target = fresh;
         else if (fresh && fresh != sticky && fresh->IsInCombat() && !sticky->IsInCombat())
             target = fresh;
     }
+
+    // A target whose walk-in was given up (EngageWalkGivenUp below) is left to
+    // Advance until the give-up lapses; the trigger may well keep naming it.
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+    if (target && appr.engageWalkGivenUp.Has(target->GetGUID(), getMSTime()))
+        target = nullptr;
 
     if (!target)
     {
@@ -751,8 +820,6 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
     // ticks we take the tick back and walk in ourselves — but only for a pack the
     // CHUNKED router says is reachable, so a genuinely unreachable pack (across a gap,
     // behind a gate) still falls through to Advance rather than grinding at it.
-    DcApproachState& appr =
-        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     float const targetDist = bot->GetDistance(target);
     if (targetDist > DC_ENGAGE_RANGE && !IsDirectlyReachable(bot, target))
     {
@@ -821,7 +888,50 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
             break;
     }
 
-    return EngageDirect(target);
+    // A walk-in that is not getting any nearer is given up and the tick handed to
+    // Advance (DungeonClearMath::EngageWalkGivenUp). Out of combat only: in a
+    // fight the combat engine owns the tank and the gap is no measure of anything.
+    if (!bot->IsInCombat())
+    {
+        uint32 const nowMs = getMSTime();
+        if (appr.engageWalkWatchTarget != target->GetGUID())
+        {
+            appr.engageWalkWatchTarget = target->GetGUID();
+            appr.engageWalkWatch = DungeonClearMath::WalkInWatch{};
+        }
+        if (DungeonClearMath::EngageWalkGivenUp(appr.engageWalkWatch, bot->GetExactDist(target),
+                                                DC_STUCK_DISPLACEMENT, nowMs,
+                                                DC_ENGAGE_WALK_GIVEUP_MS,
+                                                DC_ENGAGE_WALK_TICK_GAP_MS))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] engage trash: walk-in on {} {} made no ground for {} ms "
+                     "({:.1f}yd, best {:.1f}yd) -> given up for {}s, advance resumes",
+                     bot->GetName(), target->GetName(), target->GetGUID().ToString(),
+                     nowMs - appr.engageWalkWatch.progressMs, bot->GetExactDist(target),
+                     appr.engageWalkWatch.bestDist, DC_ENGAGE_WALK_GIVEN_UP_MS / 1000);
+            appr.engageWalkGivenUp.Add(target->GetGUID(), nowMs, DC_ENGAGE_WALK_GIVEN_UP_MS);
+            appr.engageWalkWatchTarget.Clear();
+            appr.engageWalkWatch = DungeonClearMath::WalkInWatch{};
+            appr.engageWalkTarget.Clear();
+            appr.engageWalkMs = 0;
+            appr.stuckCount = 0;  // the frozen walk-in was never Advance's own failure
+            context->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
+            return false;
+        }
+    }
+
+    // Stamp a live walk-in so Advance leaves it alone on the ticks this action
+    // does not win (DungeonClearMath::ShouldYieldToEngageWalk). Only while out of
+    // combat — once the fight is on the combat engine owns the tank anyway.
+    bool const engaged = EngageDirect(target);
+    if (engaged && !bot->IsInCombat())
+    {
+        appr.engageWalkTarget = target->GetGUID();
+        uint32 const nowMs = getMSTime();
+        appr.engageWalkMs = nowMs ? nowMs : 1;
+    }
+    return engaged;
 }
 
 bool DungeonClearEngageBossAction::Execute(Event event)
@@ -848,6 +958,14 @@ bool DungeonClearEngageBossAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
+        return false;
+
+    // Travel objectives are not creatures — the trigger's kind guard, repeated for
+    // the already-queued-basket race: the trigger passed on the boss, the boss died
+    // before this ran, and `next` is now the objective behind it. Without this the
+    // live-boss lookup misses and paints a "not spawned" stall that nothing clears
+    // until Advance moves again (tr-20260927-094926-4: Maiden -> Opera: Barnes).
+    if (next->kind != DungeonAnchorKind::Boss)
         return false;
 
     Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
@@ -1002,8 +1120,45 @@ bool DungeonClearEngageBossAction::Execute(Event event)
         return true;
     }
 
+    DcApproachState& appr = context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     if (!EngageDirect(static_cast<Unit*>(boss)))
-        return false;
+    {
+        // The walk-in was refused (stock finds no route to the boss's own spot) and
+        // the tank is standing still: nothing else on the ladder pulls from here —
+        // Advance's engage hold parks the tank and clears the stall every tick. Once
+        // the refusal has lasted, tag the boss from the standoff and let him come to
+        // the party. See DungeonClearMath::ShouldTagBossFromStandoff.
+        uint32 const now = getMSTime();
+        if (appr.bossWalkRefusedTarget != boss->GetGUID() || appr.bossWalkRefusedMs == 0 ||
+            now - appr.bossWalkRefusedLastMs > DC_BOSS_STANDOFF_TAG_GRACE_MS)
+        {
+            appr.bossWalkRefusedTarget = boss->GetGUID();
+            appr.bossWalkRefusedMs = now;
+        }
+        appr.bossWalkRefusedLastMs = now;
+        float const dist = bot->GetExactDist(boss);
+        if (!DungeonClearMath::ShouldTagBossFromStandoff(
+                /*walkRefused*/ true, bot->isMoving(), bot->IsWithinLOSInMap(boss), dist,
+                DC_BOSS_STANDOFF_TAG_RANGE, appr.bossWalkRefusedMs, now,
+                DC_BOSS_STANDOFF_TAG_GRACE_MS))
+            return false;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] engage boss: no route to {} ({:.1f}yd, refused {} ms) -> tagging "
+                 "it from the standoff",
+                 bot->GetName(), next->name, dist, now - appr.bossWalkRefusedMs);
+        appr.bossWalkRefusedMs = 0;
+        bot->SetSelection(boss->GetGUID());
+        if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, boss))
+            ServerFacade::instance().SetFacingTo(bot, boss);
+        context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(boss);
+        bot->Attack(boss, botAI->IsMelee(bot));
+        boss->EngageWithTarget(bot);
+        botAI->ChangeEngine(BOT_STATE_COMBAT);
+        ClearStall(context);
+        return true;
+    }
+    appr.bossWalkRefusedMs = 0;
 
     ClearStall(context);
     return true;
@@ -1114,6 +1269,30 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
 
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
+    // The stall's own pull is over (DungeonClearMath::StallPullIsDone): clear the
+    // stall and hand the tick back to Advance, which re-stalls within
+    // DC_STUCK_LIMIT refused moves if the way really is shut. Waiting for Advance
+    // to clear it could never work — this trigger outranks Advance (20 vs 15), so
+    // while ANY reachable hostile was left the tank went on pulling them, 115yd
+    // from the boss in tr-20261019-182249-1, until the 120s stall watchdog ended a
+    // run with the whole party alive and out of combat.
+    ObjectGuid const lastAnnounced =
+        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Get();
+    if (!lastAnnounced.IsEmpty())
+    {
+        Unit* const prev = ObjectAccessor::GetUnit(*bot, lastAnnounced);
+        if (DungeonClearMath::StallPullIsDone(prev && prev->IsAlive(), bot->IsInCombat()))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] clear stalled: the stall's pull {} is done -> stall cleared, "
+                     "advance retries", bot->GetName(), lastAnnounced.ToString());
+            context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(ObjectGuid::Empty);
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().stuckCount = 0;
+            ClearStall(context);
+            return false;
+        }
+    }
+
     DcApproachState& appr =
         context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
     uint32 const now = getMSTime();
@@ -1135,8 +1314,6 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 
     // Announce target on first selection. Suppress repeats while we're still
     // working on the same one.
-    ObjectGuid const lastAnnounced =
-        context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Get();
     if (lastAnnounced != target->GetGUID())
     {
         context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(target->GetGUID());
@@ -1173,9 +1350,7 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
         return false;
     }
 
-    // Don't clear the stall reason here — only a successful Advance does that.
-    // If pathing to the boss is still blocked after this kill, we want the
-    // stall trigger to fire again next tick.
+    // The stall stays until this pull is done (top of this action).
     return EngageDirect(target);
 }
 
@@ -1488,6 +1663,32 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
                            escortee->GetName());
             return true;
         }
+        // AND "LANDED" MEANS THE FLAG IS GONE, not that the packet went out.
+        // SelectGossip reports that it sent a select, which is a weaker claim: a
+        // select can land on an option that opens ANOTHER menu instead of firing
+        // the action, and the escortee keeps his gossip flag. This branch is
+        // entered only while that flag is up, so a flag that survives the call is
+        // a click that did not resume anything — and stamping progress for it
+        // reproduced the exact invisibility the note above describes, one dungeon
+        // later: Culling of Stratholme's Arthas re-clicked ~4x/second for ten
+        // minutes with every watchdog clear (tp-20260910-083410-1, 10/10 runs).
+        // Every scripted resume gossip DC drives clears the flag on the option
+        // that fires its DoAction (Arthas, Old Hillsbrad's Thrall), so this is a
+        // reliable receipt rather than a heuristic.
+        if (escortee->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP))
+        {
+            if (!DcRun::Of(botAI).Throttled(DcThrottle::EscortResumeGossipLog, 10000))
+            {
+                LOG_WARN("playerbots.dungeonclear",
+                         "[dungeon-clear] {}: the resume gossip on {} (option {}) left "
+                         "his gossip flag up — the select did not reach the option that "
+                         "resumes him; not counting it as progress",
+                         bot->GetName(), escortee->GetName(), step.gossipOption);
+            }
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false,
+                           escortee->GetName());
+            return true;
+        }
         LOG_INFO("playerbots.dungeonclear",
                  "[dungeon-clear] {} resumed the escort of {} at a checkpoint "
                  "(gossip option {})",
@@ -1665,6 +1866,68 @@ DungeonClearEngageActionBase::EventRest DungeonClearEngageActionBase::EventRestD
     return EventRest::None;
 }
 
+bool DungeonClearEngageActionBase::HoldForPackLeash(DungeonEvent const& ev)
+{
+    // Hold budget and the walk window its watchdog grants. Twenty seconds is
+    // ample for a follower on the far side of a room to walk in; a member who
+    // has not come by then is wedged, and the six-second window is one short leg
+    // of progress before the leash re-arms (see DcPackLeashDecision.h).
+    constexpr uint32 LEASH_HOLD_BUDGET_MS = 20000;
+    constexpr uint32 LEASH_WALK_WINDOW_MS = 6000;
+    constexpr uint32 LEASH_LOG_MS = 5000;
+
+    uint32 outside = 0;
+    uint32 living = 0;
+    float trail = 0.0f;
+    Player* trailer = nullptr;
+    if (Group* group = bot->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* m = ref->GetSource();
+            if (!m || m == bot || !m->IsInWorld() || !m->IsAlive() || m->GetMapId() != bot->GetMapId() ||
+                m->GetInstanceId() != bot->GetInstanceId())
+                continue;
+            ++living;
+            float const d = bot->GetExactDist(m);
+            if (d > ev.packLeash)
+                ++outside;
+            if (d > trail)
+            {
+                trail = d;
+                trailer = m;
+            }
+        }
+    }
+
+    DcRunState& run = DcRun::Of(context);
+    DcPackLeash::Inputs in;
+    in.outside = outside;
+    in.nowMs = getMSTime();
+    in.holdSinceMs = run.leashHoldSinceMs;
+    in.releasedAtMs = run.leashReleasedAtMs;
+    in.holdBudgetMs = LEASH_HOLD_BUDGET_MS;
+    in.walkWindowMs = LEASH_WALK_WINDOW_MS;
+    DcPackLeash::Verdict const v = DcPackLeash::Decide(in);
+
+    if (v.timedOut)
+        LOG_WARN("playerbots.dungeonclear",
+                 "[DC:{}] event '{}' pack leash — {} of {} member(s) still outside {:.0f}yd after "
+                 "{}s (furthest {} at {:.1f}yd) -> walking on for {}s",
+                 bot->GetName(), ev.name, outside, living, ev.packLeash, LEASH_HOLD_BUDGET_MS / 1000,
+                 trailer ? trailer->GetName() : "?", trail, LEASH_WALK_WINDOW_MS / 1000);
+    else if (v.hold && !run.Throttled(DcThrottle::EventLeashLog, LEASH_LOG_MS))
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] event '{}' pack leash — holding: {} of {} member(s) outside {:.0f}yd "
+                 "(furthest {} at {:.1f}yd)",
+                 bot->GetName(), ev.name, outside, living, ev.packLeash,
+                 trailer ? trailer->GetName() : "?", trail);
+
+    run.leashHoldSinceMs = v.holdSinceMs;
+    run.leashReleasedAtMs = v.releasedAtMs;
+    return v.hold;
+}
+
 bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
 {
     if (!bot || step.goEntry == 0)
@@ -1835,10 +2098,78 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     return true;
 }
 
+bool DungeonClearEngageActionBase::DriveUseItemAt(EventStep const& step)
+{
+    if (!bot || step.itemId == 0 || step.goEntry == 0)
+        return false;
+
+    // Mirrors the executor's DC_EVENT_USEITEM_REACH / DC_EVENT_USEITEM_LATCH — keep
+    // the three in sync, or the driver and RunStep disagree about arrival and the
+    // tank oscillates between walking and casting.
+    float const reach = step.radius > 0.0f ? step.radius : 4.0f;
+    constexpr float DC_USEITEM_LATCH = 5.0f;
+
+    // Already done: the receipt GO (the Plagued Grain Crate the helper's SpellHit
+    // summons in the Suspicious one's place) stands on the anchor. Hand back from
+    // wherever the tank is — RunStep's identical latch reports Done and the chain
+    // moves to the next crate, so walking here would be walking to a spent one.
+    {
+        std::list<GameObject*> receipts;
+        bot->GetGameObjectListWithEntryInGrid(receipts, step.goEntry, 80.0f);
+        for (GameObject* g : receipts)
+            if (g && g->GetExactDist(step.x, step.y, step.z) <= DC_USEITEM_LATCH)
+                return false;
+    }
+
+    // In position -> hand back so RunStep uses the item. Also the exit for an
+    // anchor this driver has delivered: a tank inside `reach` must not be re-moved,
+    // or the 10s item cooldown is spent re-issuing splines instead of waiting.
+    if (bot->GetExactDist(step.x, step.y, step.z) <= reach)
+        return false;
+
+    // PARTY-COHESION GATE, the barrel run's verbatim (and the same reason):
+    // this drive owns the tick at DcRel::AtObjective (30), so without it the tank
+    // runs the 330yd of road alone while the status panel reports it is waiting for
+    // the party. Spread-only — HP/mana is the rest decision's job, below — and
+    // measured through GetSpreadGate so a hold-at-camp party legitimately standing
+    // PullSetback behind the tank cannot deadlock it.
+    DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
+    if (!DcPartyState::IsPartyReady(bot, /*minHp*/ 0.0f, /*minMp*/ 0.0f, gate.maxSpread,
+                                    gate.anchor, gate.maxTankGap))
+    {
+        SetPhase(context, "objective");
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return true;
+    }
+
+    // OWN THE TICK and drive a sustained navigation to the crate. Through the DC
+    // movement system (not a bare MovePoint) because the legs are 48-81yd — past
+    // the point where the engine's 74-point path cap truncates silently — and
+    // because the at-objective Hold would chop a plain spline every tick.
+    SetPhase(context, "objective");
+    DcRecordBreadcrumb(context, bot);  // followers inherit the centered trail
+    DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
+             /*normal_only*/ false, /*exact_waypoint*/ false,
+             MovementPriority::MOVEMENT_NORMAL);
+    return true;
+}
+
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
+        return false;
+
+    // The trigger that queued this action judged arrival against the objective
+    // `next` named THEN. A queued action can run a tick or two later, after the
+    // previous objective latched and NextDungeonBoss moved on — and without this
+    // re-check it drives the NEW objective's event from wherever the tank stands.
+    // Sunken Temple, sk-20261003-174711: one Atal'ai Defender latched, the next
+    // defender's event started 70-90yd from it, its 60yd KillCreature gate found
+    // nothing alive and reported Done, and the objective latched unfought. Only
+    // five of six defenders died, the forcefield never dropped, and both runs
+    // timed out no_progress in front of Jammal'an.
+    if (!DungeonEventExecutor::ObjectiveArrived(bot, context, *next))
         return false;
 
     // We own the leader's tick for as long as this objective runs — including
@@ -1886,12 +2217,17 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             // Excluded when the garrison carries a WhileHolding hook (the Ring of
             // Law): there the hold's per-tick hook is the only thing that notices
             // the encounter resetting behind the party, so it must not be yielded.
+            //
+            // The raid-muster step (DC_HOOK_RAID_MUSTER) is a camp too, with no
+            // position of its own: the muster raises the rest floors to 100/100
+            // and waits for everyone to reach them, the tank included.
             bool const garrisoned =
-                step.kind == EventStepKind::MoveTo && step.hookId == 0 &&
-                (step.creatureEntry != 0 || step.instanceDataId >= 0 ||
-                 step.persistentDataId >= 0) &&
-                bot->GetExactDist(step.x, step.y, step.z) <=
-                    (step.radius > 0.0f ? step.radius : 4.0f);
+                (step.kind == EventStepKind::MoveTo && step.hookId == 0 &&
+                 (step.creatureEntry != 0 || step.instanceDataId >= 0 ||
+                  step.persistentDataId >= 0 || step.bossStateId >= 0) &&
+                 bot->GetExactDist(step.x, step.y, step.z) <=
+                     (step.radius > 0.0f ? step.radius : 4.0f)) ||
+                (step.kind == EventStepKind::Custom && step.hookId == DC_HOOK_RAID_MUSTER);
             if (garrisoned)
             {
                 switch (EventRestDecision())
@@ -1909,6 +2245,18 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                     case EventRest::None:
                         break;
                 }
+            }
+            // THE PACK LEASH (DungeonEvent::packLeash): no step walks the leader
+            // on while the party is strung out behind it. Asked before every
+            // movement-issuing branch below, and only here — between fights —
+            // so a fight is never held and the leader never walks back. The
+            // followers' own follow closes the gap; DcPackLeash bounds the wait.
+            if (ev->packLeash > 0.0f && HoldForPackLeash(*ev))
+            {
+                DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                SetPhase(context, "objective");
+                ClearStall(context);
+                return true;
             }
             if (step.kind == EventStepKind::KillCreature && step.engage && step.creatureEntry)
             {
@@ -2000,6 +2348,34 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                 if (DriveUseItemOnGO(step))
                     return true;
             }
+            // UseItemAt: the Durnholde-barrel argument with one map's geography
+            // swapped in. OWN THE TICK to drive the approach, because the
+            // StopBot(Hold) below cancels RunStep's own HopTo every tick and the
+            // Culling of Stratholme's crate legs are 48-81yd of open road — far
+            // enough that a one-tick-of-movement-per-cycle crawl would burn the
+            // step timeout. Recover between crates for the same reason the barrels
+            // do: this rung sits above NeedsRest (26.5), the five crates are 330yd
+            // apart end to end, and the party has the whole intro RP ahead of it.
+            else if (step.kind == EventStepKind::UseItemAt)
+            {
+                switch (EventRestDecision())
+                {
+                    case EventRest::Yield:
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                        SetPhase(context, "objective");
+                        ClearStall(context);
+                        return false;  // NeedsRest (26.5) wins -> the tank drinks/eats
+                    case EventRest::Hold:
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                        SetPhase(context, "objective");
+                        ClearStall(context);
+                        return true;   // own the tick; wait for the party to recover
+                    case EventRest::None:
+                        break;
+                }
+                if (DriveUseItemAt(step))
+                    return true;
+            }
         }
     }
 
@@ -2034,6 +2410,8 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             case ObjectiveArriveResult::WaitingForRecovery:
                 outcome = EventDriveOutcome::Running;
                 break;
+            // No event to rewind on a bare on-arrival hook: keep holding.
+            case ObjectiveArriveResult::Restart: outcome = EventDriveOutcome::Running; break;
             case ObjectiveArriveResult::Blocked: outcome = EventDriveOutcome::Stalled; break;
             case ObjectiveArriveResult::Done:
             default:                             outcome = EventDriveOutcome::Completed; break;
@@ -2484,7 +2862,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // blocked-state watchdog ever sees one.
         if (door && DcEventDoorRegistry::IsSelfClearing(door->GetEntry()))
         {
-            StallDungeonClear(botAI, waitReason);
+            StallDungeonClearForDoor(botAI, waitReason);
             return true;
         }
 
@@ -2568,7 +2946,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                          "{:.1f}yd away (> {:.0f}yd) -> holding, not clicking",
                          bot->GetName(), door->GetGUID().ToString(),
                          door->GetName(), bot->GetExactDist(door), DC_DOOR_USE_RANGE);
-                StallDungeonClear(botAI, openingReason);
+                StallDungeonClearForDoor(botAI, openingReason);
                 return true;
             }
 
@@ -2591,7 +2969,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
                     doorAppr.lastDoorUseGuid = door->GetGUID();
                     doorAppr.lastDoorUseMs = now;
                 }
-                StallDungeonClear(botAI, openingReason);
+                StallDungeonClearForDoor(botAI, openingReason);
                 return true;
             }
         }
@@ -2810,7 +3188,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     if (unplaced && !atDoor)
     {
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
-        StallDungeonClear(botAI, waitReason);
+        StallDungeonClearForDoor(botAI, waitReason);
         return true;
     }
 

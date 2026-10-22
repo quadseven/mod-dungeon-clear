@@ -34,6 +34,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 // The Violet Hold driver — the imperative half of map 608's clear.
 //

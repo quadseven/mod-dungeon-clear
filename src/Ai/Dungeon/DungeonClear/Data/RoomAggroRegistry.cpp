@@ -72,8 +72,25 @@ namespace
         // flickering on 18309/18311/18313, far=108+, never 0).
         { 557, 18341, 70.0f, { 18309, 18311, 18313 }, true, -145.0f, -50.0f },
         { 601, 28684,  40.0f, {} }, // Azjol-Nerub — Krik'thir the Gatewatcher
-        { 230, 9019,  166.0f, {} }, // Blackrock Depths — Emperor Dagran Thaurissan
+        // Blackrock Depths — Emperor Dagran Thaurissan. CallForHelp(VISIBLE_RANGE)
+        // wakes the whole throne room, the two balconies included, so their packs
+        // count however long the ramp walk is (see RoomAggroBoss::detourReachable).
+        // The throne-side floor goes last (bossSideLastRadius): 36yd takes in the
+        // flanking packs (<= 29.9yd from him) and stops short of the balconies'
+        // nearest mob (39.6yd).
+        { 230, 9019, 166.0f, {}, false, 0.0f, 0.0f, /*pullOutRadius*/ 0.0f,
+          /*skirtRadius*/ 0.0f, /*hasCampBox*/ false, 0.0f, 0.0f, 0.0f, 0.0f,
+          /*detourReachable*/ true, /*bossSideLastRadius*/ 36.0f },
         { 429, 14354,  50.0f, {} }, // Dire Maul East — Pusillin
+
+        // Upper Blackrock Spire (229) — General Drakkisath. NOT a script radius:
+        // his own engage only DoZoneInCombats his two Chromatic Elite Guards (his
+        // formation, fought with him). The room around him is the problem — 14
+        // Blackhand / Rage Talon mobs stand within 57yd of him at the north pair,
+        // the south archway the party walks in by, and the western group, and a
+        // boss fight among them pulls them in. 60yd is the measured gap: the next
+        // spawn out is 71.5yd off, in the corridors. Single level (z 111).
+        { 229, 10363,  60.0f, {} }, // Upper Blackrock Spire — General Drakkisath
 
         // Deadmines (36) — Gilnid, the goblin foundry.
         //
@@ -240,6 +257,50 @@ namespace
         // pullOutRadius 14, not the skirt).
         { 554, 19221, 70.0f, {}, false, 0.0f, 0.0f, /*pullOutRadius*/ 14.0f,
           /*skirtRadius*/ 40.0f },
+
+        // Karazhan (532) — Moroes. The Banquet Hall is cleared before he is
+        // touched. He stands on a dais 3yd above the hall floor (-10982.7,
+        // -1877.9, 81.8), aggressive, and on engage does CallForHelp(20) +
+        // DoZoneInCombat. His Reset() summons four of six guests 4-7yd around
+        // him, and each guest's SmartAI does CallForHelp 15 +
+        // SetInCombatWithZone on aggro. So coming within ~20yd of the dais, or
+        // pulling anything a guest can reach, starts the fight with every
+        // nearby pack.
+        //
+        // The hall (world DB, distance from Moroes): Phantom Guest formations
+        // of 8-9 elites led by 135233 (west, 21.8-38.6yd) and 135206 (east,
+        // 21.1-37.9yd), 135217 (south row, 41.6-45.3yd) and 135229 (far
+        // south, 54.4-56.4yd); four Ghostly Stewards (45.5-53.7yd) and three
+        // pathing Skeletal Waiters (36.5-41.4yd). Four more guests stand on the
+        // upper gallery at z 93.8; the reach filter drops them.
+        //
+        // radius 60 covers the far formation. The whitelist (Phantom Guest,
+        // Steward, Waiter) is what keeps his summoned guests (17007,
+        // 19872-19876) out of the room-trash set.
+        //
+        // pullOutRadius 12. The computed exclusion sphere would swallow both
+        // 21yd formations as "comes with the boss": Moroes plus 17 elites.
+        // Twelve keeps the summoned guests (<=7yd) excluded and makes every
+        // formation clearable, and it forces the advanced pull, so the tank
+        // tags a formation from outside and drags it south instead of meleeing
+        // it next to the dais.
+        //
+        // skirtRadius 32: his 20yd CallForHelp, plus a guest's 15yd call
+        // anchored ~6yd off him, minus overlap, plus margin. The approach
+        // orbit, the boss standoff and the pull camp all stay 32yd off the
+        // dais, which puts the camp at the south end of the hall.
+        //
+        // Camp box: his evade box (x >= -11028, y >= -1955), pulled 15yd in
+        // so the fanned-out camp, a step-out and the pack around the tank all
+        // stay inside it. Without it the drag walked camps back to the south
+        // door (y -1955..-1957), and a fresh camp at y -1943 put the fight
+        // against the Phantom Attendants' corridor (tr-20260926-174359-2).
+        // The max bounds are past the dais and the east wall, so they never
+        // bind.
+        { 532, 15687, 60.0f, { 16409, 16414, 16415 }, false, 0.0f, 0.0f,
+          /*pullOutRadius*/ 12.0f, /*skirtRadius*/ 32.0f,
+          /*hasCampBox*/ true, /*campMinX*/ -11013.0f, /*campMaxX*/ -10900.0f,
+          /*campMinY*/ -1940.0f, /*campMaxY*/ -1800.0f },
     };
 }
 
@@ -270,6 +331,14 @@ bool RoomAggroRegistry::InRoomBand(RoomAggroBoss const& boss, float worldY)
     if (!boss.hasYBand)
         return true;
     return worldY > boss.minY && worldY < boss.maxY;
+}
+
+bool RoomAggroRegistry::InCampBox(RoomAggroBoss const& boss, float worldX, float worldY)
+{
+    if (!boss.hasCampBox)
+        return true;
+    return worldX >= boss.campMinX && worldX <= boss.campMaxX &&
+           worldY >= boss.campMinY && worldY <= boss.campMaxY;
 }
 
 bool RoomAggroRegistry::IsRoomTrash(RoomAggroBoss const& boss, uint32 entry,

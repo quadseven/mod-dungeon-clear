@@ -64,9 +64,30 @@ EventBuilder& EventBuilder::Persistent()
     return *this;
 }
 
+EventBuilder& EventBuilder::CompleteWhenGOState(uint32 goEntry, uint32 wantState,
+                                                float searchRadius)
+{
+    _ev.completeGoEntry = goEntry;
+    _ev.completeGoState = wantState;
+    _ev.completeGoRadius = searchRadius;
+    return *this;
+}
+
 EventBuilder& EventBuilder::OwnsThePull()
 {
     _ev.ownsThePull = true;
+    return *this;
+}
+
+EventBuilder& EventBuilder::PackLeash(float radius)
+{
+    _ev.packLeash = radius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::YieldsTheApproach()
+{
+    _ev.yieldsTheApproach = true;
     return *this;
 }
 
@@ -156,6 +177,13 @@ EventBuilder& EventBuilder::ReportUse()
     return *this;
 }
 
+EventBuilder& EventBuilder::CarryItem(uint32 itemId)
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().itemId = itemId;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
 {
     EventStep& s = Add(EventStepKind::MoveTo);
@@ -186,6 +214,26 @@ EventBuilder& EventBuilder::MoveToHoldUntilSpawn(float x, float y, float z, floa
     s.radius = radius;
     s.creatureEntry = creatureEntry;  // non-zero => garrison-until-spawn gate
     s.wantAlive = wantAlive;
+    return *this;
+}
+
+EventBuilder& EventBuilder::MoveToHoldUntilBossState(float x, float y, float z, float radius,
+                                                     uint32 bossStateId, uint32 clearMask)
+{
+    EventStep& s = Add(EventStepKind::MoveTo);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    s.bossStateId = static_cast<int32>(bossStateId);
+    s.bossStateClearMask = clearMask;
+    return *this;
+}
+
+EventBuilder& EventBuilder::RestartOnBossState(uint32 mask)
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().restartOnBossStateMask = mask;
     return *this;
 }
 
@@ -324,6 +372,13 @@ EventBuilder& EventBuilder::OnlyEntries(std::vector<uint32> entries)
     return *this;
 }
 
+EventBuilder& EventBuilder::OrSpawnOf(std::vector<uint32> entries)
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().orEntries = std::move(entries);
+    return *this;
+}
+
 EventBuilder& EventBuilder::Wait(uint32 durationMs)
 {
     EventStep& s = Add(EventStepKind::Wait);
@@ -367,6 +422,23 @@ EventBuilder& EventBuilder::UseItemOnGO(uint32 itemId, uint32 spellId, uint32 go
     s.itemId = itemId;
     s.spellId = spellId;
     s.goEntry = goEntry;
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::UseItemAt(uint32 itemId, uint32 spellId, uint32 receiptGoEntry,
+                                     float x, float y, float z, float radius)
+{
+    EventStep& s = Add(EventStepKind::UseItemAt);
+    s.itemId = itemId;
+    s.spellId = spellId;
+    // The RECEIPT object, not a cast target — see the kind's note. It rides the
+    // shared goEntry field because that is where every GO-shaped step keeps its
+    // entry and the executor's scan helpers already read it.
+    s.goEntry = receiptGoEntry;
     s.x = x;
     s.y = y;
     s.z = z;
@@ -427,6 +499,7 @@ namespace
             RegisterSunkenTempleEvents(t);
             RegisterZulFarrakEvents(t);
             RegisterBlackrockDepthsEvents(t);
+            RegisterBlackrockSpireEvents(t);
             RegisterDeadminesEvents(t);
             RegisterWailingCavernsEvents(t);
             RegisterStratholmeEvents(t);
@@ -457,6 +530,12 @@ namespace
             RegisterHallsOfStoneEvents(t);
             RegisterHallsOfLightningEvents(t);
             RegisterUtgardePinnacleEvents(t);
+            RegisterPitOfSaronEvents(t);
+            RegisterHallsOfReflectionEvents(t);
+            RegisterCullingOfStratholmeEvents(t);
+            RegisterTrialOfTheChampionEvents(t);
+            RegisterOculusEvents(t);
+            RegisterKarazhanEvents(t);
             return t;
         }();
         return kEvents;

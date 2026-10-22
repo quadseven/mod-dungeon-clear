@@ -44,7 +44,7 @@
  *     is having the strategy in the playerbots default strategy set. The
  *     registrar above now injects "+dungeon clear" into that set in code (the
  *     four sPlayerbotAIConfig strategy strings), so no manual
- *     `AiPlayerbot.NonCombatStrategies = "+dungeon clear"` conf line is needed.
+ *     `Playerbots.NonCombatStrategies = "+dungeon clear"` conf line is needed.
  *     The `.dc` slash command (DungeonClearCommand.cpp) needs neither, since it
  *     dispatches the action directly.
  */
@@ -81,6 +81,7 @@
 #include "WarlockAiObjectContext.h"
 #include "WarriorAiObjectContext.h"
 
+#include "BgQueueFill/DcBgQueueFillManager.h"
 #include "DungeonQueueFill/DcDungeonQueueFillManager.h"
 #include "Util/DcProvisionBudget.h"
 #include "Util/DcSpectator.h"
@@ -89,6 +90,8 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/BlackrockDepthsLyceum.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFirstContact.h"
@@ -97,6 +100,7 @@
 #include "TestRun/DcTestDriver.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestPlanManager.h"
+#include "Lab/DcLabManager.h"
 #include "TestRun/DcTestRunManager.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 
@@ -318,11 +322,13 @@ public:
     void OnPlayerLogin(Player* player) override
     {
         DcStrategyGate::Reconcile(player);
+        DcStrategyGate::ApplyEntryDefaults(player);
     }
 
     void OnPlayerMapChanged(Player* player) override
     {
         DcStrategyGate::Reconcile(player);
+        DcStrategyGate::ApplyEntryDefaults(player);
     }
 };
 
@@ -349,10 +355,32 @@ public:
             return;
 
         DcPullBrake::OnEnterCombat(player);
+        // Same 0->1 edge: a new fight restarts the threat-lead clock.
+        DcLeaderSignal::NoteLeaderEnterCombat(player);
         // Same hook, second reader: `enemy` was discarded here for as long as this
         // script has existed, and it is the only record anywhere of what STARTED a
         // fight. See DcFirstContact.h for what that cost.
         DcFirstContact::OnEnterCombat(player, enemy);
+    }
+};
+
+// A creature engaging a run member mid-fight. The player-side hook above only
+// fires on a player's 0->1 transition, so an add joining a running fight is
+// otherwise unrecorded. See DcFirstContact::OnCreatureEngage.
+class DungeonClearLateJoinerScript : public UnitScript
+{
+public:
+    DungeonClearLateJoinerScript()
+        : UnitScript("DungeonClearLateJoinerScript", true, {
+            UNITHOOK_ON_UNIT_ENTER_COMBAT
+        }) {}
+
+    void OnUnitEnterCombat(Unit* unit, Unit* victim) override
+    {
+        if (!DcModule::IsEnabled())
+            return;
+        if (Creature* creature = unit ? unit->ToCreature() : nullptr)
+            DcFirstContact::OnCreatureEngage(creature, victim);
     }
 };
 
@@ -458,6 +486,26 @@ public:
     }
 };
 
+// Threat lead: stamp the DC leader's first hit of each fight, which the damage
+// hold for DPS followers measures from (DcLeaderSignal::NoteLeaderHit). Cheap for
+// every other hit in the world: a player check, an AI lookup, one flag test.
+class DungeonClearLeaderFirstHitScript : public UnitScript
+{
+public:
+    DungeonClearLeaderFirstHitScript()
+        : UnitScript("DungeonClearLeaderFirstHitScript", true, {
+            UNITHOOK_ON_DAMAGE
+        }) {}
+
+    void OnDamage(Unit* attacker, Unit* victim, uint32& damage) override
+    {
+        if (!damage || !attacker || !victim || victim->IsPlayer() || !DcModule::IsEnabled())
+            return;
+        if (Player* player = attacker->ToPlayer())
+            DcLeaderSignal::NoteLeaderHit(player);
+    }
+};
+
 // Drives the orphaned-follow reaper once per world tick. A non-tank DC follower
 // installs a persistent MoveFollow generator to chase the tank; its own
 // follow-tank action tears that down when the DC tank goes away — but only while
@@ -499,6 +547,17 @@ public:
         // whenever nobody is queueing.
         DcDungeonQueueFillManager::Instance().Tick(diff);
 
+        // Battleground instant queue fill: same shape, same reasons for
+        // running ahead of the module gate — it too releases what it holds
+        // when switched off, and it too gets a live player's claim on the
+        // provisioning ration ahead of the test harness.
+        DcBgQueueFillManager::Instance().Tick(diff);
+
+        // The Lyceum's room hold (BRD pets passive, torches looted in combat).
+        // Ahead of the gate for the queue fills' reason: what it holds — pets it
+        // put passive — it must hand back when the module goes off.
+        DcLyceum::Tick(diff, DcModule::IsEnabled());
+
         if (!DcModule::IsEnabled())
             return;
 
@@ -538,6 +597,9 @@ public:
         DcTestDriver::Tick();
         DcTestPlanManager::Instance().Tick(diff);
         DcTestRunManager::Instance().Tick(diff);
+        // Pull Lab scheduler: launches warm lab parties through the run
+        // manager above (they tick there); this only fills free capacity.
+        DcLabManager::Instance().Tick(diff);
 
         // Dungeon-gate correctness net: re-assert "DC strategies installed iff in
         // a dungeon" across all bots on a throttled cadence. The login and
@@ -599,6 +661,102 @@ public:
                  "(ZF coord-typo workaround)",
                  creature->GetGUID().ToString(), entry, creature->GetPositionX());
         creature->DespawnOrUnsummon(Milliseconds(200));
+    }
+};
+
+// WORKAROUND for Stratholme's (map 329) gate-trap critters falling out of the
+// world. instance_stratholme's DoSpawnPlaguedCritters summons 30 Plagued Rats /
+// Insects / Maggots at random points within 8yd of the triggering player, at the
+// player's z+1, with no ground check. They are summoned already attacking, so
+// when one drops through the floor the tank chases it and the party follows.
+// Both gate traps have such a gap:
+// - Scarlet side, the alley at (3612,-3335): some land inside wall geometry and
+//   drop ~66yd onto a floor under Festival Lane, and the run ends trapped ~70yd
+//   under Hearthsinger Forresten ("Stuck near" / "route dead-ends" — five of
+//   five such failures in sk-20261003-174711 started with a critter 66-68yd
+//   below its summon point).
+// - Undead side, the trap at portcullis 175354 (around 3917,-3556): in
+//   tr-20261011-100956-1 a rat dropped there, and by the time it was 20yd down
+//   the tank had already followed it through the floor (z 132 -> 45).
+//
+// Surgical: only these three critter entries on map 329, and only once one sits
+// more than STRAT_CRITTER_FALL_YD (6yd) below its home (= summon point), low
+// enough that it should be gone before the tank follows it down. There is
+// nothing to fight down there, and despawning a critter that merely walked
+// down a slope costs nothing: the trap gates reopen on a timer, not on critter
+// kills.
+class DungeonClearStratFallenCritterScript : public AllCreatureScript
+{
+public:
+    DungeonClearStratFallenCritterScript() : AllCreatureScript("DungeonClearStratFallenCritterScript") {}
+
+    void OnAllCreatureUpdate(Creature* creature, uint32 /*diff*/) override
+    {
+        if (!creature || creature->GetMapId() != 329 /*Stratholme*/)
+            return;
+        uint32 const entry = creature->GetEntry();
+        if (entry != 10441 /*Plagued Rat*/ && entry != 10461 /*Plagued Insect*/ &&
+            entry != 10536 /*Plagued Maggot*/)
+            return;
+        if (!creature->IsSummon() || !creature->IsAlive() || !DcModule::IsEnabled())
+            return;
+        constexpr float STRAT_CRITTER_FALL_YD = 6.0f;
+        float const homeZ = creature->GetHomePosition().GetPositionZ();
+        if (creature->GetPositionZ() >= homeZ - STRAT_CRITTER_FALL_YD)
+            return;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC] despawning fallen Stratholme critter {} (entry {}) at "
+                 "({:.1f},{:.1f},{:.1f}), {:.1f}yd below its summon point",
+                 creature->GetGUID().ToString(), entry, creature->GetPositionX(),
+                 creature->GetPositionY(), creature->GetPositionZ(),
+                 homeZ - creature->GetPositionZ());
+        creature->DespawnOrUnsummon();
+    }
+};
+
+// WORKAROUND for Blackrock Depths' (map 230) Ironhand Guardians holding the party
+// in combat for the rest of the run. Stock AC's statue (8982) carries
+// CREATURE_FLAG_EXTRA_CANNOT_ENTER_COMBAT (0x2000): CombatManager::CanBeginCombat
+// refuses any combat involving it, so its Gout of Flame burns without flagging
+// anyone. mod-individual-progression replaces all six with 108982 (SmartAI,
+// casting out of combat forever — IP PR #890) whose flags_extra is 2 (CIVILIAN)
+// and has lost the 0x2000. So every statue that burns a member enters combat with
+// it, and an unattackable, rooted creature in an instance never leaves: the bot
+// stays combat-flagged long after the hall (live: refs held from 130-240yd), the
+// rest gates never let a healer drink, and the DC driver goes blind (combat with
+// no attackers). As a side effect the IP statue stops firing once it is in
+// combat, because its only cast is an out-of-combat event.
+//
+// Put the stock flag back on the live creature and end whatever combat it already
+// holds. Both entries, in case a data set restores the stock one without the
+// flag. Per-update rather than on add-to-world so a respawn (UpdateEntry resets
+// the flag from the template) and a statue spawned before the module came up are
+// covered too; past the first update it costs a map compare.
+class DungeonClearIronHallGuardianScript : public AllCreatureScript
+{
+public:
+    DungeonClearIronHallGuardianScript() : AllCreatureScript("DungeonClearIronHallGuardianScript") {}
+
+    void OnAllCreatureUpdate(Creature* creature, uint32 /*diff*/) override
+    {
+        if (!creature || creature->GetMapId() != DcBlackrockDepths::MAP_ID)
+            return;
+        uint32 const entry = creature->GetEntry();
+        if (entry != DcBlackrockDepths::NPC_IRONHAND_GUARDIAN &&
+            entry != DcBlackrockDepths::NPC_IRONHAND_GUARDIAN_IP)
+            return;
+        if (creature->IsCombatDisallowed() || !DcModule::IsEnabled())
+            return;
+
+        bool const wasInCombat = creature->IsInCombat();
+        creature->SetIsCombatDisallowed(true);
+        creature->GetCombatManager().EndAllCombat();
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC] Ironhand Guardian {} (entry {}) set CANNOT_ENTER_COMBAT{} "
+                 "(IP 108982 data lost stock 8982's flags_extra 0x2000)",
+                 creature->GetGUID().ToString(), entry,
+                 wasInCombat ? ", its combat ended" : "");
     }
 };
 
@@ -677,13 +835,17 @@ void AddSC_dungeon_clear_module()
     new DungeonClearRegistrarWorldScript();
     new DungeonClearLoginPlayerScript();
     new DungeonClearPullBrakeScript();
+    new DungeonClearLateJoinerScript();
     // Opening half only — the End script registers on the first world tick so
     // it sorts after playerbots' AI-update hook (see the ordering contract).
     new DungeonClearSpectatorMoverBeginScript();
     new DungeonClearSpectatorPlayerScript();
     new DungeonClearSpectatorDeathGuardScript();
+    new DungeonClearLeaderFirstHitScript();
     new DungeonClearReaperScript();
     new DungeonClearZfStraySummonScript();
+    new DungeonClearStratFallenCritterScript();
+    new DungeonClearIronHallGuardianScript();
     new DungeonClearEranikusCombatReleaseScript();
 
     // `.dc test` harness: receive each changed STATUS frame for the monitored

@@ -40,6 +40,7 @@ namespace
             RegisterRazorfenDownsRoster(t);
             RegisterZulFarrakRoster(t);
             RegisterBlackrockDepthsRoster(t);
+            RegisterBlackrockSpireRoster(t);
             RegisterBlackwingLairRoster(t);
             RegisterDeadminesRoster(t);
             RegisterWailingCavernsRoster(t);
@@ -68,6 +69,12 @@ namespace
             RegisterMoltenCoreRoster(t);
             RegisterHallsOfStoneRoster(t);
             RegisterUtgardePinnacleRoster(t);
+            RegisterPitOfSaronRoster(t);
+            RegisterHallsOfReflectionRoster(t);
+            RegisterCullingOfStratholmeRoster(t);
+            RegisterTrialOfTheChampionRoster(t);
+            RegisterOculusRoster(t);
+            RegisterKarazhanRoster(t);
             return t;
         }();
         return kPatches;

@@ -11,6 +11,7 @@
 #include "MovementActions.h"
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPbCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
@@ -20,6 +21,7 @@ class Creature;
 class Map;
 struct DungeonBossInfo;
 struct EventStep;
+struct DungeonEvent;
 struct DungeonEventProgress;
 
 // Thin MovementAction subclass that every movement-issuing DC action derives
@@ -38,11 +40,55 @@ protected:
     // Arbiter-funneled point move. Refuses while the run is paused (killing the
     // queued-action race), cancels a stale escort glide that would otherwise
     // coast under the new move, then delegates to MovementAction::MoveTo. Same
-    // own-the-tick semantics and argument list as the inherited MoveTo.
+    // own-the-tick semantics and argument list as the inherited MoveTo, plus one
+    // trailing knob:
+    //
+    // `ignoreEnemyTargets` (default TRUE) opts the leg out of stock's
+    // TravelPath::ClipPath (mod-playerbots #2747), which otherwise truncates an
+    // out-of-combat walk at the first path point inside attack range of a live
+    // hostile. That fires exactly in DC's pull approach, which deliberately walks
+    // to and past the aggro edge; DC owns its own aggro geometry (nav penalties,
+    // hazard registries, camp anchors, pull governor) and a silent truncation
+    // upstream of all of that is strictly harmful. No current caller passes
+    // false; the knob exists so one can, deliberately. Pre-#2747 it is accepted
+    // and dropped.
     bool DcMoveTo(uint32 mapId, float x, float y, float z, bool idle = false, bool react = false,
                   bool normal_only = false, bool exact_waypoint = false,
                   MovementPriority priority = MovementPriority::MOVEMENT_NORMAL, bool lessDelay = false,
-                  bool backwards = false);
+                  bool backwards = false, bool ignoreEnemyTargets = true);
+
+    // Would the movement arbiter refuse a move at `prio` right now? The one
+    // question every own-the-tick guard asks, spelled once for both sides of
+    // mod-playerbots #2747 — IsWaitingForLastMove before it, !CanOverrideMovement
+    // after (see DcPbCompat.h for why those are not simply inverses of each
+    // other). Both are protected members of MovementAction, so this has to be a
+    // member here; the `Self` cast makes the call dependent so the branch for the
+    // other version is never name-looked-up against headers that lack it.
+    template <class Self = DcMovementAction>
+    bool DcMoveDeferred(MovementPriority prio)
+    {
+        Self* self = static_cast<Self*>(this);
+        if constexpr (DcPbCompat::kMovementV2)
+            return !self->CanOverrideMovement(prio);
+        else
+            return self->IsWaitingForLastMove(prio);
+    }
+
+    // The inherited MoveTo, with #2747's trailing ignoreEnemyTargets forwarded on
+    // V2 and dropped on V1. DcMoveTo's only delegate; same `Self` idiom.
+    template <class Self = DcMovementAction>
+    bool DcRawMoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react,
+                     bool normal_only, bool exact_waypoint, MovementPriority priority,
+                     bool lessDelay, bool backwards, bool ignoreEnemyTargets)
+    {
+        Self* self = static_cast<Self*>(this);
+        if constexpr (DcPbCompat::kMovementV2)
+            return self->MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint,
+                                priority, lessDelay, backwards, ignoreEnemyTargets);
+        else
+            return self->MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint,
+                                priority, lessDelay, backwards);
+    }
 
     // Pick a standoff point on a ring around `center`: the first candidate (from
     // DungeonClearMath::StandoffCandidates, ordered bot-side first) that snaps to
@@ -52,8 +98,11 @@ protected:
     // validate. Shared by the healer LOS reposition (ring around the hurt target)
     // and the contribution-gated combat regroup (ring around the fight anchor), so
     // both park a bot in the same validated band by one implementation.
+    // `leashCenter`/`leashRadius` (optional): also reject any point farther than
+    // leashRadius (2D) from leashCenter — see HealLeashRegistry.
     bool FindStandoffPoint(Map* map, Position const& center, float ringRadius,
-                           float maxRadius, float& x, float& y, float& z);
+                           float maxRadius, float& x, float& y, float& z,
+                           Position const* leashCenter = nullptr, float leashRadius = 0.0f);
 
     // What one glide tick did, so the caller can layer its own stall/park
     // bookkeeping without the driver needing the context.
@@ -120,7 +169,10 @@ protected:
     // DcEngageGeometry::AggroSafeApproachPoint with RoomAggroPathPadding honoured.
     // The single home of the skirt geometry, shared by EngageDirect's walk-in and
     // MoveToSkirtingRoomAggro so all three room-clear drivers orbit identically.
-    std::optional<Position> RoomAggroSkirtPoint(Unit* target);
+    // With `dest`, the approach line ends at that point instead of at `target`
+    // (the orbit latch is still keyed on `target`).
+    std::optional<Position> RoomAggroSkirtPoint(Unit* target,
+                                                Position const* dest = nullptr);
 
     // Walk toward `target`, detouring around an active room-aggro boss sphere
     // when one lies between (RoomAggroSkirtPoint) — else straight at `target`.
@@ -129,6 +181,13 @@ protected:
     // engage handshake (the pull-idle room-clear branch); EngageDirect consumers
     // get the skirt for free via EngageDirect itself.
     bool MoveToSkirtingRoomAggro(Unit* target, MovementPriority prio);
+
+    // Walk to `dest`, the room-clear stand spot in front of `pack`: skirt the
+    // room-aggro boss sphere first, then orbit `pack` at `packRadius` so the walk
+    // around it to the front never crosses its aggro. Same own-the-tick semantics
+    // as MoveToSkirtingRoomAggro.
+    bool MoveToStandSkirtingRoomAggro(Unit* pack, Position const& dest,
+                                      float packRadius, MovementPriority prio);
 
     // Drive an EscortCreature step (Wailing Caverns' Disciple of Naralex): START
     // its scripted escort via gossip, then each tick FOLLOW the escortee and
@@ -163,6 +222,28 @@ protected:
     // destination). Returns false once within cast range, so the caller falls
     // through to Drive and RunStep fires the GO.
     bool DriveUseItemOnGO(EventStep const& step);
+
+    // The event's pack leash (DungeonEvent::packLeash): true while the leader
+    // should stand and let the party close up before its next step. Counts the
+    // living members on the map outside the leash and runs DcPackLeash::Decide
+    // against the run state's two clocks; logs the hold and any watchdog release.
+    bool HoldForPackLeash(DungeonEvent const& ev);
+
+    // Drive a UseItemAt step's APPROACH (the Culling of Stratholme's five plagued
+    // grain crates, 48-81yd apart along 330yd of road). Owns the tick (returns
+    // true) while walking the tank to the step's anchor through the DC movement
+    // system, for the same reason the UseItemOnGO driver does: the at-objective
+    // StopBot(Hold) runs BEFORE Drive and cancels a plain MovePoint spline every
+    // tick, so RunStep's own HopTo alone would stutter-walk the road one tick of
+    // movement at a time. Returns false once the tank is inside the step's arrival
+    // radius (or the receipt GO is already standing), so the caller falls through
+    // to Drive and RunStep uses the item / latches.
+    //
+    // Simpler than the UseItemOnGO driver by exactly the things the crates do not
+    // need: no target GO, so no LOS/doorway detour and no forced-destination
+    // walk-in — every crate stands in the open on the road, and the spell finds its
+    // own target within 8yd rather than range-checking an interact box.
+    bool DriveUseItemAt(EventStep const& step);
 
     // Recovery verdict for a long non-combat set-piece (the Old Hillsbrad barrel
     // run). The objective drive owns the tick at DcRel::AtObjective (30), which
@@ -227,6 +308,7 @@ private:
 
     // Pre-route phases (boss snapshot only).
     Step TryEngageHold(AdvanceState const& st);
+    Step TryEngageWalkYield(AdvanceState const& st);
     Step TryLootYield(AdvanceState const& st);
     Step TryBetweenPullsRest(AdvanceState const& st);
     Step TryBossNotPresentStall(AdvanceState const& st);
@@ -904,6 +986,96 @@ public:
         : Action(botAI, "dungeon clear hold fire")
     {
     }
+    bool Execute(Event event) override;
+};
+
+// HALLS OF REFLECTION ONLY, every role, BOTH engines. Move this bot FORWARD along
+// the escape path — to the party's stand point, a few yards past the point
+// Jaina/Sylvanas is waiting at — because it is inside the Lich King's Remorseless
+// Winter ring or has fallen behind him.
+//
+// THE DIRECTION IS THE ENTIRE CONTENT OF THIS ACTION. It never computes a bearing
+// away from anything: the destination is an authored point that is ahead of the
+// leader, ahead of the Lich King, and on the far side of both from the summons
+// chasing the party. A radial retreat — which is what DungeonClearHazardVacate
+// would do with the same emitter — is wrong here in the one direction that
+// matters, because "away from him" for a bot that is already behind him is
+// further behind, and behind is a 10 000-damage Zap plus a knockback that makes
+// the next check worse.
+//
+// Which stand point is decided the same way the driver decides it: from the
+// LEADER'S position (DcHallsOfReflection::StopIndexNear), because currentWall is
+// private to the boss AI and her position is the observable equivalent. Both must
+// reach the same answer or the tank and its followers would hold different
+// ground, which is why the arithmetic is one shared pure function rather than two
+// copies.
+//
+// Driven by DungeonClearHorStayAheadTrigger.
+class DungeonClearHorStayAheadAction : public DcMovementAction
+{
+public:
+    DungeonClearHorStayAheadAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear hor stay ahead")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// BLACKROCK DEPTHS' IRON HALL ONLY, every member, both engines: walk to a
+// fire-free stop rather than stand in the Ironhand Guardians' fire — in a fight,
+// the nearest one it can still hit its target from. Driven by
+// DungeonClearIronHallSafeSpotTrigger; the decision is DcIronHall::Decide.
+class DungeonClearIronHallSafeSpotAction : public DcMovementAction
+{
+public:
+    DungeonClearIronHallSafeSpotAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear iron hall safe spot")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// BLACKROCK DEPTHS' LYCEUM ONLY, every member but the tank, combat engine: walk
+// back inside DcLyceumCloseUp::CLOSE_TO of the tank. Driven by
+// DungeonClearLyceumCloseUpTrigger; the decision is DcLyceumCloseUp::Decide.
+class DungeonClearLyceumCloseUpAction : public DcMovementAction
+{
+public:
+    DungeonClearLyceumCloseUpAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear lyceum close up")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
+// The Iron Hall's follow-tank clamp: true while `bot` should hold the stop the hop
+// put it on (or is still walking to it) rather than follow `tank`. Inert off map
+// 230. Implemented with the rung, in DcIronHallSafeSpotAction.cpp.
+bool DcIronHallHoldsFollow(Player* bot, PlayerbotAI* botAI, Player* tank);
+
+// THE OCULUS ONLY, every member, both engines: the rider rung — an essence from
+// the givers, the mount, this member's drake on its lane, the landing, the
+// dismount, and the stations on Eregos. A PLAIN Action on purpose: stock
+// `wotlk-occ`'s OccFlyingMultiplier zeroes every MovementAction on a mounted bot,
+// and this rung drives the drake's MotionMaster directly. See
+// DcOculusRiderAction.cpp. Driven by DungeonClearOculusRiderTrigger.
+class DungeonClearOculusRiderAction : public Action
+{
+public:
+    DungeonClearOculusRiderAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear oc rider") {}
+    bool Execute(Event event) override;
+};
+
+// KARAZHAN ONLY, every member in the Gamesman's Hall, both engines: the chess seat
+// — take the assigned piece, keep it, stand on the sideline, fight nothing — and,
+// on the run owner, the conductor that plays the game. A PLAIN Action: it moves
+// its bot with its own point moves and must never be zeroed by a movement
+// multiplier. See Action/DcChessPieceAction.cpp. Driven by
+// DungeonClearKzChessTrigger.
+class DungeonClearKzChessAction : public Action
+{
+public:
+    DungeonClearKzChessAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear kz chess") {}
     bool Execute(Event event) override;
 };
 

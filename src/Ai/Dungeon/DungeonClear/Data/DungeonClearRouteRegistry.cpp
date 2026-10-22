@@ -28,6 +28,10 @@ namespace
             RegisterBlackwingLairRoute();
             RegisterHallsOfLightningRoute();
             RegisterUtgardePinnacleRoute();
+            RegisterBlackrockSpireRoute();
+            RegisterPitOfSaronRoute();
+            RegisterHallsOfReflectionRoute();
+            RegisterKarazhanRoute();
             return true;
         }();
         (void)seeded;

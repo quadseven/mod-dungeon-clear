@@ -39,6 +39,8 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/HealLeashRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
@@ -72,6 +74,7 @@
 #include "Playerbots.h"
 #include "DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 using namespace DcActionShared;
 
@@ -350,6 +353,77 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                   "[DC:{}] follow-tank: standing down, the transit owns the column",
                   bot->GetName());
         return false;
+    }
+
+    // BLACKROCK DEPTHS' IRON HALL: a follower parked clear of the fire in the stop
+    // its tank holds stays parked, and one still walking to a stop is not turned
+    // round. The golden-angle follow slot below is as likely as not inside a
+    // Guardian's circle in a gap 8yd wide, so following there would only hand
+    // the bot back to the safe-spot hop to walk out again (DcIronHallHoldsFollow).
+    // Yield, don't claim: drinking and looting on the stop still get the tick.
+    if (DcIronHallHoldsFollow(bot, botAI, tank))
+        return false;
+
+    // ON FOOT THROUGH THE JOUST: the lance and the horse are mod-playerbots' walk,
+    // not ours. `toc mount` (64) outranks this rung but only keeps the ticks it
+    // SUCCEEDS on, and its MoveTo fails every tick the walk to the horse is still
+    // in flight — so without this the follower was turned back to the tank on each
+    // of those ticks and never reached a horse farther away than follow distance
+    // (see DcTocDriver::FollowerMountsItself). Clear a MoveFollow left from before
+    // the stand-down, the same once-only teardown as the rezzer's; the walk to the
+    // horse is a point move, so the guard never touches it.
+    if (TocFollowerMountsItself(bot))
+    {
+        followedTank = tank->GetGUID();
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+        MotionMaster* mm = bot->GetMotionMaster();
+        if (mm && mm->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return false;
+    }
+
+    // MOUNTED: FOLLOW WITH THE HORSE, NEVER THE PASSENGER. Every mover below acts
+    // on the bot's own MotionMaster — the persistent MoveFollow, the trail glide's
+    // escort spline — and on a vehicle the bot is the passenger: its position is
+    // the seat's, and a generator on it walks nothing. Trial of the Champion puts
+    // the whole party on horses for the joust, and a follower left to those
+    // branches micro-steps in the saddle while its horse stands at the wall.
+    //
+    // DcMoveTo takes MovementAction::MoveTo's vehicle branch, which drives the
+    // vehicle BASE when the seat has CAN_CONTROL (and refuses when it does not,
+    // which is the right answer for a seat that cannot steer). Same golden-angle
+    // fan as the Follow() slot at the bottom, so the riders spread the same way
+    // the walkers do; inside the bubble the tick is yielded, as Follow()'s own
+    // in-range early-out does.
+    if (bot->GetVehicle())
+    {
+        // THE OCULUS: every rider flies its own drake on its own lane (the rider
+        // rung), to a pad the tank may not even have reached yet. Following the
+        // tank here would pull the drake off its lane every tick.
+        if (bot->GetMapId() == DcOculus::MAP_ID)
+            return false;
+
+        followedTank = tank->GetGUID();
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+
+        // A MoveFollow installed on foot, before the mount, would otherwise stay
+        // on the passenger for the whole ride.
+        MotionMaster* mm = bot->GetMotionMaster();
+        if (mm && mm->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            mm->Clear();
+
+        float const riderDist = std::min<float>(DC_PB_CONFIG(FollowDistance, followDistance), 6.0f);
+        if (bot->GetExactDist(tank) <= riderDist + kTrailArrival)
+            return false;
+
+        float const riderAngle = Position::NormalizeOrientation(
+            static_cast<float>(bot->GetGUID().GetCounter()) * 2.39996323f);
+        bool const moved = DcMoveTo(tank->GetMapId(),
+                                    tank->GetPositionX() + std::cos(riderAngle) * riderDist,
+                                    tank->GetPositionY() + std::sin(riderAngle) * riderDist,
+                                    tank->GetPositionZ(), false, false, /*normal_only=*/false);
+        Unit* const horse = bot->GetVehicleBase();
+        return moved || (horse && horse->isMoving());
     }
 
     // In DYNAMIC pull mode, trail the tank at a lag distance while it scouts toward
@@ -973,7 +1047,10 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         {
             DC_PULL_TRACE("[DC:{}] hold-at-camp: in bounds mid-fight ({:.1f}yd) -> "
                           "yielding to the rotation", bot->GetName(), toCamp);
-            context->GetValue<DcPullContext&>(DcKey::PullContext)->Get().campHoldBest = 0.0f;
+            DcPullContext& held = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+            held.campHoldBest = 0.0f;
+            held.campHoldClosest = 0.0f;
+            held.campHoldRunaway = false;
             return false;
         }
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
@@ -982,8 +1059,12 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DcFaceIfNeeded(bot, DcLeaderSignal::FindLeaderTank(bot));
         DC_PULL_TRACE("[DC:{}] hold-at-camp: parked ({:.1f}yd, passive={})",
                       bot->GetName(), toCamp, passive);
-        // Settled: re-arm the losing-ground ratchet for the next recall.
-        context->GetValue<DcPullContext&>(DcKey::PullContext)->Get().campHoldBest = 0.0f;
+        // Settled: re-arm the losing-ground ratchet and the runaway latch for the
+        // next recall.
+        DcPullContext& settled = context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
+        settled.campHoldBest = 0.0f;
+        settled.campHoldClosest = 0.0f;
+        settled.campHoldRunaway = false;
         // During a holding phase (the tank is tagging) OWN the tick so nothing can
         // break the hold while the pull is live. While merely camped between pulls
         // (scout phase, passive==false) YIELD so the party can rest / loot at camp
@@ -1040,13 +1121,79 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         return false;
     }
 
+    // A NEW CAMP IS A NEW RECALL. The advanced pull moves the camp as the tank
+    // closes, and every campHold* distance was measured against the old one.
+    if (std::hypot(camp.GetPositionX() - ownPull.campHoldKeyX,
+                   camp.GetPositionY() - ownPull.campHoldKeyY) > DC_PULL_SLOT_RADIUS)
+    {
+        ownPull.campHoldKeyX = camp.GetPositionX();
+        ownPull.campHoldKeyY = camp.GetPositionY();
+        ownPull.campHoldBest = 0.0f;
+        ownPull.campHoldClosest = 0.0f;
+        ownPull.campHoldRunaway = false;
+    }
+
+    // A RECALL THAT RUNS AWAY IS STOOD DOWN, NOT RE-ISSUED. See CampRecallRanAway:
+    // the ratchet below re-bases outward on every loss, so a recall whose own path
+    // leads away from the slot is re-issued onto that same path indefinitely.
+    if (!ownPull.campHoldRunaway)
+    {
+        if (ownPull.campHoldClosest <= 0.0f || toCamp < ownPull.campHoldClosest)
+            ownPull.campHoldClosest = toCamp;
+        else if (CampRecallRanAway(ownPull.campHoldClosest, toCamp))
+        {
+            ownPull.campHoldRunaway = true;
+            DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
+            DcMovement::ClearMovementWait(bot);
+
+            // What was the recall actually walking? Never logged before, so the
+            // one live case (tr-20260927-184653-9) could not say why a 10yd recall
+            // went down a floor. One Detour query, on a latch that fires once.
+            PathGenerator probe(bot);
+            probe.CalculatePath(slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ(),
+                                /*forceDest*/ false);
+            Movement::PointsArray const& pts = probe.GetPath();
+            float pathLen = 0.0f;
+            float lowZ = bot->GetPositionZ();
+            for (std::size_t i = 0; i < pts.size(); ++i)
+            {
+                lowZ = std::min(lowZ, pts[i].z);
+                if (i)
+                    pathLen += (pts[i] - pts[i - 1]).length();
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] hold-at-camp: recall RAN AWAY ({:.1f}yd from the slot, "
+                     "closest {:.1f}) -> stood down, holding here | bot ({:.1f},{:.1f},{:.1f}) "
+                     "slot ({:.1f},{:.1f},{:.1f}) camp ({:.1f},{:.1f},{:.1f}) | path type {} "
+                     "{} pts {:.1f}yd, lowest z {:.1f}",
+                     bot->GetName(), toCamp, ownPull.campHoldClosest, bot->GetPositionX(),
+                     bot->GetPositionY(), bot->GetPositionZ(), slot.GetPositionX(),
+                     slot.GetPositionY(), slot.GetPositionZ(), camp.GetPositionX(),
+                     camp.GetPositionY(), camp.GetPositionZ(),
+                     static_cast<uint32>(probe.GetPathType()), pts.size(), pathLen, lowZ);
+        }
+    }
+    if (ownPull.campHoldRunaway)
+    {
+        // Held where the runaway was caught — the same return as "parked": own the
+        // tick while the tank is tagging so nothing else drifts us, yield between
+        // pulls so rest, loot and the tank-follow (which walks the tank's own
+        // breadcrumbs, not a fresh path) carry on.
+        DC_PULL_TRACE("[DC:{}] hold-at-camp: recall stood down after a runaway "
+                      "({:.1f}yd out)", bot->GetName(), toCamp);
+        return passive;
+    }
+
     if (ScriptedPullLostGround(ownPull.campHoldBest, toCamp))
     {
         DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
         DcMovement::ClearMovementWait(bot);
         DC_PULL_DEBUG("[DC:{}] hold-at-camp: losing ground ({:.1f}yd vs best {:.1f}) "
-                      "-> cancelled whatever is carrying us and re-issuing",
-                      bot->GetName(), toCamp, ownPull.campHoldBest);
+                      "-> cancelled whatever is carrying us and re-issuing | bot "
+                      "({:.1f},{:.1f},{:.1f}) slot ({:.1f},{:.1f},{:.1f})",
+                      bot->GetName(), toCamp, ownPull.campHoldBest, bot->GetPositionX(),
+                      bot->GetPositionY(), bot->GetPositionZ(), slot.GetPositionX(),
+                      slot.GetPositionY(), slot.GetPositionZ());
         ownPull.campHoldBest = toCamp;
     }
     else if (toCamp < ownPull.campHoldBest || ownPull.campHoldBest <= 0.0f)
@@ -1060,7 +1207,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
                   "inRoom={})", bot->GetName(), toCamp, passive, moved, inNoGoRoom);
 
     // BACKSTOP — the recall was refused, the bot is standing still, and a stale
-    // EQUAL-priority movement wait is what is holding it down. IsWaitingForLastMove
+    // EQUAL-priority movement block is what is holding it down. The arbiter
     // only yields to a STRICTLY greater priority, so a combat mover that grabbed
     // this follower a moment ago (the camp assist seeding a target and flipping it
     // to the combat engine is the usual culprit) silently starves every recall tick
@@ -1072,7 +1219,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // "move REFUSED and not moving -> IsWaitingForLastMove ... prio=3", and walked
     // into the room. The tank's drag-back and camp recall both carry this backstop
     // already; the follower hold never did.
-    if (!moved && !bot->isMoving() && IsWaitingForLastMove(prio))
+    if (!moved && !bot->isMoving() && DcMoveDeferred(prio))
     {
         DcMovement::StopBot(bot, DcMovement::Stop::HardPin);
         DcMovement::ClearMovementWait(bot);
@@ -1086,6 +1233,13 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
 
 namespace
 {
+    // The assist camp's no-LOS close-in gives a fight holder up once every move
+    // toward it has been refused this long, and skips it for the second span
+    // (DungeonClearMath::AssistCloseGivenUp). Five seconds is well past an arbiter
+    // deferral or a door's swing; a minute lets a mob that moves be tried again.
+    constexpr uint32 DC_ASSIST_REFUSED_GIVE_UP_MS = 5 * 1000;
+    constexpr uint32 DC_ASSIST_GIVEN_UP_MS = 60 * 1000;
+
     // The mob the PARTY is actually fighting, for a follower to assist onto. The old
     // lookup only considered the LEADER's attacker list + victim — which is EMPTY
     // whenever the pack is ranged, or the mobs fixated a DPS instead of the tank, so
@@ -1124,6 +1278,9 @@ namespace
     // four DcTargeting pickers and none of the followers' own.
     Unit* PickPartyFightTarget(Player* bot, AiObjectContext* context, Player* leader)
     {
+        DcApproachState const& approach =
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+        uint32 const now = getMSTime();
         Unit* best = nullptr;
         float bestDist = 0.0f;
         auto consider = [&](Unit* u)
@@ -1134,6 +1291,10 @@ namespace
                 return;
             float const d = bot->GetExactDist2d(u);
             if (best && d >= bestDist)
+                return;
+            // A holder this bot was refused every route to (the assist camp's
+            // no-LOS close-in, AssistCloseGivenUp) is no fight it can join.
+            if (approach.AssistGivenUp(u->GetGUID(), now))
                 return;
             // CHEAPEST LAST: only a candidate that would actually WIN the rank pays
             // for the probe, and the same-level answer is one float compare — so a
@@ -1212,6 +1373,8 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
     // to the tank's fight radius so a stale far-away target can't hijack the
     // assist; anything outside falls through to the fresh pick below.
     Unit* target = nullptr;
+    DcApproachState& approach = context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+    uint32 const now = getMSTime();
     if (Unit* cur = context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get())
     {
         // Same level gate as the fresh pick below. A target already in the slot —
@@ -1223,7 +1386,8 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
             bot->IsValidAttackTarget(cur) &&
             cur->GetExactDist2d(leader) <=
                 DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f &&
-            DcTickMemoAccess::LevelReachable(bot, context, cur))
+            DcTickMemoAccess::LevelReachable(bot, context, cur) &&
+            !approach.AssistGivenUp(cur->GetGUID(), now))
             target = cur;
     }
 
@@ -1314,6 +1478,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
 
     if (bot->IsWithinLOSInMap(target))
     {
+        approach.assistRefusedSince = 0;  // the refusal clock runs on the close-in only
         if (inAttackRange)
         {
             if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, target))
@@ -1351,6 +1516,29 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
                   "moved={})", bot->GetName(), target->GetGUID().ToString(), dist,
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal", closing);
 
+    // Refused every route to it for long enough: give it up (see
+    // DungeonClearMath::AssistCloseGivenUp), drop it as the target, and yield.
+    // Neither pick above offers it again until the give-up lapses, so nothing
+    // re-seeds combat on it and the stuck-combat breaker's clear holds.
+    // A false return while the bot is still walking is the arbiter waiting on the
+    // last move, not a refusal; only "refused and not moving" counts.
+    bool const sameTarget = approach.assistRefusedTarget == target->GetGUID();
+    approach.assistRefusedTarget = target->GetGUID();
+    if (DungeonClearMath::AssistCloseGivenUp(closing || bot->isMoving(), sameTarget, now,
+                                             DC_ASSIST_REFUSED_GIVE_UP_MS,
+                                             approach.assistRefusedSince))
+    {
+        uint32 const refusedMs = now - approach.assistRefusedSince;
+        approach.GiveUpAssist(target->GetGUID(), now, DC_ASSIST_GIVEN_UP_MS);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] assist camp: no route to {} {} ({:.1f}yd, refused {} ms) -> given "
+                 "up for {}s", bot->GetName(), target->GetName(), target->GetGUID().ToString(),
+                 dist, refusedMs, DC_ASSIST_GIVEN_UP_MS / 1000);
+        bot->SetSelection(ObjectGuid::Empty);
+        context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(nullptr);
+        return false;
+    }
+
     return true;
 }
 
@@ -1378,7 +1566,7 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
     if (isHealer)
         anchorPos = tank->GetPosition();
     else
-        anchorUnit = DcTargeting::LeaderFightAnchor(bot, tank, anchorPos);
+        anchorUnit = DcTargeting::LeaderFightAnchor(bot, context, tank, anchorPos);
 
     // Role-range standoff ring. Ranged DPS: 0.8x spell range (inside range so target
     // wobble doesn't drop it back out). Healer: max(5, 0.6x heal range) — the same
@@ -1407,28 +1595,30 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
     }
 
     // Fallback: no ring point validated (tight geometry, snap misses), or a melee.
-    // Close on the anchor with pathfinding, stopping attackRange short so a ranged
-    // class doesn't pile into the melee/AoE and a melee lands in swing range. The
-    // predicate clears the instant a mob comes into sight, so this only ever walks
-    // far enough to round the corner.
+    // Close on the anchor, stopping attackRange short so a ranged class doesn't
+    // pile into the melee/AoE and a melee lands in swing range. The predicate
+    // clears the instant a mob comes into sight, so this only ever walks far
+    // enough to round the corner.
+    //
+    // Along the ROUTE to the anchor, never the straight line: see the heal
+    // reposition's fallback and DcEngageGeometry::PathedCloseOn — the straight
+    // line is how DPS walked into the Maiden hairpin's wall. No route onto the
+    // anchor's floor -> hold.
     if (!sampled)
     {
-        float const ax = anchorPos.GetPositionX();
-        float const ay = anchorPos.GetPositionY();
-        float const az = anchorPos.GetPositionZ();
         float const attackRange = isMelee
             ? (bot->GetCombatReach() + (anchorUnit ? anchorUnit->GetCombatReach() : 0.0f) + 1.0f)
             : std::max(5.0f, botAI->GetRange("spell") - CONTACT_DISTANCE);
-        float const dist = bot->GetExactDist2d(ax, ay);
-        x = ax;
-        y = ay;
-        z = az;
-        if (dist > attackRange)
+        Position close;
+        if (!DcEngageGeometry::PathedCloseOn(bot, anchorPos, attackRange, close))
         {
-            float const frac = (dist - attackRange) / dist;
-            x = bot->GetPositionX() + (ax - bot->GetPositionX()) * frac;
-            y = bot->GetPositionY() + (ay - bot->GetPositionY()) * frac;
+            DC_PULL_TRACE("[DC:{}] regroup: no route onto the anchor's floor ({:.1f}yd) "
+                          "-> holding", bot->GetName(), bot->GetExactDist2d(&anchorPos));
+            return false;
         }
+        x = close.GetPositionX();
+        y = close.GetPositionY();
+        z = close.GetPositionZ();
     }
 
     // Re-issue guard: the trigger latches and re-fires every tick, but re-plotting a
@@ -1513,32 +1703,59 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
 
     // First ring point around the target that snaps, sits within heal range, has
     // LOS, and is reachable (shared with the combat regroup — see FindStandoffPoint).
-    float dx = 0.0f, dy = 0.0f, dz = 0.0f;
-    bool const haveDest = FindStandoffPoint(map, targetPos, standoff, healRange, dx, dy, dz);
+    // Camp leash, on HealLeashRegistry maps only, and only while the healer is
+    // fighting at a standing pull camp (the trigger has already deferred to the
+    // passive holding phases). Everywhere else leashRadius stays 0 and nothing
+    // below changes.
+    Position camp;
+    bool campPassive = false;
+    float const leashRadius =
+        (bot->IsInCombat() && DcLeaderSignal::GetLeaderCampHold(bot, camp, campPassive))
+            ? HealLeashRegistry::Radius(map->GetId())
+            : 0.0f;
+    Position const* const leash = leashRadius > 0.0f ? &camp : nullptr;
 
-    // Fallback: no sampled point validated (tight geometry, snap misses). Close
-    // straight on the target with pathfinding — rounding corners is what regains
-    // LOS — stopping 5yd short, exactly the old regroup behaviour.
+    float dx = 0.0f, dy = 0.0f, dz = 0.0f;
+    bool const haveDest =
+        FindStandoffPoint(map, targetPos, standoff, healRange, dx, dy, dz, leash, leashRadius);
+
+    // Fallback: no sampled point validated (tight geometry, snap misses). Close on
+    // the target — rounding corners is what regains LOS — stopping 5yd short, at
+    // a point ALONG THE ROUTE to it (DcEngageGeometry::PathedCloseOn).
     //
-    // INTERPOLATE ALL THREE COORDINATES. x and y are walked back along the line to
-    // the target; z used to be left at the TARGET's height, which describes a point
-    // that exists nowhere — the target's floor over our own x/y. On one level that
-    // is a yard or two of slop DcMoveTo's ground-snap absorbs. Across two it is the
-    // Blackwing Lair ceiling clip: a healer standing in the hall at z 424 asking to
-    // move to hall x/y at z 449, 224 of 281 repositions in tr-20260828-171538-5
-    // taking this branch. Interpolating z keeps the destination ON the bot->target
-    // line, which is the thing the fallback actually means, and keeps the residual
-    // error inside the snap's 3yd correction window on ramps and stairs. A target
-    // genuinely a storey away now yields a destination a storey away — refused by
-    // the z-search and no longer overridden (see DcMoveTo's retry), so the healer
-    // stands still instead of walking through the floor.
+    // It used to be a point on the straight bot->target line. Across a wall that
+    // point is in the wall or behind it, and the walk to it goes through: the
+    // Maiden hairpin in Karazhan had healers walking into the wall toward a tank
+    // on the other leg and dropping to the Servants' Quarters below
+    // (tr-20260927-190943-12, "closing on heal target ... los=0, sampled=0"). With
+    // no complete route onto the target's floor there is nowhere honest to walk,
+    // so hold and let the stock heal stack work what is in sight.
     if (!haveDest)
     {
-        Position const close = DungeonClearMath::HealCloseFallbackPoint(
-            bot->GetPosition(), targetPos, /*minGap*/ 5.0f);
+        Position close;
+        if (!DcEngageGeometry::PathedCloseOn(bot, targetPos, /*stopShort*/ 5.0f, close))
+        {
+            DC_PULL_TRACE("[DC:{}] heal reposition: no route onto {}'s floor ({:.1f}yd, "
+                          "los=0) -> holding", bot->GetName(),
+                          target->GetGUID().ToString(), bot->GetExactDist2d(target));
+            return false;
+        }
         dx = close.GetPositionX();
         dy = close.GetPositionY();
         dz = close.GetPositionZ();
+
+        // A leashed healer never takes the close past its leash: that walk is
+        // exactly the one that carried it onto the Banquet Hall floor. Yield the
+        // tick so the stock heal stack works whatever is in sight from the camp.
+        if (leash && !HealLeashRegistry::WithinLeash(camp.GetPositionX(), camp.GetPositionY(),
+                                                     leashRadius, dx, dy))
+        {
+            DC_PULL_TRACE("[DC:{}] heal reposition: leashed to camp ({:.0f}yd) -> holding, "
+                          "heal target {} is {:.1f}yd out",
+                          bot->GetName(), leashRadius, target->GetGUID().ToString(),
+                          bot->GetExactDist2d(target));
+            return false;
+        }
     }
 
     // Band the priority like the assist/regroup actions: COMBAT only on the final
@@ -1881,8 +2098,17 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
         context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(target);
         if (!bot->IsInCombat())
             bot->SetInCombatWith(target);
+        // Engage for real, the way stock AttackAction does: switch to the combat
+        // engine and start the attack. Only an attack switches the engine, and
+        // a tank already combat-flagged by its party (no victim, nothing on it)
+        // sat on the non-combat engine with this "succeeding" every tick and
+        // nothing happening — while Raiders shot a DPS 23yd away (Pull Lab
+        // gundrak-ranged-standoff). The combat engine's rotation, taunt and
+        // reach take it from here.
+        botAI->ChangeEngine(BOT_STATE_COMBAT);
+        bot->Attack(target, botAI->IsMelee(bot));
         DC_PULL_TRACE("[DC:{}] leader assist: in sight of party fight ({:.1f}yd) "
-                      "-> took threat, combat engine takes over",
+                      "-> attacking, combat engine takes over",
                       bot->GetName(), bot->GetExactDist(target));
         return true;
     }
@@ -2021,8 +2247,14 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
         return false;
 
     char const* rezAction = RezActionNameFor(bot->getClass());
+    // Any other class was elected through the spell it knows (IsRezClass ->
+    // KnownResurrectSpell); cast that one by name, the same lookup the four
+    // stock names go through. Null while that spell is on cooldown, i.e. right
+    // after it landed: the offer branch below needs no spell, so the check for
+    // a missing name waits until after it.
     if (!rezAction)
-        return false;  // election guarantees a rez class; belt-and-braces
+        if (SpellInfo const* known = DcRezRecovery::KnownResurrectSpell(bot))
+            rezAction = known->SpellName[0];
 
     Player* target = ObjectAccessor::FindPlayer(targetGuid);
     if (!target || !target->isDead() || target->GetMapId() != bot->GetMapId())
@@ -2054,12 +2286,16 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
         return true;
     }
 
+    if (!rezAction)
+        return false;  // a custom class's resurrect on cooldown; else belt-and-braces
+
     // Beyond cast range (or no line of sight): close on the body.
     //
     // COMBAT priority, though the rezzer is out of combat by the trigger's gate.
     // The priority here is not a claim about combat, it is who wins the movement
-    // arbitration: MovementAction::IsWaitingForLastMove refuses any move whose
-    // priority is not STRICTLY GREATER than the last one's, for up to 5 seconds. At
+    // arbitration: the movement arbiter (DcMoveDeferred) refuses any move whose
+    // priority is not STRICTLY GREATER than the last one's while its block stands
+    // (up to 5 seconds before mod-playerbots #2747; only under a hold after it). At
     // NORMAL this rung ties with follow-tank, scout-lag and hold-at-camp — which
     // move constantly — so the approach was refused over and over while the corpse
     // sat there: 259 consecutive "move REFUSED" in run -52 with the rezzer stranded
@@ -2076,7 +2312,7 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     // scout-lag's inside-the-lag-bubble branch (StopBot(Hold)) tore the approach
     // spline down a few hundred ms in. The rezzer then could not re-issue either,
     // because its OWN cancelled leg had recorded a MOVEMENT_COMBAT wait sized to
-    // the whole leg and IsWaitingForLastMove will not let an equal priority through.
+    // the whole leg and the arbiter would not let an equal priority through.
     //
     // Live: tr-20260807-080834-115, 301 consecutive "approaching Rederen's body"
     // over 99 seconds with the distance pinned at 86.1 -> 85.8yd — 0.3yd of net
@@ -2087,6 +2323,23 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     {
         DC_PULL_TRACE("[DC:{}] rez party: approaching {}'s body ({:.1f}yd)",
                       bot->GetName(), target->GetName(), dist);
+
+        // NOT FROM A SADDLE, AND NOT TO A BODY IN THE AIR. A rezzer on a vehicle
+        // cannot walk (its position is the seat's) and cannot cast; and on The
+        // Oculus a member who died on a drake hangs where the drake was, 50yd above
+        // the nearest floor, where no walk ends within cast range. Owning the tick
+        // there only spins until the recovery timeout — hand it back instead, and
+        // let the flight driver's regroup take the unreachable body.
+        if (bot->GetVehicle())
+            return false;
+        if (bot->GetMapId() == DcOculus::MAP_ID)
+        {
+            NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot->GetMap(), target->GetPositionX(),
+                                                               target->GetPositionY(), target->GetPositionZ(),
+                                                               DcOculus::SNAP_RADIUS, DcOculus::SNAP_VERT);
+            if (!snap.ok)
+                return false;
+        }
         // Standing still with a walk owed means the recorded wait is stale — the
         // leg it was sized for is not running any more (cancelled by whatever last
         // stopped us, or refused outright). Drop it so the replacement leg can go

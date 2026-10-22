@@ -85,9 +85,15 @@ namespace
         {"Ai/Dungeon/DungeonClear/Util/DcRezRecovery.cpp",         "TeleportTo",            1, "B"},
         // C. the dungeon queue fill picks bots that are already eligible
         {"DungeonQueueFill/DcDungeonQueueFillJob.cpp",             "RemoveAurasDueToSpell", 4, "C"},
-        {"DungeonQueueFill/DcDungeonQueueFillJob.cpp",             "ResurrectPlayer",       3, "C"},
-        {"DungeonQueueFill/DcDungeonQueueFillJob.cpp",             "SetRewardedQuest",      1, "C"},
-        {"DungeonQueueFill/DcDungeonQueueFillJob.cpp",             "TeleportTo",            1, "C"},
+        {"DungeonQueueFill/DcDungeonQueueFillJob.cpp",             "ResurrectPlayer",       1, "C"},
+        // ...the pool-bot steps the merge of upstream master lifted out of the
+        // job into Util/DcPoolBots (travel to the capital, sanitise, the death
+        // knight chain credit), plus upstream's Death Gate for a pool death
+        // knight still on Acherus (DcDungeonAccess::UnlockTravel).
+        {"Util/DcPoolBots.cpp",                                    "ResurrectPlayer",       2, "C"},
+        {"Util/DcPoolBots.cpp",                                    "SetRewardedQuest",      1, "C"},
+        {"Util/DcPoolBots.cpp",                                    "TeleportTo",            1, "C"},
+        {"Util/DcDungeonAccess.cpp",                               "learnSpell",            1, "C"},
         {"Util/DcBotProvisioning.cpp",                             "Randomize",             1, "C"},
         {"Util/DcBotProvisioning.cpp",                             "InitTalentsBySpecNo",   1, "C"},
         {"Util/DcBotProvisioning.cpp",                             "InitEquipment",         1, "C"},
@@ -111,6 +117,32 @@ namespace
         {"TestRun/DcTestRunJob.cpp",                               "RemoveAurasDueToSpell", 1, "H"},
         {"DungeonClearCommand.cpp",                                "TeleportTo",            2, "H"},
         {"Util/DcSpectator.cpp",                                   "SetSpeed",              2, "H"},
+        // ...the harness's attunement grant before it teleports a party in
+        // (DcDungeonAccess::GrantEntry; the dungeon queue fill does not call it
+        // on this branch), and the Pull Lab (`.dc lab`, src/Lab), GM-only.
+        {"Util/DcDungeonAccess.cpp",                               "AddItem",               1, "H"},
+        {"Util/DcDungeonAccess.cpp",                               "SetRewardedQuest",      2, "H"},
+        {"Lab/DcLabInject.cpp",                                    "AddAura",               1, "H"},
+        {"Lab/DcLabJob.cpp",                                       "NearTeleportTo",        2, "H"},
+        {"Lab/DcLabJob.cpp",                                       "RemoveAurasDueToSpell", 1, "H"},
+        {"Lab/DcLabJob.cpp",                                       "ResurrectPlayer",       1, "H"},
+        {"Lab/DcLabJob.cpp",                                       "SetFullHealth",         3, "H"},
+        {"Lab/DcLabJob.cpp",                                       "SetPower",              2, "H"},
+        {"Lab/DcLabPuppet.cpp",                                    kTriggeredCast,          1, "H"},
+        // U. carried in from upstream master by the merge that made quadseven/prod
+        // (2026-10-22). Content production has not run yet: review each before a
+        // realm plays it. The BRD row is the Rocknot ale turn-in, a real quest
+        // reward after CanRewardQuest, with ale the bot bought itself.
+        {"Ai/Dungeon/DungeonClear/Action/DcOculusRiderAction.cpp",  "AddItem",              1, "U"},
+        {"Ai/Dungeon/DungeonClear/Action/DcOculusRiderAction.cpp",  "NearTeleportTo",       1, "U"},
+        {"Ai/Dungeon/DungeonClear/Data/Events/BlackrockDepthsEvents.cpp", "RewardQuest",    1, "U"},
+        {"Ai/Dungeon/DungeonClear/Overrides/KarazhanChessDriver.cpp", kTriggeredCast,       1, "U"},
+        {"Ai/Dungeon/DungeonClear/Overrides/KarazhanChessDriver.cpp", "NearTeleportTo",     1, "U"},
+        {"Ai/Dungeon/DungeonClear/Overrides/KarazhanChessDriver.cpp", "RemoveAurasDueToSpell", 2, "U"},
+        {"Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.cpp",  "AddItem",               1, "U"},
+        {"BgQueueFill/DcBgQueueFillJob.cpp",                       "RemoveAurasDueToSpell", 1, "U"},
+        {"BgQueueFill/DcBgQueueFillJob.cpp",                       "ResurrectPlayer",       1, "U"},
+        {"BgQueueFill/DcBgQueueFillManager.cpp",                   "RemoveAurasDueToSpell", 1, "U"},
     };
     // clang-format on
 

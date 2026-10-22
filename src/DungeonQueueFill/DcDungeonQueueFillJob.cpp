@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <ctime>
 #include <functional>
+#include <optional>
 #include <utility>
 
 #include "Group.h"
@@ -16,31 +17,32 @@
 #include "ObjectAccessor.h"
 #include "Opcodes.h"
 #include "Player.h"
+#include "Util/DcPlayerbotsConfig.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 
 #include "PlayerbotAI.h"
 #include "PlayerbotFactory.h"
-#include "PlayerbotGuildMgr.h"
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 
-#include "CharacterCache.h"
 #include "Chat.h"
 #include "DBCStores.h"
 #include "Map.h"
-#include "ObjectMgr.h"
 
 #include "DcStrategyGate.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "DungeonQueueFill/DcDungeonQueueFillManager.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestGearTiers.h"
-#include "TestRun/DcTestRunManager.h"
 #include "Util/DcBotProvisioning.h"
 #include "Util/DcProvisionBudget.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcDungeonAccess.h"
+#include "Util/DcPoolBots.h"
 
 using namespace lfg;
 
@@ -60,36 +62,6 @@ namespace
     std::uint32_t SetupTimeoutMs()
     {
         return DcSettings::GetUInt(ObjectGuid::Empty, "DungeonQueueFill.SetupTimeoutSec") * 1000;
-    }
-
-    // The finale of the death-knight starting chain, Alliance and Horde.
-    // LFGMgr::InitializeLockedDungeons locks EVERY dungeon for a death knight
-    // who has neither (LFG_LOCKSTATUS_QUEST_NOT_COMPLETED), and no pool
-    // character has ever run it.
-    constexpr std::uint32_t kDkChainQuestAlliance = 13188;  // Where Kings Walk
-    constexpr std::uint32_t kDkChainQuestHorde    = 13189;  // Warchief's Blessing
-
-    // Where a freshly logged-in bot is put down, per faction.
-    //
-    // Read from the world DB's `game_tele` table — the same rows `.tele
-    // stormwind` and `.tele orgrimmar` use — so a server that moves its
-    // capital spot moves the fill with it. The literals are 3.3.5a's stock
-    // rows, kept only for a world DB that has had them deleted.
-    struct SafeSpot
-    {
-        std::uint32_t map;
-        float x, y, z, o;
-    };
-
-    SafeSpot CapitalSpot(bool alliance)
-    {
-        if (GameTele const* tele = sObjectMgr->GetGameTele(alliance ? "Stormwind" : "Orgrimmar",
-                                                           /*exactSearch*/ true))
-            return SafeSpot{tele->mapId, tele->position_x, tele->position_y, tele->position_z,
-                            tele->orientation};
-
-        return alliance ? SafeSpot{0, -8833.38f, 628.628f, 94.0066f, 1.06535f}
-                        : SafeSpot{1, 1629.85f, -4373.64f, 31.5573f, 3.69762f};
     }
 
     std::string RoleMaskText(std::uint8_t mask)
@@ -308,6 +280,67 @@ std::uint32_t DcDungeonQueueFillJob::ReadDungeonExpansion() const
     return lowest;
 }
 
+// Every map the queue could drop this party into, resolved once.
+//
+// The LFG lock map is not only about levels and gear: LFGMgr::InitializeLockedDungeons
+// walks the destination's `dungeon_access_requirements` rows too, and stamps
+// LFG_LOCKSTATUS_QUEST_NOT_COMPLETED on any dungeon whose attunement quest the
+// character has not been rewarded. A pool bot has run nothing, so it is missing
+// every one of them. On WotLK content that is Pit of Saron (map 658, quest
+// 24499/24511 "Echoes of Tortured Souls") and Halls of Reflection (668,
+// 24710/24712 "Deliverance from the Pit") — the Forge of Souls (632) has no
+// quest row, which is exactly why fills for it always worked and fills for its
+// two successors never did.
+//
+// Read through GetLFGDungeon, never off the DBC row: LoadLFGDungeons rewrites
+// `map` from the entrance areatrigger for the entries whose DBC map is the
+// outdoor one, and the areatrigger's target is the map the access rows key on.
+std::vector<std::pair<std::uint32_t, std::uint8_t>>
+DcDungeonQueueFillJob::ReadAccessTargets() const
+{
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> targets;
+
+    auto add = [&targets](LFGDungeonData const* data)
+    {
+        if (!data || !data->map)
+            return;
+        std::pair<std::uint32_t, std::uint8_t> const target{data->map,
+                                                            std::uint8_t(data->difficulty)};
+        if (std::find(targets.begin(), targets.end(), target) == targets.end())
+            targets.push_back(target);
+    };
+
+    for (std::uint32_t const dungeon : _dungeons)
+    {
+        // The low 24 bits are the dungeon id; the top byte is the LFG type the
+        // client packs alongside it.
+        LFGDungeonData const* const data = sLFGMgr->GetLFGDungeon(dungeon & 0x00FFFFFF);
+        if (!data)
+            continue;
+
+        if (data->type != LFG_TYPE_RANDOM)
+        {
+            add(data);
+            continue;
+        }
+
+        // LFGMgr::GetDungeonsByRandom is private, so rebuild its answer the way
+        // LoadLFGDungeons built the cache: every non-random dungeon sharing the
+        // random entry's group id.
+        for (std::uint32_t i = 0; i < sLFGDungeonStore.GetNumRows(); ++i)
+        {
+            LFGDungeonEntry const* const row = sLFGDungeonStore.LookupEntry(i);
+            if (!row)
+                continue;
+            LFGDungeonData const* const member = sLFGMgr->GetLFGDungeon(row->ID);
+            if (member && member->type != LFG_TYPE_RANDOM && member->group == data->group)
+                add(member);
+        }
+    }
+
+    return targets;
+}
+
 // Read back the AUTHORITATIVE, post-validation queue data — never the hook's
 // raw arguments.
 //
@@ -326,6 +359,7 @@ void DcDungeonQueueFillJob::TickPlanning()
     }
 
     _expansion = ReadDungeonExpansion();
+    _accessTargets = ReadAccessTargets();
 
     std::vector<DcDungeonQueueFillPlanner::Human> const humans = ReadHumans();
 
@@ -440,45 +474,8 @@ std::vector<ObjectGuid> DcDungeonQueueFillJob::BotGuids() const
 // faction is not a nicety here, it is the whole reason the fill works.
 ObjectGuid DcDungeonQueueFillJob::ClaimPoolCharacter(std::uint8_t classId)
 {
-    auto const& pool = sRandomPlayerbotMgr.addclassCache[
-        RandomPlayerbotMgr::GetTeamClassIdx(_isAlliance, classId)];
-
-    // Collect every free character rather than returning the first. Returning
-    // the first is what made "the same tank again" the normal outcome:
-    // addclassCache is an unordered_set whose iteration order does not change
-    // between fills, so the first free warrior is the SAME warrior every time.
-    std::vector<ObjectGuid> available;
-    std::vector<ObjectGuid> fresh;  // available, and not in the player's last party
-    for (ObjectGuid const& guid : pool)
-    {
-        if (HoldsBot(guid))
-            continue;
-        // The `.dc test` harness draws from this same pool and reserves what it
-        // holds; a fill in another job holds its own.
-        if (DcTestRunManager::Instance().IsReserved(guid))
-            continue;
-        if (DcDungeonQueueFillManager::Instance().IsClaimed(guid))
-            continue;
-        if (ObjectAccessor::FindConnectedPlayer(guid))
-            continue;
-        // A character in a REAL guild is somebody's, pool membership or not.
-        std::uint32_t const guildId = sCharacterCache->GetCharacterGuildIdByGuid(guid);
-        if (guildId && PlayerbotGuildMgr::instance().IsRealGuild(guildId))
-            continue;
-
-        available.push_back(guid);
-        if (std::find(_avoidGuids.begin(), _avoidGuids.end(), guid) == _avoidGuids.end())
-            fresh.push_back(guid);
-    }
-
-    // Prefer somebody the player has not just run with, but never fail over
-    // it: a pool holding one paladin must still be able to field that paladin
-    // twice running rather than break the fill.
-    std::vector<ObjectGuid> const& candidates = fresh.empty() ? available : fresh;
-    if (candidates.empty())
-        return ObjectGuid::Empty;
-
-    return candidates[DcDungeonQueueFillPlanner::NextRand(_drawState) % candidates.size()];
+    return DcPoolBots::ClaimPoolCharacter(_isAlliance, classId, _drawState, _avoidGuids,
+                                          [this](ObjectGuid guid) { return HoldsBot(guid); });
 }
 
 // The role pool in a seed-dependent order. Substitutions walked the pool in
@@ -684,8 +681,6 @@ void DcDungeonQueueFillJob::TickLoggingIn()
 // one in between.
 void DcDungeonQueueFillJob::TickEvicting()
 {
-    SafeSpot const spot = CapitalSpot(_isAlliance);
-
     bool allPlaced = true;
     for (Slot& slot : _slots)
     {
@@ -699,45 +694,16 @@ void DcDungeonQueueFillJob::TickEvicting()
             continue;  // mid-worldport, or still arriving — the stage timeout bounds it
         }
 
-        if (bot->IsBeingTeleported())
-        {
-            allPlaced = false;
-            continue;
-        }
-
-        if (bot->GetMapId() == spot.map && !bot->GetMap()->Instanceable() &&
-            bot->GetExactDist2d(spot.x, spot.y) < 100.0f)
-        {
+        if (DcPoolBots::EvictToCapital(bot, _isAlliance, "QUEUEFILL", _id))
             slot.relocated = true;
-            continue;
-        }
-
-        // Combat and a corpse both refuse to travel: TeleportTo itself does not
-        // care, but a bot that arrives dead or still tagged is a bot
-        // TickSanitizing has to undo anyway, and a bot in combat is one the
-        // core will not let go of cleanly.
-        if (bot->IsInCombat())
-            bot->CombatStop(true);
-        if (!bot->IsAlive())
-        {
-            bot->ResurrectPlayer(1.0f);
-            bot->SpawnCorpseBones();
-        }
-
-        if (!bot->TeleportTo(spot.map, spot.x, spot.y, spot.z, spot.o))
-        {
-            LOG_WARN("playerbots.dungeonclear",
-                     "QUEUEFILL {} could not move {} to {} (map {}) from map {} — retrying", _id,
-                     bot->GetName(), _isAlliance ? "Stormwind" : "Orgrimmar", spot.map,
-                     bot->GetMapId());
-        }
-        allPlaced = false;
+        else
+            allPlaced = false;
     }
 
     if (allPlaced)
     {
         LOG_INFO("playerbots.dungeonclear", "QUEUEFILL {} placed {} bot(s) in {}", _id,
-                 _slots.size(), _isAlliance ? "Stormwind" : "Orgrimmar");
+                 _slots.size(), DcPoolBots::CapitalName(_isAlliance));
         EnterStage(Stage::Provisioning);
         return;
     }
@@ -786,7 +752,7 @@ void DcDungeonQueueFillJob::TickProvisioning()
         }
         Release(std::string("no premade spec template matching '") + slot.plan.specName +
                 "' for " + DcBotProvisioning::ClassToken(slot.plan.classId) +
-                " (AiPlayerbot.PremadeSpecName.*) — cannot force the " + slot.plan.role,
+                " (Playerbots.PremadeSpecName.*) — cannot force the " + slot.plan.role,
                 /*notifyPlayer*/ true);
         return;
     }
@@ -846,47 +812,23 @@ void DcDungeonQueueFillJob::TickSanitizing()
         // stripped: it is the one thing standing between the class and the
         // queue, and the refusal it causes is silent (JoinLfg answers the
         // BOT's session, so the fill just sits in queueing until it times out).
-        if (bot->IsClass(CLASS_DEATH_KNIGHT) && !bot->IsQuestRewarded(kDkChainQuestAlliance) &&
-            !bot->IsQuestRewarded(kDkChainQuestHorde))
-        {
-            bot->SetRewardedQuest(bot->GetTeamId(true) == TEAM_ALLIANCE ? kDkChainQuestAlliance
-                                                                       : kDkChainQuestHorde);
+        if (DcPoolBots::CreditDeathKnightChain(bot))
             LOG_INFO("playerbots.dungeonclear",
                      "QUEUEFILL {} credited {} with the death-knight starting chain (LFG lock)",
                      _id, bot->GetName());
-        }
 
-        // Any LFG state at all is a queue we did not ask for (a leftover from
-        // the random-bot rotation, or an earlier fill). Leave it and wait: the
-        // packet is asynchronous, so the state clears a tick or two later.
-        if (sLFGMgr->GetState(slot.guid) != lfg::LFG_STATE_NONE)
+        // No attunement grant. Upstream also credits each pool bot with the
+        // destination's access rows here (DcDungeonAccess::GrantEntry, the way
+        // DcTestRunJob does for the GM harness). This branch keeps the queue
+        // fill to bots that are already eligible (grant ledger row C), so a
+        // bot without the attunement stays out of the fill.
+
+        // Out of any leftover LFG queue and group, alive, out of combat.
+        if (!DcPoolBots::SanitizeCommon(bot, slot.sanitized))
         {
-            if (!slot.sanitized)
-            {
-                bot->GetSession()->QueuePacket(new WorldPacket(CMSG_LFG_LEAVE));
-                slot.sanitized = true;
-            }
             allReady = false;
             continue;
         }
-
-        if (Group* grp = bot->GetGroup())
-        {
-            grp->RemoveMember(slot.guid);
-            allReady = false;
-            continue;
-        }
-
-        if (!bot->IsAlive())
-        {
-            bot->ResurrectPlayer(1.0f);
-            bot->SpawnCorpseBones();
-        }
-        if (bot->IsInCombat())
-            bot->CombatStop(true);
-        // No health top-up: the finder accepts a member at any health, and a bot
-        // standing in the capital regenerates (or eats) the way a player does.
-        // A full restore is a grant (#25).
 
         // Refresh the bot's own lock map so GetCompatibleDungeons judges it on
         // the level and gear it has NOW. Randomize's GiveLevel fires the level
@@ -1161,8 +1103,9 @@ void DcDungeonQueueFillJob::HandOffGroup(Group* grp)
              _playerName, _slots.size());
 }
 
-// The fill is done; the job now only shadows the group so the bots are released
-// at the right moment rather than at a clock.
+// The fill is done; the job now only shadows the group, and the bots are
+// released when the player leaves it (or the group disbands) — never by a clock
+// and never by LFG calling the dungeon finished.
 //
 // Nothing is installed on the bots here. LfgAcceptAction calls
 // RandomPlayerbotMgr::Refresh + ResetStrategies when it accepts, which would
@@ -1182,16 +1125,13 @@ void DcDungeonQueueFillJob::TickFormed()
         return;
     }
 
-    // The dungeon ended. LFGMgr::FinishDungeon parks the group in
-    // LFG_STATE_FINISHED_DUNGEON and leaves it standing (so the party can
-    // queue again together), which is exactly the moment the fill's bots stop
-    // being wanted — waiting for the group to disband on its own could be
-    // another twenty minutes of them following the player around Dalaran.
-    if (sLFGMgr->GetState(_formedGroupGuid) == lfg::LFG_STATE_FINISHED_DUNGEON)
-    {
-        Release("dungeon finished");
-        return;
-    }
+    // LFG_STATE_FINISHED_DUNGEON is deliberately not a release. "Finished" is
+    // LFG's word, not the dungeon's: FinishDungeon fires on whichever encounter
+    // instance_encounters flags lastEncounterDungeon, and that is often not the
+    // last boss — the BRD Detention Block (LFG 30) finishes on Gerstahn, its
+    // FIRST boss; the Sunken Temple (LFG 28) on the Shade of Eranikus with
+    // Jammal'an's floor still standing. Releasing there left the player alone
+    // mid-dungeon. The bots stay until the player leaves the group.
 
     // Opt-in: run the dungeon for the player instead of with them. Issued once,
     // and only once everyone is actually on the dungeon map — `dc on` before
@@ -1212,6 +1152,20 @@ void DcDungeonQueueFillJob::TickFormed()
                 break;
 
             DcStrategyGate::Reconcile(tank);
+            // A map whose wing is chosen per run (Blackrock Spire/Depths,
+            // Maraudon) takes it from the dungeon the group was actually formed
+            // for: LFG 32 is LBRS, 44 UBRS, 30 the BRD Detention Block, 276 the
+            // BRD Upper City, 26/272/273 Maraudon's Orange/Purple/Pristine Waters.
+            // Latched before `dc on` so the run clears that wing.
+            uint32 const lfgDungeon = sLFGMgr->GetDungeon(_formedGroupGuid);
+            if (DungeonWing const* wing =
+                    DungeonWingRegistry::WingForLfgDungeon(tank->GetMapId(), lfgDungeon))
+            {
+                DcRunWing::Set(tank, *wing, DcRunWing::Source::Lfg);
+                LOG_INFO("playerbots.dungeonclear",
+                         "QUEUEFILL {} AutoClear: LFG dungeon {} -> run wing '{}'", _id,
+                         lfgDungeon, wing->token);
+            }
             tankAI->DoSpecificAction("dc on", Event("dc", "", player), true);
             _autoClearIssued = true;
             LOG_INFO("playerbots.dungeonclear", "QUEUEFILL {} AutoClear: issued `dc on` to {}",
@@ -1252,27 +1206,7 @@ void DcDungeonQueueFillJob::TickReleasing()
             continue;
         }
 
-        if (bot)
-        {
-            if (sLFGMgr->GetState(slot.guid) != lfg::LFG_STATE_NONE)
-                bot->GetSession()->QueuePacket(new WorldPacket(CMSG_LFG_LEAVE));
-            if (Group* grp = bot->GetGroup())
-                grp->RemoveMember(slot.guid);
-        }
-
-        if (!logout)
-            continue;
-
-        // Whichever holder owns the login. The masterless path files these
-        // under sRandomPlayerbotMgr (see TickClaiming), but check the map
-        // rather than assume it: a bot the fill handed to a player's party can
-        // have been re-filed since.
-        if (sRandomPlayerbotMgr.GetPlayerBot(slot.guid))
-            sRandomPlayerbotMgr.LogoutPlayerBot(slot.guid);
-        else if (ObjectAccessor::FindConnectedPlayer(slot.guid))
-            LOG_WARN("playerbots.dungeonclear",
-                     "QUEUEFILL {} bot {} is online but owned by no holder — left logged in",
-                     _id, slot.guid.ToString());
+        DcPoolBots::ReleaseBot(slot.guid, bot, logout, "QUEUEFILL", _id);
     }
 
     // Graceful degradation, said out loud: the player is still in the REAL

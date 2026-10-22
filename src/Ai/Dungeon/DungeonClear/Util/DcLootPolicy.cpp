@@ -5,6 +5,7 @@
 
 #include "DcLootPolicy.h"
 
+#include "DcEncounterChests.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -49,6 +50,7 @@
 #include "Chat.h"
 #include "ServerFacade.h"
 #include "Timer.h"
+#include "Util/DcPlayerbotsConfig.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -269,7 +271,9 @@ bool DcLootPolicy::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
         else if (GameObject* go = botAI->GetGameObject(target.guid))
         {
             // A gameobject. With IgnoreChests on (the default) no world object
-            // is ever worth a detour — the bot stops only for corpses. With it
+            // is ever worth a detour — the bot stops only for corpses — EXCEPT an
+            // encounter chest, which holds a boss's whole reward (the Chest of the
+            // Seven was being skipped like trash; see DcEncounterChests). With it
             // off, stop only for real chests. Herbalism / mining gathering veins
             // are also chest-type gameobjects, but are gated by a profession-
             // skill lock — skillId carries that profession — so exclude them;
@@ -277,7 +281,9 @@ bool DcLootPolicy::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
             // excluded by type.
             // A chest that holds a door key (IsDoorKeyChest) is a stop
             // whatever IgnoreChests says.
-            keep = (!ignoreChests || IsDoorKeyChest(go->GetEntry())) &&
+            // An encounter chest (DcEncounterChests) is one too, upstream's rule.
+            keep = (!ignoreChests || IsDoorKeyChest(go->GetEntry()) ||
+                    DcEncounterChests::IsEncounterChest(go->GetEntry())) &&
                    go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
                    target.skillId != SKILL_HERBALISM && target.skillId != SKILL_MINING;
         }

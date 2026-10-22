@@ -57,6 +57,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 namespace
 {
@@ -119,6 +120,7 @@ namespace
     // each still standing down on the raw flag, and each froze on it in turn.
     // See DcCombatFlag.h for the mechanism.
     using DcCombatFlag::MayDrive;
+    using DcCombatFlag::MayDriveEvent;
 
     // Trigger-side between-pulls gate. Thin wrapper over the shared
     // DcPartyState::IsBetweenPullsReady (one body for the trigger ladder and the
@@ -278,24 +280,15 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
-    // Sticky for a PERSISTENT event already in progress: once started, stay live
-    // regardless of distance so the tank can roam far from the anchor while the
-    // event drives it (down ZulFarrak's stairs to the temple bosses, back to the
-    // NPCs). Initial arrival still goes through the distance/gate check below;
-    // completion latches the objective, after which `next` becomes the boss and
+    // Completion latches the objective, after which `next` becomes the boss and
     // this returns false at the kind check above.
-    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(context))
+    if (DungeonEventExecutor::ObjectiveArrived(bot, context, *next))
         return true;
 
-    // Satisfied when the tank has reached the anchor (within arriveRadius), or
-    // when the optional gate creature has spawned alive (the event already fired
-    // its result, e.g. the real boss is up), so we don't need to babysit it.
     float const radius = next->arriveRadius > 0.0f
                              ? next->arriveRadius
                              : DcSettings::GetFloat(bot, "ObjectiveArriveRadius");
     float const distToAnchor = bot->GetExactDist(next->x, next->y, next->z);
-    if (distToAnchor <= radius)
-        return true;
 
     // Diagnostic (throttled, leader only): when the tank is hovering NEAR an
     // objective but not arriving, this names the exact gap — dist vs arriveRadius
@@ -319,16 +312,6 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
                       bot->GetName(), next->name, distToAnchor, radius);
         }
     }
-
-    if (next->gateEntry)
-    {
-        for (auto const& kv : map->GetCreatureBySpawnIdStore())
-        {
-            Creature* c = kv.second;
-            if (c && c->GetEntry() == next->gateEntry && c->IsAlive())
-                return true;
-        }
-    }
     return false;
 }
 
@@ -336,7 +319,7 @@ bool DungeonClearEventDueTrigger::IsActive()
 {
     if (!IsEnabled(context, bot))
         return false;
-    if (!bot || bot->isDead() || !MayDrive(bot, context))
+    if (!bot || bot->isDead())
         return false;
     // Leader drives events; followers stay on follow-tank.
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
@@ -349,7 +332,21 @@ bool DungeonClearEventDueTrigger::IsActive()
 
     // Hand the trigger and the action the SAME "which event is due" answer so
     // they can never disagree about whether to fire / what to drive.
-    return DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()) != nullptr;
+    DungeonEvent const* const ev =
+        DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId());
+    if (!ev)
+        return false;
+
+    // THE GATE LAST, and not at all for a drivesInCombat event — resolving the
+    // event first is what makes that distinction available here. Standing this
+    // rung down on a fight is right for an event whose work happens BETWEEN
+    // pulls and fatal for one that IS the fight: a combat-FLAGGED bot with an
+    // empty attacker set runs the NON-combat engine, so the combat-engine copy
+    // of this rung, which already carries the exemption, never gets a tick to
+    // apply it and the driver goes dark entirely. Halls of Reflection's escape
+    // lost thirty seconds of wall 4 that way. Full account, and the run ids, in
+    // DungeonClearMath::EventDueGateOpen.
+    return MayDriveEvent(bot, context, ev->drivesInCombat);
 }
 
 bool DungeonClearEventDueCombatTrigger::IsActive()
@@ -760,6 +757,10 @@ bool DungeonClearStalledTrigger::IsActive()
     // maneuvers into a live encounter (the fight is the raid strategy's; DC
     // resumes at loot). Cheap for dungeons — IsActive is raid-gated.
     if (DcBossStandDown::IsActive(bot))
+        return false;
+
+    // ...nor into Karazhan's chess game, which owns the whole raid for its length.
+    if (DcKarazhan::ChessIsOn(bot))
         return false;
 
     // Only fall back when there is an actual stall reason set by Advance or
@@ -1235,9 +1236,11 @@ bool DungeonClearPullManeuverTrigger::IsActive()
     // so the pack arrives late and strung out, and the tank has to be held on the
     // authored camp for the duration or the chase walks it back into the room the
     // plan just emptied. The action still YIELDS on every tick the tank is in
-    // position, so this costs the rotation nothing while nothing is wrong.
+    // position, so this costs the rotation nothing while nothing is wrong. A boxed
+    // room-clear pull (roomCampFight) is held the same way: Moroes' Guests are
+    // tagged at range and hold at range, and chasing them walks toward the dais.
     if (phase == static_cast<uint32>(DcPullPhase::Engage))
-        return AI_VALUE(DcPullContext&, DcKey::PullContext).scriptedStage >= 0;
+        return AI_VALUE(DcPullContext&, DcKey::PullContext).AnchoredCampFight();
 
     return phase == static_cast<uint32>(DcPullPhase::Forming) ||
            phase == static_cast<uint32>(DcPullPhase::Advancing) ||
@@ -1474,7 +1477,14 @@ bool DungeonClearAssistCampTrigger::IsActive()
     //
     // So: fire, but only once the fight is at the camp. A seed pointing at a mob
     // already inside the follower leash cannot invite anyone anywhere.
-    if (DcLeaderSignal::IsLeaderScriptedCampFight(bot) && !ScriptedCampFightIsAtCamp(bot))
+    //
+    // A room-clear camp fight seeds without waiting for that. There is no no-go room
+    // next door for a seed to invite anyone into — the hold-at-camp leash, stretched
+    // to reach (ScriptedFollowerReachLeash), bounds where the follower may stand —
+    // and Moroes' Phantom Guests hold 20-30yd off the camp casting, so "the fight has
+    // reached the camp" may never come true and the ranged would stand idle.
+    if (DcLeaderSignal::IsLeaderScriptedCampFight(bot) &&
+        !DcLeaderSignal::IsLeaderRoomCampFight(bot) && !ScriptedCampFightIsAtCamp(bot))
         return false;
     return DcLeaderSignal::IsLeaderFightAssistWanted(bot);
 }
@@ -1599,16 +1609,23 @@ namespace
     // and three copies of a guard list this delicate is how they drift. This
     // wrapper keeps the shape THIS caller needs: opaque (no refs at all) is
     // legitimate-by-default here, and only here.
-    bool HasLegitimateCombatHolder(Player* bot, float& nearestDist)
+    // `nearestSeenDist` is the same for the closest holder the bot can SEE (+inf when
+    // none) — the distance the engage-range clause judges. See
+    // DcCombatFlag::HolderScan::nearestSeenDist.
+    bool HasLegitimateCombatHolder(Player* bot, float& nearestDist, float& nearestSeenDist)
     {
         DcCombatFlag::HolderScan const scan = DcCombatFlag::ScanCombatHolders(bot);
         if (scan.opaque)
         {
             nearestDist = 0.0f;
+            nearestSeenDist = 0.0f;
             return true;  // no unit to blame -> opaque/forced combat, leave it alone
         }
         if (scan.found)
+        {
             nearestDist = scan.nearestDist;
+            nearestSeenDist = scan.nearestSeenDist;
+        }
         return scan.found;
     }
 }
@@ -1641,7 +1658,10 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
     // multiplier; gating here too keeps the per-tick holder scan off the books
     // for the whole fight.
     Map* const map = bot->GetMap();
-    if (!map || DcBossStandDown::IsActive(bot))
+    // Karazhan's chess game holds its controllers combat-flagged by their pieces'
+    // fight with nothing a bot could or should attack: exactly the phantom shape,
+    // and not one. Same stand-down as a boss encounter, clocks and all.
+    if (!map || DcBossStandDown::IsActive(bot) || DcKarazhan::ChessIsOn(bot))
     {
         stuckCombatSinceMs = 0;
         holderCloseWatch.Reset();
@@ -1666,7 +1686,15 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
     // scan behind the two cheap reads: a real fight almost always trips
     // hasAttacker/hasVictim, and a fleeing/kiting party trips the reachable-holder
     // test — either way we never run down the timer.
-    bool const hasAttacker = !bot->getAttackers().empty();
+    //
+    // An attacker only counts if the bot can SEE it. Stock AttackersValue drops
+    // anything out of LOS, so an unseen attacker is one no playerbots action will
+    // ever fight — the bot sits on the non-combat engine reading `no attackers`
+    // while the flag holds forever (tr-20261018-101829-1: two Angerforge
+    // Reservists fell off his balcony and held the tank from the floor below for
+    // 900s). Such an attacker still has a combat reference, so the holder scan
+    // below picks it up and asks the right question of it: is it coming?
+    bool const hasAttacker = DcCombatFlag::HasSeenAttacker(bot);
     bool const hasVictim   = bot->GetVictim() != nullptr;
 
     // Second question, asked only once legitimacy passes: is that holder actually
@@ -1679,8 +1707,9 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
     // so the streak clock below runs and the existing force-clear fires. See
     // DungeonClearMath::IsHolderProsecutingFight.
     float holderDist = 0.0f;
+    float seenHolderDist = std::numeric_limits<float>::infinity();
     bool const legitimateHolder =
-        !hasAttacker && !hasVictim && HasLegitimateCombatHolder(bot, holderDist);
+        !hasAttacker && !hasVictim && HasLegitimateCombatHolder(bot, holderDist, seenHolderDist);
 
     // The watchdog must only be re-armed when there is nothing left to measure — a
     // real fight, or no legitimate holder at all. Re-arming it on every tick where the
@@ -1694,7 +1723,7 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
 
     bool const hasHolder =
         hasAttacker || hasVictim ||
-        DungeonClearMath::IsHolderProsecutingFight(legitimateHolder, holderDist,
+        DungeonClearMath::IsHolderProsecutingFight(legitimateHolder, seenHolderDist,
                                                    DC_ENGAGE_RANGE, closing);
 
     bool const phantom =

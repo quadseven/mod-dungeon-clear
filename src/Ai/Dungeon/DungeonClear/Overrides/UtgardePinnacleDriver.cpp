@@ -22,6 +22,7 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "Timer.h"
+#include "Util/DcPlayerbotsConfig.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"

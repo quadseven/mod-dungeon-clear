@@ -558,3 +558,72 @@ TEST(DcDoorPolicyTest, TheChestsThatHoldADoorKeyAreOpened)
     EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(0));
     EXPECT_FALSE(DcLootPolicy::IsDoorKeyChest(174554));  // BRD Relic Coffer Door
 }
+
+// Karazhan's Gatehouse Door (183450) is the front portcullis every run meets
+// 11yd from the zone-in. It is lock-free and scriptless — only a click opens
+// it — so it must be on the lock-free clickable list, and on no list that
+// would hold the bot off it. tr-20260923-165858-1 auto-paused there at 0/10.
+TEST(DcDoorPolicyTest, KarazhanGatehouseDoorIsLockFreeClickable)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsLockFreeClickable(183450));
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(183450));
+    EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(183450));
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(183450));
+}
+
+// Karazhan's other doors. The Strange Bookcase is the only way into Terestian's
+// room and a plain click opens it. The Gamesman's Hall Exit Door opens only on
+// Chess DONE. Aran's library door is opened and shut by his script and must be
+// waited on, never clicked.
+TEST(DcDoorPolicyTest, KarazhanBookcaseIsClickable)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsLockFreeClickable(184453));
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(184453));
+    EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(184453));
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(184453));
+}
+
+// The chess hall's way in: a plain click opens it (the chess plan's C0.1).
+TEST(DcDoorPolicyTest, KarazhanGamesmanHallDoorIsClickable)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsLockFreeClickable(184276));
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(184276));
+    EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(184276));
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(184276));
+}
+
+TEST(DcDoorPolicyTest, KarazhanGamesmanExitIsScriptOnly)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(184277));
+    EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(184277));
+    EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(184277));
+}
+
+TEST(DcDoorPolicyTest, KarazhanLibraryDoorIsHeldNeverClicked)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsSelfClearing(184517));
+    EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(184517));
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(184517));
+    // Not navigation-ignored: the party walks through it once it is open.
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(184517));
+}
+
+// Blackrock Depths' Bar Door (170571) opens only at the end of Rocknot's ale run
+// (map-230 event 5), and Phalanx turns hostile only after it, at the end of his
+// run to the doorway. Clicking it early would let the party walk out past a
+// Phalanx who is still unattackable.
+TEST(DcDoorPolicyTest, BlackrockBarDoorIsScriptOnly)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170571));
+    EXPECT_FALSE(DcEventDoorRegistry::IsPartyKeyDoor(170571)) << "the Grim Guzzler Key is never waived";
+    // The Summoner's Tomb doors are the Seven's (map-230 event 6) alone.
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170576));   // entrance
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170577));   // exit
+    // The Golem Room doors open on both braziers lit (map-230 events 7/8).
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170573));   // Golem Room North
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170574));   // Golem Room South
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(170575));   // Throne Room (Magmus's death)
+    // The Lyceum door stays a keyed traversal gate the walker opens.
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558));
+    EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));
+}

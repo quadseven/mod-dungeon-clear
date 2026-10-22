@@ -10,6 +10,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Util/DcPlayerbotsConfig.h"
 
 Unit* DungeonClearPartyMemberToHealValue::Calculate()
 {

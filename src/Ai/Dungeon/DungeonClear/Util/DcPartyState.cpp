@@ -54,6 +54,7 @@
 #include "Chat.h"
 #include "ServerFacade.h"
 #include "Timer.h"
+#include "Util/DcPlayerbotsConfig.h"
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
@@ -82,7 +83,7 @@ float DcPartyState::RestMinHpPct(Player* bot)
         return static_cast<float>(target);
 
     // 90% is our "topped up enough to pull" ceiling. Clamp it to the level bots
-    // actually eat back up to (AiPlayerbot.AlmostFullHealth, default 85) so the
+    // actually eat back up to (Playerbots.AlmostFullHealth, default 85) so the
     // gate never waits on HP a bot won't restore on its own.
     return std::min(90.0f, static_cast<float>(DcPbConfig::AlmostFullHealth()));
 }
@@ -94,7 +95,7 @@ float DcPartyState::RestMinMpPct(Player* bot)
         return static_cast<float>(target);
 
     // 75% ceiling, clamped to the level bots actually drink back up to
-    // (AiPlayerbot.HighMana, default 65). Bots stop drinking at HighMana, so a
+    // (Playerbots.HighMana, default 65). Bots stop drinking at HighMana, so a
     // higher gate would strand the tank waiting on slow natural mana regen.
     return std::min(75.0f, static_cast<float>(DcPbConfig::HighMana()));
 }
@@ -364,6 +365,24 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
     if (!context)
         return gate;
 
+    // A PARTY WITH A RIDER IN IT IS NOT MEASURED BY SPREAD. Distances between a
+    // drake and a member on foot — or between two drakes on their lanes — say
+    // nothing about readiness, and the driver that put them there owns cohesion
+    // until they are all on foot again (The Oculus's flight driver; Trial of the
+    // Champion's joust driver, which holds the tank off the ladder anyway).
+    if (Group* const group = bot->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* const m = ref->GetSource();
+            if (m && m->GetMapId() == bot->GetMapId() && m->IsAlive() && m->GetVehicle())
+            {
+                gate.maxSpread = 100000.0f;
+                return gate;
+            }
+        }
+    }
+
     DcPullContext const& pull =
         context->GetValue<DcPullContext&>(DcKey::PullContext)->Get();
     // Waive the spread requirement ONLY while a pull maneuver is actually
@@ -440,6 +459,23 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
         float const setback = DcSettings::GetFloat(bot, "PullSetback");
         float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
         gate.maxTankGap = gate.maxSpread + std::max(setback, maxDrag);
+
+        // A CAMP THE TANK HAS LEFT BEHIND IS NO ANCHOR. Past maxTankGap a member
+        // standing AT the camp fails the backstop, and one standing with the tank
+        // fails the camp spread — no position passes both, so the gate is closed
+        // for good. Measure against the tank instead: the party is with it, and the
+        // next pull stamps a fresh camp. Live (tr-20261018-230400-6): the camp stayed
+        // at the throne-room door while the fight carried everyone 105yd south to the
+        // Emperor's standoff; every member's recall latched RAN AWAY, and the tank
+        // held "Waiting on Yidama, Zesh, Moge (out of range)" with all three within
+        // 23yd of it for sixteen minutes. Stranded recovery measures to the tank, so
+        // it never saw them.
+        if (DungeonClearMath::CampAnchorIsStale(bot->GetExactDist2d(&pull.camp),
+                                                gate.maxTankGap))
+        {
+            gate.anchor = nullptr;
+            gate.maxTankGap = 0.0f;
+        }
     }
     return gate;
 }
