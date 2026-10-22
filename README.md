@@ -182,6 +182,9 @@ a success *rate* rather than an anecdote. `.dc test plan start pool=a,b:heroic,�
 total=0` runs a whole pool of dungeons until stopped — the Test Deck's
 Continuous mode, which keeps every failure and its logs across restarts.
 
+- `exclude=<class>[,<class>...]` leaves classes out of the party (`exclude=rogue`); a role left with no class is refused.
+- `from=<boss>` starts the run at that boss, with the earlier bosses marked skipped (`from=Mr. Smite`).
+
 **[Test Runs](https://github.com/jrad7/mod-dungeon-clear/wiki/Test-Runs)** —
 the full command reference, gear and party options, plans, watching, the
 headless test-driver character, and where the results are written.

@@ -35,16 +35,36 @@ namespace DcTestPlan
                 " — usage: .dc test plan start <dungeon> [heroic] total=N [concurrent=N] [level=N]"
                 " [seed=N] [size=N] [ilvl=N|none] [quality=rare|epic|…]"
                 "  |  .dc test plan start pool=<dungeon[:heroic]>,… [total=0|N] [pick=bag|random]"
-                " [concurrent=N] [level=N] [seed=N] [ilvl=…] [quality=…] [paused]";
+                " [concurrent=N] [level=N] [seed=N] [ilvl=…] [quality=…]"
+                " [exclude=<class>[,<class>...]] [from=<boss>] [paused]";
             return out;
         };
         bool sawTotal = false;
         bool sawSize = false;
 
+        DcTestStartOptions::Parser startOpts;
         std::istringstream in{args};
         std::string word;
         while (in >> word)
         {
+            // exclude= and from= (whose boss name may run over several words).
+            // The dungeon token is the first bare word, so it is never a name
+            // continuation; a pool plan has no dungeon token, so there every
+            // bare word after from= is one (bar heroic and paused).
+            std::string startErr;
+            switch (startOpts.Consume(
+                word, word == "heroic" || word == "paused" ||
+                    (!out.spec.isPool && out.spec.dungeonToken.empty()),
+                &startErr))
+            {
+                case DcTestStartOptions::Parser::Result::Consumed:
+                    continue;
+                case DcTestStartOptions::Parser::Result::Error:
+                    return usage(startErr);
+                case DcTestStartOptions::Parser::Result::NotMine:
+                    break;
+            }
+
             std::size_t const eq = word.find('=');
             if (eq == std::string::npos)
             {
@@ -138,6 +158,7 @@ namespace DcTestPlan
                 return usage("unknown option '" + key + "'");
         }
 
+        out.spec.start = startOpts.options();
         if (out.spec.isPool)
         {
             // The pool carries its own dungeons and difficulties; a stray

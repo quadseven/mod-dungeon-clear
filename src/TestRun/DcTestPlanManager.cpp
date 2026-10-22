@@ -164,6 +164,21 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
     if (!spec.isPool)
         spec.dungeonToken = spec.pool.front().token;
 
+    // exclude= / from= are checked against every pool entry here too, for the
+    // same reason: a refusal Start would repeat for every child fails the plan
+    // once, naming the entry, instead of once per launch.
+    for (DcTestPlan::PoolEntry const& e : spec.pool)
+    {
+        DcTestDungeonRegistry::Row const* row = DcTestDungeonRegistry::Find(e.token);
+        if (!row)
+            continue;  // ResolvePool already refused an unknown token
+        DcTestStartOptions::StartPlan unused;
+        std::string optErr;
+        if (!DcTestRunManager::ResolveStartOptions(*row, e.heroic, spec.level, e.size,
+                                                   spec.start, &unused, &optErr))
+            return fail(spec.isPool ? e.Key() + ": " + optErr : optErr);
+    }
+
     uint32 const maxPlans = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxPlans");
     if (maxPlans != 0 && _plans.size() >= maxPlans)
         return fail("max active test plans reached (" + std::to_string(maxPlans) +
@@ -644,7 +659,8 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     bool const ok = DcTestRunManager::Instance().Start(gm, entry.token,
                                                        plan.spec.level, seed, entry.heroic,
                                                        plan.spec.gear, &msg, plan.spec.planId,
-                                                       &err, &runId, entry.size);
+                                                       &err, &runId, entry.size,
+                                                       plan.spec.start);
     if (ok)
     {
         ++plan.counters.launched;

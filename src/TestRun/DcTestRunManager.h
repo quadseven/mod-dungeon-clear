@@ -15,8 +15,10 @@
 
 #include "ObjectGuid.h"
 #include "TestRun/DcTestComp.h"
+#include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestGearTiers.h"
 #include "TestRun/DcTestRunJob.h"
+#include "TestRun/DcTestStartOptions.h"
 
 class Player;
 
@@ -59,7 +61,8 @@ public:
         BadRoster,       // permanent — malformed party=, unknown/duplicate name
         FactionMismatch, // permanent — a roster cannot span factions
         CharacterOnline, // transient — a human is playing that character
-        CharacterBusy    // transient — another live run holds that character
+        CharacterBusy,   // transient: another live run holds that character
+        BadOption        // permanent: exclude=/from= refused (see ResolveStartOptions)
     };
 
     // Validate + launch a run. On success sets *msg to the start confirmation
@@ -76,10 +79,22 @@ public:
     // Spec inherits the Playerbots.AutoGear* conf values.
     // size 0 = the classic 5-man comp; 2-40 fields a sized (raid) comp — see
     // DcTestComp::RoleQuota / DcTestRunJob::Create.
+    // opts carries `exclude=` / `from=`; both are validated here (BadOption).
     bool Start(Player* gm, std::string const& dungeonToken, uint32 levelOverride, uint32 seed,
                bool heroic, DcTestGearTiers::Spec const& gear, std::string* msg,
                std::string const& planId = "", StartErr* errOut = nullptr,
-               std::string* runIdOut = nullptr, uint32 size = 0);
+               std::string* runIdOut = nullptr, uint32 size = 0,
+               DcTestStartOptions::Options const& opts = {});
+
+    // Check `exclude=` (a role left with no class) and resolve `from=` (boss name
+    // against the dungeon's real boss list, plus where the party is dropped) for
+    // a run of `row`. False with *err on a refusal. *startOut is filled only
+    // when `opts.startBoss` is set. Called by Start, and by the plan manager so a
+    // bad option fails the plan up front instead of on its first child.
+    static bool ResolveStartOptions(DcTestDungeonRegistry::Row const& row, bool heroic,
+                                    uint32 levelOverride, uint32 size,
+                                    DcTestStartOptions::Options const& opts,
+                                    DcTestStartOptions::StartPlan* startOut, std::string* err);
 
     // Validate + launch a HAND-PICKED party (`.dc test start <d> party=a,b,c,d,e`).
     // `partySpec` is the raw comma-separated name list; roles are positional

@@ -177,13 +177,14 @@ TEST(DcTestRunRecordTest, BossRosterSerializesInProgressionOrder)
               std::string::npos);
 }
 
-TEST(DcTestRunRecordTest, SchemaIsThirteen)
+TEST(DcTestRunRecordTest, SchemaIsFourteen)
 {
     // 12: added combatHolders[].trigger, and with it a change of meaning in the
-    // sibling `legitimate` field — a trigger creature now sinks the verdict.
+    // sibling `legitimate` field - a trigger creature now sinks the verdict.
     // 13: added the scenario block (scenario/scenarioOf/focus/successBy/
     // tailPending/extras).
-    EXPECT_NE(ToJsonl(SampleRecord()).find("\"schema\":13"), std::string::npos);
+    // 14: added excludeMask and startBoss (`exclude=` / `from=`).
+    EXPECT_NE(ToJsonl(SampleRecord()).find("\"schema\":14"), std::string::npos);
     EXPECT_NE(ToJsonl(SampleRecord()).find("\"size\":"), std::string::npos);
 }
 
@@ -420,4 +421,16 @@ TEST(DcRunStateTelemetryTest, TelemetrySurvivesResetUntilExplicitlyCleared)
     rs.ClearTestTelemetry();
     EXPECT_EQ(rs.eventProgressSeq, 0u);
     EXPECT_TRUE(rs.testExtras.empty());
+}
+
+// `exclude=` and `from=` ride out on the record so a replay knows to pass them.
+TEST(DcTestRunRecordTest, StartOptionsSerialize)
+{
+    Record r = SampleRecord();
+    r.excludeMask = 1u << 4;
+    r.startBoss = "Mr. Smite";
+
+    std::string const line = ToJsonl(r);
+    EXPECT_NE(line.find("\"excludeMask\":16"), std::string::npos);
+    EXPECT_NE(line.find("\"startBoss\":\"Mr. Smite\""), std::string::npos);
 }

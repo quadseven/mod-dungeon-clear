@@ -276,3 +276,35 @@ TEST(DcSettingsRegistryTest, TestRunCapsDefaultToUnlimited)
         EXPECT_FALSE(d->playerFacing) << key << " is server-only";
     }
 }
+
+// `.dc test plan start` carries exclude= and from= through to the Spec, with a
+// boss name that runs over several words.
+TEST(DcTestPlanScheduleTest, ExcludeAndFromReachTheSpec)
+{
+    auto const r = ParseStartArgs("deadmines total=3 exclude=rogue from=Mr. Smite concurrent=2");
+    ASSERT_TRUE(r.ok) << r.err;
+    EXPECT_EQ(r.spec.dungeonToken, "deadmines");
+    EXPECT_EQ(r.spec.total, 3u);
+    EXPECT_EQ(r.spec.concurrent, 2u);
+    EXPECT_EQ(r.spec.start.excludeMask, 1u << 4);
+    EXPECT_EQ(r.spec.start.startBoss, "Mr. Smite");
+}
+
+TEST(DcTestPlanScheduleTest, BadExcludeIsRefused)
+{
+    auto const r = ParseStartArgs("deadmines total=3 exclude=bard");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.err.find("bard"), std::string::npos);
+}
+
+// A pool plan takes the same options, and a bare `paused` after a multi-word
+// boss name is the flag, not another word of the name.
+TEST(DcTestPlanScheduleTest, PoolPlanKeepsStartOptionsAndPausedFlag)
+{
+    auto const r = ParseStartArgs("pool=deadmines total=4 exclude=rogue,mage from=Mr. Smite paused");
+    ASSERT_TRUE(r.ok) << r.err;
+    EXPECT_TRUE(r.spec.isPool);
+    EXPECT_TRUE(r.spec.startPaused);
+    EXPECT_EQ(r.spec.start.excludeMask, (1u << 4) | (1u << 8));
+    EXPECT_EQ(r.spec.start.startBoss, "Mr. Smite");
+}

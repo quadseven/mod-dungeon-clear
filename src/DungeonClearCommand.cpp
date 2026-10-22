@@ -410,7 +410,9 @@ public:
     }
 
     // `.dc test start <dungeon> [heroic] [level=N] [seed=N] [ilvl=N|none]
-    // [quality=rare|epic|…]` — random comp drawn from the addclass pool;
+    // [quality=rare|epic|…] [exclude=<class>,...] [from=<boss>]` — random comp
+    // drawn from the addclass pool, minus any excluded classes, starting at the
+    // named boss instead of the entrance;
     // dungeon is a registry token (`.dc test list`) or a mapId. ilvl/quality cap
     // the gear the bots are rolled with, defaulting to the Playerbots.AutoGear*
     // conf values; `.dc test gear <dungeon>` lists the ceilings worth using for
@@ -431,7 +433,8 @@ public:
 
         static constexpr char const* kUsage =
             "Usage: .dc test start <dungeon> [heroic] [size=N|10|25] [level=N] [seed=N] "
-            "[ilvl=N|none] [quality=normal|uncommon|rare|epic|legendary] [trace=1]\n"
+            "[ilvl=N|none] [quality=normal|uncommon|rare|epic|legendary] "
+            "[exclude=<class>[,<class>...]] [from=<boss>] [trace=1]\n"
             "   or: .dc test start <dungeon> party=Tank,Heal,Dps1,Dps2,... [heroic] [trace=1]";
 
         std::string token;
@@ -442,10 +445,25 @@ public:
         DcTestGearTiers::Spec gear;
         bool heroic = false;
         bool trace = false;  // Pull Lab trace + oracles (lab_traces/<runId>.jsonl)
+        DcTestStartOptions::Parser startOpts;
         std::istringstream in{std::string(args)};
         std::string word;
         while (in >> word)
         {
+            // exclude= and from=; a boss name may run over several words
+            // ("from=Mr. Smite"), so the parser also claims those continuations.
+            std::string startErr;
+            DcTestStartOptions::Parser::Result const startRes = startOpts.Consume(
+                word, word == "heroic" || word == "10" || word == "25" || token.empty(),
+                &startErr);
+            if (startRes == DcTestStartOptions::Parser::Result::Error)
+            {
+                handler->SendSysMessage(startErr);
+                return true;
+            }
+            if (startRes == DcTestStartOptions::Parser::Result::Consumed)
+                continue;
+
             if (word.rfind("level=", 0) == 0)
                 level = static_cast<uint32>(std::strtoul(word.c_str() + 6, nullptr, 10));
             else if (word.rfind("seed=", 0) == 0)
@@ -512,6 +530,13 @@ public:
                     "roster is the comp (its length is the size).");
                 return true;
             }
+            if (startOpts.options().excludeMask || !startOpts.options().startBoss.empty())
+            {
+                handler->SendSysMessage(
+                    "exclude= and from= do not apply to party= runs: the roster is the comp, and "
+                    "a hand-picked run always starts at the entrance.");
+                return true;
+            }
             DcTestRunManager::Instance().StartRoster(issuer, token, party, heroic, &msg, "", nullptr, &runId);
         }
         else
@@ -522,7 +547,7 @@ public:
                 return true;
             }
             DcTestRunManager::Instance().Start(issuer, token, level, seed, heroic, gear, &msg,
-                                               "", nullptr, &runId, size);
+                                               "", nullptr, &runId, size, startOpts.options());
         }
         if (trace && !runId.empty() && DcTestRunManager::Instance().EnableTrace(runId))
             msg += " [trace armed: oracles scored at teardown]";
