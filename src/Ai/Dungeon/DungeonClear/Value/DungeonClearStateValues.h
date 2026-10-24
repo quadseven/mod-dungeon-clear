@@ -19,6 +19,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBreathDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -293,6 +294,20 @@ public:
         : ManualSetValue<uint32>(botAI, 0u, DcKey::LastTickMs)
     {
     }
+};
+
+// Last party-wait timeout (see DcPartyWaitDecision::TimeoutMemory). Not wiped by
+// DisableDungeonClear: it exists to outlive the stop it records.
+class DungeonClearPartyWaitMemoryValue : public ManualSetValue<DcPartyWaitDecision::TimeoutMemory&>
+{
+public:
+    DungeonClearPartyWaitMemoryValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcPartyWaitDecision::TimeoutMemory&>(botAI, data, DcKey::PartyWaitMemory)
+    {
+    }
+
+private:
+    DcPartyWaitDecision::TimeoutMemory data;
 };
 
 // The per-approach stuck/recovery counters and give-up latches that used to

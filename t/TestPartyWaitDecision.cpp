@@ -6,7 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "DcPartyWaitDecision.h"
-#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include <string>
 
 using DcPartyWaitDecision::Decide;
 using DcPartyWaitDecision::Inputs;
@@ -248,33 +248,45 @@ TEST(DcPartyWaitTest, ViabilityStillOutranksRescue)
     EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::LostHealer);
 }
 
-// Criterion 2 (issue #66): the second timeout at the same boss for the same
-// members is told apart from the first by DcApproachState's timeout memory.
-// OnBossChange and Reset wipe it so a new boss or a fresh run never inherits a
-// stale "second timeout".
-TEST(DcPartyWaitTest, TimeoutStateRemembersTheFirstAndClearsOnBossChange)
+// Criterion 2 (issue #66): a second party-wait timeout at the same boss for the
+// same members ends the run with a distinct reason that names the boss and the
+// members. The memory is kept outside DcApproachState because the stop resets it.
+TEST(DcPartyWaitTest, FirstTimeoutIsNotARepeat)
 {
-    DcApproachState st;
+    DcPartyWaitDecision::TimeoutMemory mem;
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, "Waiting on Gorvash (out of range)"));
+    std::string const r = DcPartyWaitDecision::TimeoutStopReason(
+        false, 180, "Gelihast", "Waiting on Gorvash (out of range)");
+    EXPECT_NE(r.find("the party never became ready after 180s"), std::string::npos);
+    EXPECT_EQ(r.find("RepeatedTimeout"), std::string::npos);
+}
 
-    // Fresh state: no timeout remembered.
-    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
-    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
+TEST(DcPartyWaitTest, SecondIdenticalTimeoutIsARepeatNamingBossAndMembers)
+{
+    std::string const why = "Waiting on Gorvash (out of range), Grassfed (out of range)";
+    DcPartyWaitDecision::TimeoutMemory mem;
+    mem.bossEntry = 6243u;  // Gelihast
+    mem.why = why;
+    ASSERT_TRUE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, why));
 
-    // The first timeout at Gelihast (entry 6243, map 48) is remembered.
-    st.lastPartyWaitTimeoutBossEntry = 6243u;
-    st.lastPartyWaitTimeoutWhy = "stranded out of range";
-    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 6243u);
-    EXPECT_STREQ(st.lastPartyWaitTimeoutWhy.c_str(), "stranded out of range");
+    // The ceiling itself still says Timeout; the repeat is told apart by the memory.
+    Inputs in = Healthy();
+    in.waitedMs = in.timeoutMs;
+    EXPECT_EQ(Decide(in).reason, DcPartyWaitDecision::Reason::Timeout);
 
-    // OnBossChange wipes it so the new boss's first timeout is not mistaken for a repeat.
-    st.OnBossChange(4887u);  // Ghamoo-ra, a different map-48 boss
-    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
-    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
+    std::string const r = DcPartyWaitDecision::TimeoutStopReason(true, 180, "Gelihast", why);
+    EXPECT_NE(r.find("RepeatedTimeout"), std::string::npos);
+    EXPECT_NE(r.find("Gelihast"), std::string::npos);
+    EXPECT_NE(r.find("Gorvash"), std::string::npos);
+    EXPECT_NE(r.find("Grassfed"), std::string::npos);
+    EXPECT_EQ(r.find("the party never became ready after"), std::string::npos);
+}
 
-    // Reset() wipes it too (death / all-cleared / pull interrupt).
-    st.lastPartyWaitTimeoutBossEntry = 6243u;
-    st.lastPartyWaitTimeoutWhy = "stranded out of range";
-    st.Reset();
-    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
-    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
+TEST(DcPartyWaitTest, DifferentBossOrDifferentMembersIsNotARepeat)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    mem.bossEntry = 6243u;
+    mem.why = "Waiting on Gorvash (out of range)";
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 4887u, mem.why));
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, "Waiting on Grassfed (out of range)"));
 }

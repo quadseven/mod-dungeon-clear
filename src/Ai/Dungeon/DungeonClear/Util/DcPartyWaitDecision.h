@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DCPARTYWAITDECISION_H
 
 #include <cstdint>
+#include <string>
 
 // Pure decision kernel for the between-pulls wait's GIVE-UP step.
 //
@@ -106,6 +107,37 @@ namespace DcPartyWaitDecision
         Outcome outcome = Outcome::Wait;
         Reason  reason  = Reason::StillWaiting;
     };
+
+    // Memory of the last party-wait timeout, so a second identical stop (same
+    // boss, same members waited on) can be told from the first. It lives in its
+    // own per-bot value (DcKey::PartyWaitMemory), NOT on DcApproachState: the
+    // stop itself runs DisableDungeonClear, which wipes the approach state, and
+    // the memory has to survive exactly that to be of any use.
+    struct TimeoutMemory
+    {
+        std::uint32_t bossEntry = 0;  // 0 = no timeout remembered
+        std::string why;              // who the wait was on, as DescribePartyNotReady said it
+    };
+
+    // True when this timeout repeats the remembered one.
+    inline bool IsRepeatTimeout(TimeoutMemory const& mem, std::uint32_t bossEntry, std::string const& why)
+    {
+        return mem.bossEntry != 0 && mem.bossEntry == bossEntry && mem.why == why;
+    }
+
+    // The stop reason for a Timeout. The repeat form starts with "RepeatedTimeout"
+    // and names the boss and the members, so whatever re-enables runs can tell
+    // that a third try will end the same way.
+    inline std::string TimeoutStopReason(bool repeated, std::uint32_t waitedSecs,
+                                         std::string const& bossName, std::string const& why)
+    {
+        std::string const secs = std::to_string(waitedSecs) + "s";
+        if (repeated)
+            return "Dungeon clear stopped: RepeatedTimeout at " + bossName + " after " + secs +
+                   " waiting on the same member(s) as the last stop (" + why + ").";
+        return "Dungeon clear stopped: the party never became ready after " + secs +
+               (why.empty() ? "." : (" (" + why + ")."));
+    }
 
     inline Result Decide(Inputs const& in)
     {
