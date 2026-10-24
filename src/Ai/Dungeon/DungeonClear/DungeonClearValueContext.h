@@ -46,6 +46,7 @@ public:
         creators[DcKey::RunInstance] = &DungeonClearValueContext::dungeon_clear_run_instance;
         creators[DcKey::StallReason] = &DungeonClearValueContext::dungeon_clear_stall_reason;
         creators[DcKey::LastSaidReason] = &DungeonClearValueContext::dungeon_clear_last_said_reason;
+        creators[DcKey::LastStopReason] = &DungeonClearValueContext::dungeon_clear_last_stop_reason;
         creators[DcKey::Phase] = &DungeonClearValueContext::dungeon_clear_phase;
         creators[DcKey::FallbackTarget] = &DungeonClearValueContext::dungeon_clear_fallback_target;
         creators[DcKey::PartyTank] = &DungeonClearValueContext::dungeon_clear_party_tank;
@@ -104,6 +105,7 @@ private:
     static UntypedValue* dungeon_clear_run_instance(PlayerbotAI* ai) { return new DungeonClearRunInstanceValue(ai); }
     static UntypedValue* dungeon_clear_stall_reason(PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); }
     static UntypedValue* dungeon_clear_last_said_reason(PlayerbotAI* ai) { return new DungeonClearLastSaidReasonValue(ai); }
+    static UntypedValue* dungeon_clear_last_stop_reason(PlayerbotAI* ai) { return new DungeonClearLastStopReasonValue(ai); }
     static UntypedValue* dungeon_clear_phase(PlayerbotAI* ai) { return new DungeonClearPhaseValue(ai); }
     static UntypedValue* dungeon_clear_fallback_target(PlayerbotAI* ai) { return new DungeonClearFallbackTargetValue(ai); }
     static UntypedValue* dungeon_clear_party_tank(PlayerbotAI* ai) { return new DungeonClearPartyTankValue(ai); }

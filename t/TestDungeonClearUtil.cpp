@@ -32,6 +32,10 @@
 #include "ScriptDefines/AllMapScript.h"
 #include "TestMap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
+#include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include <map>
 
 // The fork core's IWorld declares AddQueryHolderCallback as a pure virtual the
 // core's WorldMock does not implement; the new core moved it off IWorld. So the
@@ -655,6 +659,15 @@ protected:
         // Advanced-pull transient state is one owned struct now (phase + Dynamic
         // verdict live inside it); a default DcPullContext is Idle / no verdict.
         context->SetRefValue<DcPullContext>("dungeon clear pull context", DcPullContext{});
+        context->SetValue<ObjectGuid>(DcKey::EngageTrashTarget, ObjectGuid::Empty);
+        context->SetRefValue<std::string>(DcKey::LastSaidReason, "");
+        context->SetValue<uint32>(DcKey::CurrentHop, 0u);
+        context->SetRefValue<std::map<ObjectGuid, uint32>>(DcKey::LootSkip, {});
+        context->SetRefValue<ChunkedPathfinder::Result>(DcKey::LongPath,
+            ChunkedPathfinder::Result{});
+        context->SetRefValue<DungeonFollowerState>(DcKey::FollowerState,
+            DungeonFollowerState{});
+        context->SetRefValue<std::string>(DcKey::LastStopReason, "");
     }
 
     void TearDown() override
@@ -679,6 +692,26 @@ TEST_F(DungeonClearStatusTest, StatusDisabled)
 {
     std::string expected = "STATUS\t0\t0\tNone\t\t0\toff\t\t0\t0";
     EXPECT_EQ(DcStatusPublisher::BuildStatusPayload(botAI), expected);
+}
+
+TEST_F(DungeonClearStatusTest, DisableDungeonClearKeepsLastStopReason)
+{
+    std::string const reason = "the party never became ready after 180s";
+    DcActionShared::DisableDungeonClear(botAI, reason);
+
+    std::string const& got =
+        context->GetValue<std::string&>(DcKey::LastStopReason)->Get();
+    EXPECT_EQ(got, reason);
+}
+
+TEST_F(DungeonClearStatusTest, DisableDungeonClearOverwritesLastStopReason)
+{
+    DcActionShared::DisableDungeonClear(botAI, "the party never became ready after 180s");
+    EXPECT_EQ(context->GetValue<std::string&>(DcKey::LastStopReason)->Get(),
+              "the party never became ready after 180s");
+    DcActionShared::DisableDungeonClear(botAI, "a different stop reason");
+    EXPECT_EQ(context->GetValue<std::string&>(DcKey::LastStopReason)->Get(),
+              "a different stop reason");
 }
 
 // Test status push when paused with no recorded reason: detail falls back to a

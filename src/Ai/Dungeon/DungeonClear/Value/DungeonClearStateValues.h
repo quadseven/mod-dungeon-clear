@@ -157,6 +157,18 @@ private:
     std::string data;
 };
 
+class DungeonClearLastStopReasonValue : public ManualSetValue<std::string&>
+{
+public:
+    DungeonClearLastStopReasonValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::string&>(botAI, data, DcKey::LastStopReason)
+    {
+    }
+
+private:
+    std::string data;
+};
+
 // Short token describing what the advance action did on its most recent tick:
 // "moving" (gliding the planned route), "pursuing" (closing directly on a live
 // boss / final approach), or "recovering" (wedged off the route and repathing).
