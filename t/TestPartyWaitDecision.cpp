@@ -227,7 +227,7 @@ TEST(DcPartyWaitTest, RescueDoesNotFireBeforeTheCeiling)
 
 TEST(DcPartyWaitTest, ZeroTimeoutMeansNoRescueEither)
 {
-    // With the ceiling disabled, a wait that never ends is not rescued — there is
+    // With the ceiling disabled, a wait that never ends is not rescued - there is
     // no ceiling to rescue at.
     Inputs in = HealthyWithStranded();
     in.timeoutMs = 0;

@@ -95,7 +95,7 @@ namespace DcPartyWaitDecision
         bool rosterHasHealer = false;
 
         // Living bot members on the leader's map that are out of spread of the
-        // tank — the strays the stranded rescue would teleport to the tank.
+        // tank - the strays the stranded rescue would teleport to the tank.
         std::uint32_t strandedOutOfRange = 0;
         // Whether DungeonClear.StrandedRecovery is on. The rescue only fires when
         // the operator has opted in to teleporting members.
