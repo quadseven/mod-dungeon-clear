@@ -23,6 +23,7 @@ using DcPartyWaitDecision::Decide;
 using DcPartyWaitDecision::Inputs;
 using DcPartyWaitDecision::Outcome;
 using DcPartyWaitDecision::Reason;
+using DcPartyWaitDecision::Result;
 
 TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
 {
