@@ -15,8 +15,14 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
+
+using DcPartyWaitDecision::Decide;
+using DcPartyWaitDecision::Inputs;
+using DcPartyWaitDecision::Outcome;
+using DcPartyWaitDecision::Reason;
 
 TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
 {
@@ -569,4 +575,28 @@ TEST(DungeonEventBlackfathomDeeps, AtBossGateReportsTheFirstGateDown)
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::ClosedDoor));
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::AnchoredHops));
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::PartyNotReady));
+}
+
+// Criterion 1 (issue #66): at the 180s ceiling at Gelihast (map 48) with two
+// out-of-range members and StrandedRecovery on, the wait is rescued instead of
+// ended — the same kernel the live BFD Gelihast stall would hit, framed against
+// map 48.
+TEST(DungeonEventBlackfathomDeeps, AtTheCeilingAtGelihastWithStrandedMembersRescuesInsteadOfStopping)
+{
+    // The tank and healer are here, two members are out of spread, the 180s
+    // ceiling has run, and StrandedRecovery is opted in: teleport the strays to
+    // the tank and keep waiting, do not end the run.
+    Inputs in;
+    in.waitedMs = 180000;
+    in.timeoutMs = 180000;
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    in.rosterAlive = 5;
+    in.rosterHasHealer = true;
+    in.strandedOutOfRange = 2;
+    in.strandedRecoveryEnabled = true;
+
+    Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::Rescue);
+    EXPECT_EQ(r.reason, Reason::StillWaiting);
 }

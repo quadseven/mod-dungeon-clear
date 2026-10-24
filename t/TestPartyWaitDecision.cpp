@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 
 using DcPartyWaitDecision::Decide;
 using DcPartyWaitDecision::Inputs;
@@ -245,4 +246,35 @@ TEST(DcPartyWaitTest, ViabilityStillOutranksRescue)
     DcPartyWaitDecision::Result const r = Decide(in);
     EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
     EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::LostHealer);
+}
+
+// Criterion 2 (issue #66): the second timeout at the same boss for the same
+// members is told apart from the first by DcApproachState's timeout memory.
+// OnBossChange and Reset wipe it so a new boss or a fresh run never inherits a
+// stale "second timeout".
+TEST(DcPartyWaitTest, TimeoutStateRemembersTheFirstAndClearsOnBossChange)
+{
+    DcApproachState st;
+
+    // Fresh state: no timeout remembered.
+    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
+    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
+
+    // The first timeout at Gelihast (entry 6243, map 48) is remembered.
+    st.lastPartyWaitTimeoutBossEntry = 6243u;
+    st.lastPartyWaitTimeoutWhy = "stranded out of range";
+    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 6243u);
+    EXPECT_STREQ(st.lastPartyWaitTimeoutWhy.c_str(), "stranded out of range");
+
+    // OnBossChange wipes it so the new boss's first timeout is not mistaken for a repeat.
+    st.OnBossChange(4887u);  // Ghamoo-ra, a different map-48 boss
+    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
+    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
+
+    // Reset() wipes it too (death / all-cleared / pull interrupt).
+    st.lastPartyWaitTimeoutBossEntry = 6243u;
+    st.lastPartyWaitTimeoutWhy = "stranded out of range";
+    st.Reset();
+    EXPECT_EQ(st.lastPartyWaitTimeoutBossEntry, 0u);
+    EXPECT_TRUE(st.lastPartyWaitTimeoutWhy.empty());
 }
