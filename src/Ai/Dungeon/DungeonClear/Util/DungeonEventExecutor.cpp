@@ -1497,6 +1497,12 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
                  prog.timeoutRewinds);
     }
 
+    if ((outcome == EventDriveOutcome::Skipped || outcome == EventDriveOutcome::Stalled) &&
+        ev.onTimeout)
+    {
+        ev.onTimeout(bot, context);
+    }
+
     return outcome;
 }
 

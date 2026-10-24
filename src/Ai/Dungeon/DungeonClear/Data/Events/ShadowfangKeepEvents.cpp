@@ -71,6 +71,7 @@ namespace
     bool SfkCourtyardAlliance(Player* bot, AiObjectContext* context);
     bool SfkCourtyardHorde(Player* bot, AiObjectContext* context);
     bool SfkSorcererGate(Player* bot, AiObjectContext* context);
+    void SfkSorcererGateOnTimeout(Player* bot, AiObjectContext* context);
 
     constexpr uint32 SFK_SORCERER_GATE = 18972;
     constexpr uint32 SFK_FENRUS = 4274;
@@ -215,6 +216,7 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
                       // open the gate — that pause auto-resumes the run the
                       // instant it opens.
                       .Optional()
+                      .OnTimeout(&SfkSorcererGateOnTimeout)
                       .Build());
 }
 
@@ -308,5 +310,22 @@ namespace
         if (!gate || gate->GetGoState() != GO_STATE_READY)
             return false;  // not in the room yet, or the gate is already open
         return DcTargeting::FindLiveCreatureOnMap(bot, SFK_FENRUS) == nullptr;
+    }
+
+    void SfkSorcererGateOnTimeout(Player* bot, AiObjectContext* /*context*/)
+    {
+        if (!bot)
+            return;
+        if (DcTargeting::FindLiveCreatureOnMap(bot, SFK_FENRUS) != nullptr)
+            return;
+
+        GameObject* gate = bot->FindNearestGameObject(SFK_SORCERER_GATE, SFK_SCAN);
+        if (gate && gate->GetGoState() != GO_STATE_ACTIVE)
+        {
+            gate->SetGoState(GO_STATE_ACTIVE);
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] SFK Sorcerer's Gate 18972 opened after event timed out with Fenrus dead",
+                     bot->GetName());
+        }
     }
 }

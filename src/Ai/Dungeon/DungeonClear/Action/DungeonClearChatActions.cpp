@@ -14,7 +14,9 @@
 #include <vector>
 
 #include "Creature.h"
+#include "GameObject.h"
 #include "Group.h"
+#include "Log.h"
 #include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
@@ -30,6 +32,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTanklessLead.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -231,6 +234,26 @@ namespace
         // lockstep. Boss progress is deliberately untouched — resume, not fresh run.
         DcRun::Of(context).OnResume();
         ResetPullTransient(context);
+    }
+
+    bool RefuseSkipIfSorcererGateClosed(PlayerbotAI* botAI, Player* bot, AiObjectContext* context)
+    {
+        if (!bot || bot->GetMapId() != 33)
+            return false;
+
+        GameObject* gate = bot->FindNearestGameObject(18972, 200.0f);
+        bool const gateClosed = (gate && gate->GetGoState() != GO_STATE_ACTIVE) ||
+                                (!gate && !DcRun::Of(context).pausedDoor.IsEmpty() &&
+                                 DcRun::Of(context).pausedDoor.GetEntry() == 18972);
+        if (gateClosed)
+        {
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] dc skip refused: Sorcerer's Gate (GO 18972) is closed and cannot be passed",
+                     bot->GetName());
+            DcRefuse(botAI, bot, "Cannot skip: Sorcerer's Gate (GO 18972) is closed.");
+            return true;
+        }
+        return false;
     }
 }
 
@@ -450,6 +473,15 @@ bool DcSkipAction::Execute(Event event)
         if (DungeonEvent const* ev =
                 DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()))
         {
+            if (map->GetId() == 33 && ev->id == 3)
+            {
+                if (ev->onTimeout)
+                    ev->onTimeout(bot, context);
+
+                if (RefuseSkipIfSorcererGateClosed(botAI, bot, context))
+                    return false;
+            }
+
             uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
             auto& cleared =
                 context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
@@ -468,6 +500,12 @@ bool DcSkipAction::Execute(Event event)
     {
         DcRefuse(botAI, bot, "No current boss to skip.");
         return false;
+    }
+
+    if (bot->GetMapId() == 33 && (current->entry == 3927 || current->entry == 4275))
+    {
+        if (RefuseSkipIfSorcererGateClosed(botAI, bot, context))
+            return false;
     }
 
     std::unordered_set<uint32>& skipped =

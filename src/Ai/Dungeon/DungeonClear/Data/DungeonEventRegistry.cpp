@@ -40,6 +40,12 @@ EventBuilder& EventBuilder::Conditional(EventCondition condition)
     return *this;
 }
 
+EventBuilder& EventBuilder::OnTimeout(EventAction onTimeout)
+{
+    _ev.onTimeout = std::move(onTimeout);
+    return *this;
+}
+
 EventBuilder& EventBuilder::Optional()
 {
     _ev.required = false;

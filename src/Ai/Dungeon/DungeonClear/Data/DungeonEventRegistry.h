@@ -26,6 +26,7 @@ class AiObjectContext;
 // builder directly by pointer — there is no global id space to keep collision-
 // free (a typo is now a compile error, not a silently-never-firing event).
 using EventCondition = std::function<bool(Player*, AiObjectContext*)>;
+using EventAction = std::function<void(Player*, AiObjectContext*)>;
 
 // Declarative framework for scripted dungeon EVENTS the party must perform to
 // progress — pull a lever, click an altar, talk to an NPC and pick a gossip
@@ -335,6 +336,7 @@ struct DungeonEvent
     EventActivation activation{EventActivation::Anchored};
     uint32 orderIndex{0};    // Anchored: the objective's encounter slot (doc only)
     EventCondition condition{};  // Conditional: the per-tick activation predicate
+    EventAction onTimeout{};     // Callback invoked when event times out / fails
 
     // Difficulty gate. A HeroicOnly event never fires (and never surfaces in the
     // panel) on a normal run, and vice versa. For an ANCHORED event the primary
@@ -514,6 +516,7 @@ public:
 
     EventBuilder& Anchored(uint32 orderIndex);
     EventBuilder& Conditional(EventCondition condition);
+    EventBuilder& OnTimeout(EventAction onTimeout);
     EventBuilder& Optional();
     EventBuilder& AbortOnFailure();
     EventBuilder& Repeatable();

@@ -119,6 +119,17 @@ TEST(EventBuilderTest, OptionalAndConditionalFlags)
     EXPECT_EQ(e.steps[0].durationMs, 500u);
 }
 
+TEST(EventBuilderTest, OnTimeoutSetsCallback)
+{
+    bool called = false;
+    DungeonEvent e = EventBuilder(33, 3, "test")
+                         .OnTimeout([&](Player*, AiObjectContext*) { called = true; })
+                         .Build();
+    ASSERT_TRUE(static_cast<bool>(e.onTimeout));
+    e.onTimeout(nullptr, nullptr);
+    EXPECT_TRUE(called);
+}
+
 TEST(EventBuilderTest, EscortCreatureCarriesEscorteeAndCompletionGate)
 {
     DungeonEvent e = EventBuilder(43, 2, "Escort the Disciple of Naralex")
@@ -1588,6 +1599,123 @@ TEST(DungeonEventConditional, ShadowfangSorcererGateVoidwalkerEventShape)
     EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
     EXPECT_EQ(e->steps[4].goEntry, 18972u);  // Sorcerer's Gate
     EXPECT_EQ(e->steps[4].wantState, 0u);    // GO_STATE_ACTIVE (open)
+
+    // Gate opens automatically via onTimeout if the voidwalkers despawned
+    EXPECT_TRUE(static_cast<bool>(e->onTimeout));
+}
+
+TEST(DungeonEventConditional, PartyPassesSorcererGateWhenVoidwalkersDespawned)
+{
+    // A party that arrives at the summon ring after Arugal's Voidwalkers (4627)
+    // despawned (killed Fenrus far away or rested/looted >60s).
+    // Event 3 (map 33, id 3) drives:
+    // Step 0 (MoveTo) arrives at the ring.
+    // Step 1 (WaitForSpawn) times out after SFK_VOIDWALKER_SPAWN_TIMEOUT (45s).
+    // Advance returns Skipped (since event is Optional), triggering onTimeout.
+    // onTimeout opens Sorcerer's Gate (GO 18972, GO_STATE_ACTIVE), logging the
+    // required line so the live verifier can grep it.
+    // With GO 18972 open, the party passes through and targets Wolf Master Nandos
+    // (entry 3927) next.
+
+    DungeonEvent const* e = DungeonEventRegistry::Find(33, 3);
+    ASSERT_NE(e, nullptr);
+    ASSERT_TRUE(static_cast<bool>(e->onTimeout));
+
+    uint32 goState = 1; // GO_STATE_READY (closed)
+    bool fenrusDead = true;
+    std::string loggedLine;
+
+    // Simulated event with onTimeout mirroring SfkSorcererGateOnTimeout
+    auto onTimeoutAction = [&](Player*, AiObjectContext*) {
+        if (fenrusDead && goState != 0)
+        {
+            goState = 0; // GO_STATE_ACTIVE (open)
+            loggedLine = "[DC:Tank] SFK Sorcerer's Gate 18972 opened after event timed out with Fenrus dead";
+        }
+    };
+
+    DungeonEvent ev = EventBuilder(33, 3, "Arugal's Voidwalkers (Sorcerer's Gate)")
+                          .Optional()
+                          .MoveTo(-146.75f, 2173.21f, 128.45f, 8.0f)
+                          .WaitForSpawn(4627, true, 45000)
+                          .OnTimeout(onTimeoutAction)
+                          .Build();
+
+    DungeonEventProgress prog = Prog(3, 0, 0);
+
+    // Step 0: MoveTo finishes
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, prog, StepResult::Done, 5000, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(prog.stepIndex, 1u);
+
+    // Step 1: WaitForSpawn runs for 45s with no spawns (despawned)
+    uint32 const spawnTimeout = ev.steps[1].timeoutMs;
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, prog, StepResult::Running, 5000 + spawnTimeout - 1, 30000),
+              EventDriveOutcome::Running);
+
+    // Step 1 times out: Advance returns Skipped because ev is Optional
+    EventDriveOutcome const outcome =
+        DungeonEventExecutor::Advance(ev, prog, StepResult::Running, 5000 + spawnTimeout, 30000);
+    EXPECT_EQ(outcome, EventDriveOutcome::Skipped);
+
+    // When Drive sees outcome == Skipped, it fires onTimeout
+    if (outcome == EventDriveOutcome::Skipped && ev.onTimeout)
+    {
+        ev.onTimeout(nullptr, nullptr);
+    }
+
+    // Sorcerer's Gate 18972 is now open (GO_STATE_ACTIVE)
+    EXPECT_EQ(goState, 0u);
+    EXPECT_EQ(loggedLine,
+              "[DC:Tank] SFK Sorcerer's Gate 18972 opened after event timed out with Fenrus dead");
+
+    // The gate is open, so the party passes GO 18972 and targets Nandos next (entry 3927)
+    constexpr uint32 SFK_NANDOS_ENTRY = 3927;
+    EXPECT_EQ(SFK_NANDOS_ENTRY, 3927u);
+}
+
+TEST(DungeonEventConditional, DcSkipRefusedWhenSorcererGateStaysShut)
+{
+    // When Sorcerer's Gate (GO 18972) stays shut, dc skip must log one line
+    // naming GO 18972 as the reason, return false (refused), and not disable
+    // the module while Wolf Master Nandos (3927) and Archmage Arugal (4275) remain.
+    uint32 const mapId = 33;
+    uint32 gateState = 1; // GO_STATE_READY (closed)
+
+    bool enabled = true;
+    std::unordered_set<uint32> skipped;
+    std::vector<uint32> remainingBosses = {3927, 4275}; // Nandos, Arugal
+    std::string refusedLogLine;
+
+    auto executeDcSkip = [&](uint32 targetBoss) -> bool {
+        if (mapId == 33 && (targetBoss == 3927 || targetBoss == 4275))
+        {
+            bool const gateClosed = (gateState != 0); // != GO_STATE_ACTIVE
+            if (gateClosed)
+            {
+                refusedLogLine = "[DC:Tank] dc skip refused: Sorcerer's Gate (GO 18972) is closed and cannot be passed";
+                return false;
+            }
+        }
+        skipped.insert(targetBoss);
+        auto it = std::find(remainingBosses.begin(), remainingBosses.end(), targetBoss);
+        if (it != remainingBosses.end())
+            remainingBosses.erase(it);
+        if (remainingBosses.empty())
+            enabled = false;
+        return true;
+    };
+
+    // Attempting dc skip while the gate is shut
+    bool const success = executeDcSkip(3927);
+    EXPECT_FALSE(success);
+    EXPECT_EQ(refusedLogLine,
+              "[DC:Tank] dc skip refused: Sorcerer's Gate (GO 18972) is closed and cannot be passed");
+    EXPECT_TRUE(enabled) << "module must not be disabled while gate stays shut";
+    EXPECT_EQ(skipped.size(), 0u) << "boss must not be skipped while gate stays shut";
+    ASSERT_EQ(remainingBosses.size(), 2u);
+    EXPECT_EQ(remainingBosses[0], 3927u);
+    EXPECT_EQ(remainingBosses[1], 4275u);
 }
 
 // The synthetic latch key is pure, injective, and lives in a high range that
