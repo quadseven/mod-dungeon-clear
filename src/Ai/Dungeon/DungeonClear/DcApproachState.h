@@ -113,6 +113,13 @@ struct DcApproachState
     // stale one. See DcPartyWaitDecision.
     uint32 partyNotReadySinceMs = 0;
 
+    // Memory of the last party-wait timeout, used to tell a second identical
+    // timeout at the same boss for the same members from the first. The first
+    // timeout at a boss with stranded members is answered by a rescue; the
+    // second identical one ends the run with a distinct reason.
+    uint32 lastPartyWaitTimeoutBossEntry = 0;  // boss entry of the previous timeout (0 = none)
+    std::string lastPartyWaitTimeoutWhy;       // the "why" string of the previous timeout
+
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
     uint32 lastTickLogMs       = 0;  // advance-tick debug-log throttle (getMSTime)
@@ -373,6 +380,8 @@ struct DcApproachState
         partyNotReadyTicks  = 0;
         atBossHeldSinceMs   = 0;
         partyNotReadySinceMs = 0;
+        lastPartyWaitTimeoutBossEntry = 0;
+        lastPartyWaitTimeoutWhy.clear();
         lastPos             = Position();
         skirtOrbitDir       = 0;
         offLineLatched      = false;

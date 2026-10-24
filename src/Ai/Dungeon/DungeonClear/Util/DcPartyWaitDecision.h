@@ -52,6 +52,7 @@ namespace DcPartyWaitDecision
     enum class Outcome
     {
         Wait,    // keep holding the tank - the wait is still legitimate
+        Rescue,  // teleport the stranded out-of-range members to the tank, re-arm the clock, keep waiting
         EndRun,  // stop the clear and report `reason`
     };
 
@@ -91,6 +92,13 @@ namespace DcPartyWaitDecision
         // instance" without needing to remember the comp the run started with.
         std::uint32_t rosterAlive = 0;
         bool rosterHasHealer = false;
+
+        // Living bot members on the leader's map that are out of spread of the
+        // tank — the strays the stranded rescue would teleport to the tank.
+        std::uint32_t strandedOutOfRange = 0;
+        // Whether DungeonClear.StrandedRecovery is on. The rescue only fires when
+        // the operator has opted in to teleporting members.
+        bool strandedRecoveryEnabled = false;
     };
 
     struct Result
@@ -123,7 +131,16 @@ namespace DcPartyWaitDecision
                 return verdict(Outcome::EndRun, Reason::LostHealer);
         }
 
-        // 2. The ceiling. Disabled (0) only by an operator who has decided a
+        // 2. Rescue at the ceiling: when the wait has run its full timeout and
+        //    there are stranded out-of-range members the operator has opted into
+        //    rescuing, teleport them to the tank and keep waiting instead of
+        //    ending the run. Checked before the bare ceiling so a rescuable
+        //    wait is rescued, not stopped.
+        if (in.timeoutMs > 0 && in.waitedMs >= in.timeoutMs &&
+            in.strandedOutOfRange > 0 && in.strandedRecoveryEnabled)
+            return verdict(Outcome::Rescue, Reason::StillWaiting);
+
+        // 3. The ceiling. Disabled (0) only by an operator who has decided a
         //    frozen run is preferable to an ended one; the registry's floor keeps
         //    the enabled values long enough that a legitimate rest never trips it.
         if (in.timeoutMs && in.waitedMs >= in.timeoutMs)

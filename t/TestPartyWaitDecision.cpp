@@ -169,3 +169,80 @@ TEST(DcPartyWaitTest, TheMinimumViablePartyIsTankPlusHealer)
     // deliberate one rather than a silent widening.
     EXPECT_EQ(DcPartyWaitDecision::kMinViableMembers, 2u);
 }
+
+// --- the rescue: at the ceiling, teleport instead of stopping ----------------
+
+namespace
+{
+    Inputs HealthyWithStranded()
+    {
+        Inputs in = Healthy();
+        in.strandedOutOfRange = 2;  // two bots out of spread of the tank
+        in.strandedRecoveryEnabled = true;
+        return in;
+    }
+}
+
+TEST(DcPartyWaitTest, CeilingWithStrandedMembersAndRescueOnRescues)
+{
+    // At the 180s ceiling with two out-of-range members and StrandedRecovery on:
+    // rescue instead of ending the run.
+    Inputs in = HealthyWithStranded();
+    in.waitedMs = 180000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::Rescue);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::StillWaiting);
+}
+
+TEST(DcPartyWaitTest, CeilingWithStrandedMembersButRescueOffTimesOut)
+{
+    // Same ceiling, same strays, but StrandedRecovery is off: the run ends.
+    Inputs in = HealthyWithStranded();
+    in.strandedRecoveryEnabled = false;
+    in.waitedMs = 180000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, CeilingWithoutStrandedMembersTimesOut)
+{
+    // Everyone in range, so there is nothing to rescue: the run ends.
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, RescueDoesNotFireBeforeTheCeiling)
+{
+    // Two minutes in, strays present, rescue on: still just waiting. The rescue
+    // is a ceiling behaviour, not an early intervention.
+    Inputs in = HealthyWithStranded();
+    in.waitedMs = 120000;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, ZeroTimeoutMeansNoRescueEither)
+{
+    // With the ceiling disabled, a wait that never ends is not rescued — there is
+    // no ceiling to rescue at.
+    Inputs in = HealthyWithStranded();
+    in.timeoutMs = 0;
+    in.waitedMs = 24u * 60u * 60u * 1000u;  // a day
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, ViabilityStillOutranksRescue)
+{
+    // An unviable party stops now even if there are strays and rescue is on: the
+    // viability check runs first, without reference to the clock.
+    Inputs in = HealthyWithStranded();
+    in.waitedMs = 0;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;  // the one who left was the healer
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::LostHealer);
+}

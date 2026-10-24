@@ -51,6 +51,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -779,7 +780,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
 
 // Between-pulls rest: yield so food/drink can run and stragglers catch up.
 // The multiplier suppresses wander actions during the wait.
-DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& st)
 {
     // From the context, NOT st.appr: this gate runs in the PRE-ROUTE part of the
     // ladder, well before Execute fills st.appr, so st.appr is still null here
@@ -904,11 +905,36 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     waitIn.presentHasHealer = presence.presentHasHealer;
     waitIn.rosterAlive = presence.rosterAlive;
     waitIn.rosterHasHealer = presence.rosterHasHealer;
+    // How many living bot members on the leader's map are out of spread of the
+    // tank — the strays the stranded rescue can teleport. And whether the
+    // operator has opted into teleporting members at all.
+    waitIn.strandedOutOfRange =
+        DcPartyState::OutOfRangeMemberCount(bot, gate.maxSpread, gate.anchor, gate.maxTankGap);
+    waitIn.strandedRecoveryEnabled = DcSettings::GetBool(bot, "StrandedRecovery");
 
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
+
+    // RESCUE instead of stopping: at the ceiling, teleport the stranded members
+    // to the tank, re-anchor the camp, re-arm the wait clock, and keep waiting.
+    if (verdict.outcome == DcPartyWaitDecision::Outcome::Rescue)
+    {
+        DcStrandedRecovery::Recover(bot);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] between-pulls wait rescuing {} stranded out-of-range "
+                 "member(s) instead of stopping after {}ms",
+                 bot->GetName(), waitIn.strandedOutOfRange, waitIn.waitedMs);
+        appr.partyNotReadyTicks = 0;
+        appr.partyNotReadySinceMs = nowMs;  // fresh window from the rescue
+        return Step::ReturnFalse;
+    }
+
     if (verdict.outcome == DcPartyWaitDecision::Outcome::EndRun)
     {
         std::string stopReason;
+        bool const isRepeated =
+            appr.lastPartyWaitTimeoutBossEntry != 0 &&
+            appr.lastPartyWaitTimeoutBossEntry == (st.next ? st.next->entry : 0) &&
+            appr.lastPartyWaitTimeoutWhy == why;
         switch (verdict.reason)
         {
             case DcPartyWaitDecision::Reason::LostHealer:
@@ -921,10 +947,26 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                 break;
             case DcPartyWaitDecision::Reason::Timeout:
             default:
-                stopReason = "Dungeon clear stopped: the party never became ready after " +
-                             std::to_string(waitIn.waitedMs / 1000) + "s" +
-                             (why.empty() ? "." : (" (" + why + ")."));
+            {
+                if (isRepeated)
+                {
+                    stopReason = "Dungeon clear stopped: the party never became ready after " +
+                                 std::to_string(waitIn.waitedMs / 1000) + "s waiting on the same "
+                                 "member(s) at the same boss (" + why + ").";
+                    appr.lastPartyWaitTimeoutBossEntry = 0;
+                    appr.lastPartyWaitTimeoutWhy.clear();
+                }
+                else
+                {
+                    stopReason = "Dungeon clear stopped: the party never became ready after " +
+                                 std::to_string(waitIn.waitedMs / 1000) + "s" +
+                                 (why.empty() ? "." : (" (" + why + ")."));
+                    // Remember this timeout so a second identical one gets a distinct reason.
+                    appr.lastPartyWaitTimeoutBossEntry = st.next ? st.next->entry : 0;
+                    appr.lastPartyWaitTimeoutWhy = why;
+                }
                 break;
+            }
         }
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] between-pulls wait gave up after {} ticks / {}ms: {} "
@@ -935,6 +977,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         DcActionShared::DisableDungeonClear(botAI, stopReason);
         appr.partyNotReadyTicks = 0;
         appr.partyNotReadySinceMs = 0;
+        appr.lastPartyWaitTimeoutBossEntry = 0;
+        appr.lastPartyWaitTimeoutWhy.clear();
     }
 
     return Step::ReturnFalse;
