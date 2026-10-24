@@ -950,7 +950,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
             {
                 if (isRepeated)
                 {
-                    stopReason = "Dungeon clear stopped: the party never became ready after " +
+                    stopReason = "Dungeon clear stopped: RepeatedTimeout after " +
                                  std::to_string(waitIn.waitedMs / 1000) + "s waiting on the same "
                                  "member(s) at the same boss (" + why + ").";
                     appr.lastPartyWaitTimeoutBossEntry = 0;
