@@ -171,7 +171,7 @@ TEST(DcPartyWaitTest, TheMinimumViablePartyIsTankPlusHealer)
     EXPECT_EQ(DcPartyWaitDecision::kMinViableMembers, 2u);
 }
 
-// --- the rescue: at the ceiling, teleport instead of stopping ----------------
+// --- the rescue: at the stranded clock, before the party-wait ceiling --------
 
 namespace
 {
@@ -190,6 +190,7 @@ TEST(DcPartyWaitTest, CeilingWithStrandedMembersAndRescueOnRescues)
     // rescue instead of ending the run.
     Inputs in = HealthyWithStranded();
     in.waitedMs = 180000;
+    in.strandedTimeoutMs = 60000;
     DcPartyWaitDecision::Result const r = Decide(in);
     EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::Rescue);
     EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::StillWaiting);
@@ -216,13 +217,21 @@ TEST(DcPartyWaitTest, CeilingWithoutStrandedMembersTimesOut)
     EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
 }
 
-TEST(DcPartyWaitTest, RescueDoesNotFireBeforeTheCeiling)
+TEST(DcPartyWaitTest, RescueDoesNotFireBeforeTheStrandedClock)
 {
-    // Two minutes in, strays present, rescue on: still just waiting. The rescue
-    // is a ceiling behaviour, not an early intervention.
+    // Strays present, rescue on, but the stranded clock has not elapsed: wait.
     Inputs in = HealthyWithStranded();
-    in.waitedMs = 120000;
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 59999;
     EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RescueFiresAtStrandedClockBeforePartyWaitCeiling)
+{
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 60000;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Rescue);
 }
 
 TEST(DcPartyWaitTest, ZeroTimeoutMeansNoRescueEither)

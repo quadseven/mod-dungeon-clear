@@ -902,6 +902,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     DcPartyWaitDecision::Inputs waitIn;
     waitIn.waitedMs = getMSTimeDiff(appr.partyNotReadySinceMs, nowMs);
     waitIn.timeoutMs = DcSettings::GetUInt(bot, "PartyWaitTimeoutSecs") * 1000;
+    waitIn.strandedTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
     waitIn.presentAlive = presence.presentAlive;
     waitIn.presentHasHealer = presence.presentHasHealer;
     waitIn.rosterAlive = presence.rosterAlive;

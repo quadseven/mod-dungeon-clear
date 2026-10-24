@@ -16,6 +16,7 @@
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
 
@@ -590,6 +591,7 @@ TEST(DungeonEventBlackfathomDeeps, AtTheCeilingAtGelihastWithStrandedMembersResc
     Inputs in;
     in.waitedMs = 180000;
     in.timeoutMs = 180000;
+    in.strandedTimeoutMs = 60000;
     in.presentAlive = 5;
     in.presentHasHealer = true;
     in.rosterAlive = 5;
@@ -600,4 +602,60 @@ TEST(DungeonEventBlackfathomDeeps, AtTheCeilingAtGelihastWithStrandedMembersResc
     Result const r = Decide(in);
     EXPECT_EQ(r.outcome, Outcome::Rescue);
     EXPECT_EQ(r.reason, Reason::StillWaiting);
+}
+
+// Criterion 1 (issue #66): Gelihast's tank is still holding while two living
+// bots, present in the instance but with no walkable route, remain 40yd away.
+// The stranded clock expires before the longer party-wait ceiling; rescue both
+// and keep the wait alive rather than waiting for the ceiling to stop the run.
+TEST(DungeonEventBlackfathomDeeps, GelihastRescuesTwoStrandedMembersBeforePartyWaitCeiling)
+{
+    using DcStrandedDecision::Member;
+    using StrandedInputs = DcStrandedDecision::Inputs;
+    using StrandedResult = DcStrandedDecision::Result;
+
+    StrandedInputs stranded;
+    stranded.enabled = true;
+    stranded.nowMs = 160000;
+    stranded.lastProgressMs = 100000;
+    stranded.noProgressTimeoutMs = 60000;
+    stranded.maxSpread = 25.0f;
+
+    std::vector<Member> party(5);
+    party[0].isBot = true;
+    party[0].isAlive = true;
+    party[0].onMap = true;
+    party[0].isTank = true; // Pongakiah, holding at Gelihast's spot
+    for (std::size_t i = 1; i < party.size(); ++i)
+    {
+        party[i].isBot = true;
+        party[i].isAlive = true;
+        party[i].onMap = true; // present in the same BFD instance
+        party[i].distToTank = i == 1 ? 5.0f : (i < 4 ? 40.0f : 10.0f);
+    }
+
+    StrandedResult const rescue = DcStrandedDecision::Decide(stranded, party);
+    ASSERT_TRUE(rescue.recover);
+    ASSERT_EQ(rescue.strandedIdx.size(), 2u);
+    for (int idx : rescue.strandedIdx)
+        party[static_cast<std::size_t>(idx)].distToTank = 0.0f; // Recover brings them to tank
+
+    Inputs wait;
+    wait.waitedMs = 60000;
+    wait.timeoutMs = 180000;
+    wait.strandedTimeoutMs = 60000;
+    wait.presentAlive = 5;
+    wait.presentHasHealer = true;
+    wait.rosterAlive = 5;
+    wait.rosterHasHealer = true;
+    wait.strandedOutOfRange = 0;
+    for (std::size_t i = 0; i < party.size(); ++i)
+        if (!party[i].isTank && party[i].distToTank > 25.0f)
+            ++wait.strandedOutOfRange;
+    wait.strandedRecoveryEnabled = true;
+
+    EXPECT_EQ(Decide(wait).outcome, Outcome::Rescue);
+    wait.strandedOutOfRange = 0; // recovery moved both members inside spread
+    EXPECT_EQ(Decide(wait).outcome, Outcome::Wait);
+    EXPECT_LT(wait.waitedMs, wait.timeoutMs);
 }

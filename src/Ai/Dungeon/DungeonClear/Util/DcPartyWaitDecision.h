@@ -82,6 +82,7 @@ namespace DcPartyWaitDecision
     {
         std::uint32_t waitedMs = 0;       // how long this uninterrupted wait has run
         std::uint32_t timeoutMs = 0;      // DungeonClear.PartyWaitTimeoutSecs * 1000; 0 = no ceiling
+        std::uint32_t strandedTimeoutMs = 0; // StrandedRecoveryNoProgressSecs * 1000; 0 = disabled
 
         // Living members sharing the LEADER'S OWN Map (the leader included).
         // "Same Map object", never "same map id" - see DcSameInstance.h.
@@ -163,12 +164,10 @@ namespace DcPartyWaitDecision
                 return verdict(Outcome::EndRun, Reason::LostHealer);
         }
 
-        // 2. Rescue at the ceiling: when the wait has run its full timeout and
-        //    there are stranded out-of-range members the operator has opted into
-        //    rescuing, teleport them to the tank and keep waiting instead of
-        //    ending the run. Checked before the bare ceiling so a rescuable
-        //    wait is rescued, not stopped.
-        if (in.timeoutMs > 0 && in.waitedMs >= in.timeoutMs &&
+        // 2. Rescue once the stranded clock has elapsed. Do this before the
+        //    longer party-wait ceiling so a rescuable wait gets a chance to make
+        //    progress instead of stopping at the ceiling.
+        if (in.strandedTimeoutMs > 0 && in.waitedMs >= in.strandedTimeoutMs &&
             in.strandedOutOfRange > 0 && in.strandedRecoveryEnabled)
             return verdict(Outcome::Rescue, Reason::StillWaiting);
 
