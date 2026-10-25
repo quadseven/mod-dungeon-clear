@@ -659,3 +659,28 @@ TEST(DungeonEventBlackfathomDeeps, GelihastRescuesTwoStrandedMembersBeforePartyW
     EXPECT_EQ(Decide(wait).outcome, Outcome::Wait);
     EXPECT_LT(wait.waitedMs, wait.timeoutMs);
 }
+
+// Criterion 2 (issue #66): the run is stopped at Gelihast for Gorvash and
+// Grassfed, re-enabled, and stopped again for the same pair. The second stop is
+// spoken through the same memory the call site keeps across DisableDungeonClear,
+// so it ends with the distinct RepeatedTimeout reason, not another plain timeout.
+TEST(DungeonEventBlackfathomDeeps, SecondGelihastTimeoutOnTheSameMembersEndsWithRepeatedTimeout)
+{
+    std::string const why = "Waiting on Gorvash (out of range), Grassfed (out of range)";
+    DcPartyWaitDecision::TimeoutMemory mem;
+
+    std::string const first = DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, why);
+    EXPECT_NE(first.find("the party never became ready after 180s"), std::string::npos);
+    EXPECT_EQ(first.find("RepeatedTimeout"), std::string::npos);
+
+    std::string const second = DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, why);
+    EXPECT_NE(second.find("RepeatedTimeout at Gelihast"), std::string::npos);
+    EXPECT_NE(second.find("Gorvash"), std::string::npos);
+    EXPECT_NE(second.find("Grassfed"), std::string::npos);
+    EXPECT_EQ(second.find("the party never became ready after"), std::string::npos);
+
+    // A stop on someone else is a fresh first timeout again.
+    std::string const other = DcPartyWaitDecision::RecordTimeout(
+        mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
+    EXPECT_EQ(other.find("RepeatedTimeout"), std::string::npos);
+}

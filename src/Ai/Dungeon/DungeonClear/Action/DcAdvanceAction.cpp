@@ -933,12 +933,6 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     if (verdict.outcome == DcPartyWaitDecision::Outcome::EndRun)
     {
         std::string stopReason;
-        // Read before the stop: DisableDungeonClear wipes the approach state, so
-        // the memory of the previous timeout lives in its own value.
-        auto& memory = botAI->GetAiObjectContext()
-                           ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
-        uint32 const bossEntry = st.next ? st.next->entry : 0;
-        bool const isRepeated = DcPartyWaitDecision::IsRepeatTimeout(memory, bossEntry, why);
         switch (verdict.reason)
         {
             case DcPartyWaitDecision::Reason::LostHealer:
@@ -951,12 +945,16 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                 break;
             case DcPartyWaitDecision::Reason::Timeout:
             default:
-                stopReason = DcPartyWaitDecision::TimeoutStopReason(
-                    isRepeated, waitIn.waitedMs / 1000, st.next ? st.next->name : std::string(), why);
-                // Remember this timeout so a second identical one gets the distinct reason.
-                memory.bossEntry = bossEntry;
-                memory.why = why;
+            {
+                // The memory of the previous timeout lives in its own value, not
+                // on the approach state: DisableDungeonClear below wipes that.
+                auto& memory = botAI->GetAiObjectContext()
+                                   ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
+                stopReason = DcPartyWaitDecision::RecordTimeout(
+                    memory, st.next ? st.next->entry : 0, st.next ? st.next->name : std::string(),
+                    waitIn.waitedMs / 1000, why);
                 break;
+            }
         }
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] between-pulls wait gave up after {} ticks / {}ms: {} "

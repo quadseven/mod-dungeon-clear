@@ -140,6 +140,18 @@ namespace DcPartyWaitDecision
                (why.empty() ? "." : (" (" + why + ")."));
     }
 
+    // The Timeout stop as the caller speaks it: tell a repeat from the memory,
+    // build the matching reason, then remember this stop so the next identical
+    // one is the repeat. The only writer of TimeoutMemory.
+    inline std::string RecordTimeout(TimeoutMemory& mem, std::uint32_t bossEntry, std::string const& bossName,
+                                     std::uint32_t waitedSecs, std::string const& why)
+    {
+        bool const repeated = IsRepeatTimeout(mem, bossEntry, why);
+        mem.bossEntry = bossEntry;
+        mem.why = why;
+        return TimeoutStopReason(repeated, waitedSecs, bossName, why);
+    }
+
     inline Result Decide(Inputs const& in)
     {
         auto const verdict = [](Outcome o, Reason r)
