@@ -340,9 +340,9 @@ struct DcApproachState
     uint32 doorStallLastMs     = 0;  // last tick the stall was observed
 
     // The stalled fallback's give-up budget (DcStalledFallbackDecision.h): which
-    // target it is walking at, whether it is closing, and the targets it has given
-    // up on. Without it the fallback outranks Advance for as long as it has a
-    // target, and only Advance can clear the stall it is running under. Self-
+    // target it is walking at, whether it is closing, and the targets it has given up on.
+    // Without it the fallback outranks Advance for as long as it has a target, and only
+    // Advance can clear the stall it is running under. Self-
     // resetting per target, so OnBossChange leaves it alone.
     DcStalledFallback::Watch stalledFallback;
     // True while the current StallReason was written by the door-blocked action
@@ -357,6 +357,15 @@ struct DcApproachState
     // of the fallback chasing an off-level mob until the 120s stall watchdog.
     // Any non-door StallDungeonClear / ClearStall drops the ownership.
     bool doorOwnsStallReason = false;
+
+    // --- RebuildAndYield counter --------------------------------------------
+    // Counts consecutive RebuildAndYield verdicts (hopDone + engageDist < engageRange)
+    // without an engage taking over. When this exceeds the limit, the approach
+    // escalates to the dead-end stall that a zero-segment path reaches, with a log
+    // naming the boss and what's holding the engage (room trash, rez hold, party not
+    // ready). The limit is sized to catch the Blackfathom case (3000ish ticks) while
+    // allowing brief yielding (if the engage becomes possible in the same approach).
+    uint32 rebuildAndYieldCount = 0;
 
     // --- long-path cache state --------------------------------------------
     // The cached long-range A* result lives in its own value ("dungeon clear
@@ -500,10 +509,12 @@ struct DcApproachState
     // Reached engage range: clear the dead-end escalation counter and the
     // direct-pursuit give-up latch, so a boss that wanders back out can be
     // re-pursued cleanly instead of staying latched off the pursuit shortcut.
+    // Also clear the RebuildAndYield counter since an engage will take over.
     void OnEnteredEngageRange()
     {
         finalApproachWatch.Reset();
         pursuitWatch.Reset();
+        rebuildAndYieldCount = 0;
     }
 
     // One observation of the blocked-state watchdog, from the door-blocked
