@@ -581,7 +581,7 @@ TEST(DungeonEventBlackfathomDeeps, AtBossGateReportsTheFirstGateDown)
 
 // Criterion 1 (issue #66): at the 180s ceiling at Gelihast (map 48) with two
 // out-of-range members and StrandedRecovery on, the wait is rescued instead of
-// ended — the same kernel the live BFD Gelihast stall would hit, framed against
+// ended - the same kernel the live BFD Gelihast stall would hit, framed against
 // map 48.
 TEST(DungeonEventBlackfathomDeeps, AtTheCeilingAtGelihastWithStrandedMembersRescuesInsteadOfStopping)
 {
