@@ -42,8 +42,8 @@ namespace DungeonClearApproach
 
         // 5. The route completed. Benign if already in engage range (rebuild and
         //    yield) unless the yields have gone on past the budget with no engage
-        //    taking over (stall for `dc skip`); else escalate dead-end handling: final-approach within the
-        //    budget, then a swim, then a stall.
+        //    taking over (stall for `dc skip`); else escalate dead-end handling:
+        //    final-approach within the budget, then a swim, then a stall.
         if (o.hopDone)
         {
             if (o.engageDist < o.engageRange)
