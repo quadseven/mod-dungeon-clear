@@ -359,13 +359,26 @@ struct DcApproachState
     bool doorOwnsStallReason = false;
 
     // --- RebuildAndYield counter --------------------------------------------
-    // Counts consecutive RebuildAndYield verdicts (hopDone + engageDist < engageRange)
-    // without an engage taking over. When this exceeds the limit, the approach
-    // escalates to the dead-end stall that a zero-segment path reaches, with a log
-    // naming the boss and what's holding the engage (room trash, rez hold, party not
-    // ready). The limit is sized to catch the Blackfathom case (3000ish ticks) while
-    // allowing brief yielding (if the engage becomes possible in the same approach).
+    // Consecutive RebuildAndYield verdicts (hopDone + engageDist < engageRange)
+    // with no engage taking over. Past the limit the approach escalates to the same
+    // stall a dead-end route reaches. NOT cleared by OnEnteredEngageRange: a tank
+    // that is at the boss while the room trash gate or the rez hold keeps the
+    // engage closed is exactly the case this counts. A gap longer than
+    // YIELD_GAP_MS between yields means an engage ran in between, so it restarts.
+    static constexpr uint32 YIELD_GAP_MS = 3000;
     uint32 rebuildAndYieldCount = 0;
+    uint32 lastYieldMs = 0;
+
+    // One RebuildAndYield tick at nowMs; returns the consecutive count.
+    uint32 NoteYield(uint32 nowMs)
+    {
+        if (rebuildAndYieldCount != 0 && nowMs - lastYieldMs > YIELD_GAP_MS)
+            rebuildAndYieldCount = 0;
+        lastYieldMs = nowMs;
+        return ++rebuildAndYieldCount;
+    }
+
+    void ResetYield() { rebuildAndYieldCount = 0; }
 
     // --- long-path cache state --------------------------------------------
     // The cached long-range A* result lives in its own value ("dungeon clear
@@ -509,12 +522,10 @@ struct DcApproachState
     // Reached engage range: clear the dead-end escalation counter and the
     // direct-pursuit give-up latch, so a boss that wanders back out can be
     // re-pursued cleanly instead of staying latched off the pursuit shortcut.
-    // Also clear the RebuildAndYield counter since an engage will take over.
     void OnEnteredEngageRange()
     {
         finalApproachWatch.Reset();
         pursuitWatch.Reset();
-        rebuildAndYieldCount = 0;
     }
 
     // One observation of the blocked-state watchdog, from the door-blocked

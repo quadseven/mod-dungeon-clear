@@ -332,6 +332,7 @@ private:
     Step DoOffPathRebuild(AdvanceState& st);
     Step TryReanchorStaleCursor(AdvanceState& st);   // never terminates; only re-anchors the cursor
     Step DoHopDoneEscalation(AdvanceState& st, DungeonClearApproach::Verdict v);
+    Step StallYieldedEngage(AdvanceState& st);       // yields past DC_YIELD_LIMIT: stall naming the gate
     Step DoJumpLeg(AdvanceState& st);
     Step DoRideLiveGlide(AdvanceState& st);
     Step DoOffLineRejoin(AdvanceState& st);

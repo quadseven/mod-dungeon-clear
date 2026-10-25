@@ -325,3 +325,37 @@ TEST(DcDoorStallWatchdog, OwnershipFollowsTheReasonNotTheTarget)
     s.Reset();
     EXPECT_FALSE(s.doorOwnsStallReason);
 }
+
+// ---- RebuildAndYield counter ----------------------------------------------
+
+TEST(DcApproachStateYieldTest, ConsecutiveYieldsCount)
+{
+    DcApproachState st;
+    EXPECT_EQ(st.NoteYield(1000), 1u);
+    EXPECT_EQ(st.NoteYield(1500), 2u);
+    EXPECT_EQ(st.NoteYield(2000), 3u);
+}
+
+TEST(DcApproachStateYieldTest, AGapMeansAnEngageRanInBetween)
+{
+    DcApproachState st;
+    st.NoteYield(1000);
+    st.NoteYield(1500);
+    EXPECT_EQ(st.NoteYield(1500 + DcApproachState::YIELD_GAP_MS + 1), 1u);
+}
+
+TEST(DcApproachStateYieldTest, ResetRestartsTheCount)
+{
+    DcApproachState st;
+    st.NoteYield(1000);
+    st.ResetYield();
+    EXPECT_EQ(st.NoteYield(1500), 1u);
+}
+
+TEST(DcApproachStateYieldTest, EnteringEngageRangeDoesNotClearIt)
+{
+    DcApproachState st;
+    st.NoteYield(1000);
+    st.OnEnteredEngageRange();
+    EXPECT_EQ(st.NoteYield(1500), 2u);
+}

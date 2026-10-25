@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 #include "DungeonClearApproach.h"
+#include "DcSourceScan.h"
 
 using DungeonClearApproach::DecideApproach;
 using DungeonClearApproach::Observation;
@@ -16,6 +17,7 @@ namespace
     constexpr uint32_t STUCK_TICK_LIMIT       = 5;   // DC_STUCK_TICK_LIMIT
     constexpr uint32_t PURSUIT_FAIL_LIMIT     = 5;   // DC_PURSUIT_FAIL_LIMIT
     constexpr uint32_t DONE_NOT_ENGAGED_LIMIT = 15;  // DC_DONE_NOT_ENGAGED_LIMIT
+    constexpr uint32_t YIELD_LIMIT            = 15;  // DC_YIELD_LIMIT
 
     // A healthy, on-corridor tick: reachable path, on the line, a spline window
     // ready to launch. Every guard above IssueSplineWindow is inactive, so the
@@ -43,6 +45,7 @@ namespace
         o.stuckTickLimit      = STUCK_TICK_LIMIT;
         o.pursuitFailLimit    = PURSUIT_FAIL_LIMIT;
         o.doneNotEngagedLimit = DONE_NOT_ENGAGED_LIMIT;
+        o.yieldLimit          = YIELD_LIMIT;
         return o;
     }
 }
@@ -300,6 +303,50 @@ TEST(DungeonClearApproachTest, HopDoneOutranksJumpAndGlide)
     o.hopIsJump = true;
     o.splineRunning = true;
     EXPECT_EQ(DecideApproach(o), V::RebuildAndYield);
+}
+
+// ---- RebuildAndYield budget: the engage hold never opening --------------
+
+namespace
+{
+    Observation YieldingInsideRange(uint32_t yieldTicks)
+    {
+        Observation o = Healthy();
+        o.hopDone = true;
+        o.engageDist = o.engageRange - 1.0f;
+        o.yieldTicks = yieldTicks;
+        return o;
+    }
+}
+
+TEST(DungeonClearApproachTest, YieldAtTheLimitStillYields)
+{
+    EXPECT_EQ(DecideApproach(YieldingInsideRange(YIELD_LIMIT)), V::RebuildAndYield);
+}
+
+TEST(DungeonClearApproachTest, YieldPastTheLimitStalls)
+{
+    EXPECT_EQ(DecideApproach(YieldingInsideRange(YIELD_LIMIT + 1)), V::Stall);
+}
+
+TEST(DungeonClearApproachTest, YieldBudgetDoesNotTouchHopDoneShortOfRange)
+{
+    Observation o = YieldingInsideRange(YIELD_LIMIT + 1);
+    o.engageDist = o.engageRange + 5.0f;
+    EXPECT_EQ(DecideApproach(o), V::FinalApproach);
+}
+
+// The yield branch of DoHopDoneEscalation must not zero longPathExpiresMs: that
+// forced a rebuild (an async pathfind returning nothing) on every tick.
+TEST(DungeonClearApproachTest, YieldBranchKeepsTheCachedPath)
+{
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Action/DcAdvanceAction.cpp"));
+    auto const begin = src.find("Verdict::RebuildAndYield)\n    {");
+    ASSERT_NE(begin, std::string::npos);
+    auto const end = src.find("return Step::ReturnFalse;", begin);
+    ASSERT_NE(end, std::string::npos);
+    EXPECT_EQ(src.substr(begin, end - begin).find("longPathExpiresMs"), std::string::npos);
 }
 
 // ---- tier-boundary fall-through sentinel (T2.2 single-observation staging)
