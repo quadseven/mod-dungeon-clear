@@ -908,7 +908,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     waitIn.rosterAlive = presence.rosterAlive;
     waitIn.rosterHasHealer = presence.rosterHasHealer;
     // How many living bot members on the leader's map are out of spread of the
-    // tank — the strays the stranded rescue can teleport. And whether the
+    // tank - the strays the stranded rescue can teleport. And whether the
     // operator has opted into teleporting members at all.
     waitIn.strandedOutOfRange =
         DcPartyState::OutOfRangeMemberCount(bot, gate.maxSpread, gate.anchor, gate.maxTankGap);

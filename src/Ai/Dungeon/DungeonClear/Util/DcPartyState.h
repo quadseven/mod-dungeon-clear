@@ -210,7 +210,7 @@ public:
     static bool HasDeadSameMapMember(Player* bot);
 
     // Count of living bot members on the bot's map that are out of spread of the
-    // tank — the strays the stranded rescue would teleport. Mirrors the spread
+    // tank - the strays the stranded rescue would teleport. Mirrors the spread
     // check in IsPartyReady / DescribePartyNotReady: same Map object, alive, bot,
     // and distance beyond maxSpread (or maxTankGap when set).
     static std::uint32_t OutOfRangeMemberCount(Player* bot, float maxSpread,
