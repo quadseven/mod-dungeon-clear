@@ -55,6 +55,37 @@ TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
     }
 }
 
+TEST(DungeonEventBlackfathomDeeps, SwimSearchCanLeaveDirectRouteBoundsAroundLongWall)
+{
+    G3D::Vector3 const start(0.0f, 0.0f, 0.0f);
+    G3D::Vector3 const sarevess(100.0f, 0.0f, 0.0f);
+    auto const wet = [](G3D::Vector3 const&) { return true; };
+    auto const clear = [](G3D::Vector3 const& a, G3D::Vector3 const& b)
+    {
+        float const length = (b - a).length();
+        int const samples = std::max(1, static_cast<int>(std::ceil(length)));
+        for (int i = 0; i <= samples; ++i)
+        {
+            float const t = static_cast<float>(i) / samples;
+            G3D::Vector3 const p = a + (b - a) * t;
+            if (p.x >= 20.0f && p.x <= 24.0f && std::abs(p.y) <= 70.0f)
+                return false;
+        }
+        return true;
+    };
+
+    SwimPathfinder::Result const route = SwimPathfinder::BuildCore(start, sarevess, clear, wet);
+    ASSERT_TRUE(route.ok) << route.failureReason;
+    ASSERT_FALSE(route.points.empty());
+    EXPECT_LT((route.points.back() - sarevess).length(), 0.01f);
+    G3D::Vector3 previous = start;
+    for (G3D::Vector3 const& point : route.points)
+    {
+        EXPECT_TRUE(clear(previous, point));
+        previous = point;
+    }
+}
+
 // Blackfathom Deeps (map 48). Live, on the dev realm: 9 guild runs, 0 clears.
 // Five sat out the 7200 s ceiling at 1 to 4 of 7 bosses. The derived order sent
 // the tank to Old Serra'kis (bit 5) straight after Lorgus Jett, behind the
