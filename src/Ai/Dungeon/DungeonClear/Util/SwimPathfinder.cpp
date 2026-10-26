@@ -103,7 +103,10 @@ namespace
 
         bool WithinBounds(G3D::Vector3 const& point) const
         {
-            constexpr float margin = 64.0f;
+            // BFD's flooded halls can force a long sideways swim around a wall
+            // before the route can turn back toward the boss. Keep enough
+            // lateral room beyond the direct start/goal box for that bypass.
+            constexpr float margin = 96.0f;
             return point.x >= std::min(start.x, goal.x) - margin &&
                    point.x <= std::max(start.x, goal.x) + margin &&
                    point.y >= std::min(start.y, goal.y) - margin &&
