@@ -49,6 +49,7 @@ namespace DcKey
     inline constexpr char const* RunInstance             = "dungeon clear run instance";
     inline constexpr char const* StallReason             = "dungeon clear stall reason";
     inline constexpr char const* LastSaidReason          = "dungeon clear last said reason";
+    inline constexpr char const* LastStopReason          = "dungeon clear last stop reason";
     inline constexpr char const* Phase                   = "dungeon clear phase";
     inline constexpr char const* FallbackTarget          = "dungeon clear fallback target";
     inline constexpr char const* PartyTank               = "dungeon clear party tank";
