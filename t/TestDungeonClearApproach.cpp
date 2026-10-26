@@ -319,9 +319,9 @@ namespace
     }
 }
 
-TEST(DungeonClearApproachTest, YieldAtTheLimitStillYields)
+TEST(DungeonClearApproachTest, YieldAtTheLimitStalls)
 {
-    EXPECT_EQ(DecideApproach(YieldingInsideRange(YIELD_LIMIT)), V::RebuildAndYield);
+    EXPECT_EQ(DecideApproach(YieldingInsideRange(YIELD_LIMIT)), V::Stall);
 }
 
 TEST(DungeonClearApproachTest, YieldPastTheLimitStalls)
