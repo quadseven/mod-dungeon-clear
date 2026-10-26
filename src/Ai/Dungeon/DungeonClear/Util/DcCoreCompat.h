@@ -17,6 +17,10 @@
  *     OnPlayerbotPacketSent(p, pkt)       -> ServerScript::OnPacketSent(s, pkt)
  *   WorldSession::IsBot()               WorldSession::IsHeadless()
  *   IWorld::AddQueryHolderCallback      moved to WorldSession
+ *   MotionMaster::MoveKnockbackFrom     MoveKnockbackFrom(..., bool
+ *     (4 args; skips client-controlled    allowClientControlled = false);
+ *     players, MoveKnockbackFromFor-      see DcCoreCompat::MoveKnockbackFrom
+ *     Player does not)
  *
  * Everything that has a spelling valid on both cores uses it and is not
  * mentioned here. What remains is detected by mod-dungeon-clear.cmake, which
@@ -33,6 +37,8 @@
 #ifndef _DUNGEONCLEAR_DCCORECOMPAT_H
 #define _DUNGEONCLEAR_DCCORECOMPAT_H
 
+#include "MotionMaster.h"
+#include "Unit.h"
 #include "WorldSession.h"
 
 namespace DcCoreCompat
@@ -47,6 +53,19 @@ namespace DcCoreCompat
             else
                 return session->IsBot();
         }
+
+        // Templated on both types so a test can drive either core's shape, and
+        // so the branch for the other core is never instantiated.
+        template <typename M, typename U>
+        void MoveKnockbackFrom(M& motion, U* owner, float srcX, float srcY, float speedXY, float speedZ)
+        {
+            if constexpr (requires { motion.MoveKnockbackFrom(srcX, srcY, speedXY, speedZ, true); })
+                motion.MoveKnockbackFrom(srcX, srcY, speedXY, speedZ, true);
+            else if (owner->IsPlayer() && owner->IsClientControlled())
+                motion.MoveKnockbackFromForPlayer(srcX, srcY, speedXY, speedZ);
+            else
+                motion.MoveKnockbackFrom(srcX, srcY, speedXY, speedZ);
+        }
     }
 
     // A session with no game client behind it: a playerbot. Headless on the
@@ -55,6 +74,17 @@ namespace DcCoreCompat
     inline bool IsClientless(WorldSession const* session)
     {
         return session && Detail::IsClientless(session);
+    }
+
+    // Knock a unit back from (srcX, srcY), client-controlled players included.
+    // The new core spells that allowClientControlled = true. The fork core's
+    // MoveKnockbackFrom has no such argument and returns early for a
+    // client-controlled player, so that case goes to MoveKnockbackFromForPlayer,
+    // the fork's own unguarded copy.
+    inline void MoveKnockbackFrom(Unit* unit, float srcX, float srcY, float speedXY, float speedZ)
+    {
+        if (unit)
+            Detail::MoveKnockbackFrom(*unit->GetMotionMaster(), unit, srcX, srcY, speedXY, speedZ);
     }
 }
 

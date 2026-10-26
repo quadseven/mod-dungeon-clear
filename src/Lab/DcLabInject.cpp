@@ -24,6 +24,7 @@
 
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCoreCompat.h"
 #include "Lab/DcLabJob.h"
 #include "Lab/DcLabPuppet.h"
 #include "Lab/DcLabRecorder.h"
@@ -373,7 +374,7 @@ void DcLabInjector::Fire(std::size_t idx)
                 sx = src.front()->GetPositionX();
                 sy = src.front()->GetPositionY();
             }
-            u->GetMotionMaster()->MoveKnockbackFrom(sx, sy, xy, z, true);
+            DcCoreCompat::MoveKnockbackFrom(u, sx, sy, xy, z);
             first = first ? first : u->GetGUID().GetRawValue();
         }
     }
