@@ -91,6 +91,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestSealedEncounter.cpp"
             "${MOD_PATH}/t/TestWaitAtBoss.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
+            "${MOD_PATH}/t/TestDcCoreCompat.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"
             "${MOD_PATH}/t/TestApproachDecisions.cpp"
             "${MOD_PATH}/t/TestDcProgressWatchdog.cpp"
