@@ -46,6 +46,11 @@ TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
     ASSERT_TRUE(route.ok) << route.failureReason;
     ASSERT_FALSE(route.points.empty());
     EXPECT_LT((route.points.back() - sarevess).length(), 0.01f);
+    float furthestSideways = 0.0f;
+    for (G3D::Vector3 const& point : route.points)
+        furthestSideways = std::max(furthestSideways, std::abs(point.y));
+    EXPECT_GT(furthestSideways, 64.0f)
+        << "the route must leave the old 64yd search bounds to get around the wall";
     G3D::Vector3 previous = start;
     for (G3D::Vector3 const& point : route.points)
     {
