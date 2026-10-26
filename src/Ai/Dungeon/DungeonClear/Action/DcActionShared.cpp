@@ -275,6 +275,7 @@ namespace DcActionShared
         // after the fact, could not learn why a run ended.
         LOG_INFO("playerbots.dungeonclear", "[DC:{}] dungeon clear disabled: {}",
                  bot ? bot->GetName() : "<unknown>", reason);
+        ctx->GetValue<std::string&>(DcKey::LastStopReason)->Get() = reason;
         // One reset clears the whole run-level state — enabled flag, the pause
         // cluster (paused / reason / auto-paused door), the selected-boss override,
         // and the two leader-fight latches (leader-combat-since / party-engaged) —
