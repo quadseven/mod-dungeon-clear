@@ -205,6 +205,12 @@ namespace
     // (PathGenerator may close a few yards Detour's chunk builder gave up on);
     // past it the boss is declared unreachable and we stall for `dc skip`.
     constexpr uint32 DC_DONE_NOT_ENGAGED_LIMIT = 15;
+    // Consecutive hopDone-inside-engage-range yields before the approach stalls.
+    // Advance ticks about 4 times a second while it yields, so 240 is about a
+    // minute: longer than a between-pulls rest or a trash pull near the boss
+    // (either pauses the yields and the gap restarts the count), far shorter
+    // than the hour run 1189170 sat at Kelris.
+    constexpr uint32 DC_YIELD_LIMIT = 240;
 
     // Consecutive direct-pursuit ticks that issued no movement (MoveTo returned
     // false and the bot is neither moving nor waiting on an in-flight move)
@@ -277,6 +283,7 @@ namespace
         o.stuckTickLimit      = DC_STUCK_TICK_LIMIT;
         o.pursuitFailLimit    = DC_PURSUIT_FAIL_LIMIT;
         o.doneNotEngagedLimit = DC_DONE_NOT_ENGAGED_LIMIT;
+        o.yieldLimit          = DC_YIELD_LIMIT;
         return o;
     }
 
@@ -1558,6 +1565,8 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     DungeonPathFollower::Hop const& hop = st.hop;
 
     obs.hopDone = hop.isDone;
+    if (!hop.isDone)
+        appr.ResetYield();
     obs.hopIsJump = hop.isJump;
 
     if (hop.isDone)
@@ -1572,8 +1581,13 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
         // budget, and only a genuine dead-end (0-point path, bot not moving) or a
         // boss stepping out of reach exhausts it. Match the old ordering: it only
         // advances after the engageDist<engageRange case is ruled out.
-        if (engageDist >= engageRange)
+        if (engageDist < engageRange)
         {
+            obs.yieldTicks = appr.NoteYield(getMSTime());  // yield budget, see NoteYield
+        }
+        else
+        {
+            appr.ResetYield();
             appr.finalApproachWatch.TickClosing(engageDist, DC_STUCK_DISPLACEMENT, getMSTime());
             // Water escape (Swim vs Stall) is consulted only once the budget is
             // spent; probe it there so the captured verdict is honest, gated on
@@ -1831,12 +1845,15 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
 
     if (v == DungeonClearApproach::Verdict::RebuildAndYield)
     {
-        // Already within engage range — a benign "anchored hops were still
-        // pending at the top" case; rebuild and let the engage hold take over.
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] reached end of path polyline (seg {}) -> forcing rebuild next tick",
-                 bot->GetName(), follower.segmentIdx);
-        appr.longPathExpiresMs = 0;
+        // Already within engage range - a benign "anchored hops were still
+        // pending at the top" case; let the engage hold take over. The cached
+        // path is kept: its polyline is complete, so rebuilding it every tick
+        // only queues an async pathfind that returns nothing.
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] reached end of path polyline (seg {}) inside engage range, "
+                  "yielding to the engage hold ({}/{})",
+                  bot->GetName(), follower.segmentIdx, appr.rebuildAndYieldCount,
+                  DC_YIELD_LIMIT);
         return Step::ReturnFalse;
     }
 
@@ -1860,10 +1877,12 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
         return pushing ? Step::ReturnTrue : Step::ReturnFalse;
     }
 
-    // Budget spent (Swim or Stall). Reset the watchdog and take the water-gate
+    // Budget spent (Swim or Stall). Reset the watchdogs and take the water-gate
     // swim if one exists (submerged tunnel the surface-sheet navmesh can't
     // descend into), else stall for `dc skip`.
     appr.finalApproachWatch.Reset();
+    if (engageDist < engageRange)
+        return StallYieldedEngage(st);
     if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
     {
         LOG_INFO("playerbots.dungeonclear",
@@ -1880,6 +1899,26 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
     StallDungeonClear(botAI,
         "Can't reach " + next->name + ": the route dead-ends short of it "
         "(likely on a ledge or across a gap the navmesh doesn't span). "
+        "Use 'dc skip' to move to the next boss.");
+    return Step::ReturnFalse;
+}
+
+// The yields inside engage range outlasted DC_YIELD_LIMIT with no engage taking
+// over: the at-boss gate is held shut (room trash, a rez or readiness hold) and
+// not opening. Stall for `dc skip`, naming the gate that is holding.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::StallYieldedEngage(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DcAtBossGate::Verdict const gate = DcAtBoss::Evaluate(bot, botAI, context, *next);
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] {} in engage range ({:.0f}yd) but no engage after {} ticks; "
+             "at-boss gate: {} -> stalling",
+             bot->GetName(), next->name, st.engageDist, DC_YIELD_LIMIT,
+             DcAtBossGate::Name(gate.gate));
+    st.appr->ResetYield();
+    StallDungeonClear(botAI,
+        "Can't engage " + next->name + ": held at the boss by " +
+        DcAtBossGate::Name(gate.gate) + " (room trash, a rez hold or the party not ready). "
         "Use 'dc skip' to move to the next boss.");
     return Step::ReturnFalse;
 }

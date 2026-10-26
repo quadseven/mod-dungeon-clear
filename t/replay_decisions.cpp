@@ -63,12 +63,14 @@ namespace
         EXPECT_EQ(a.hopDone, b.hopDone);
         EXPECT_EQ(a.hopIsJump, b.hopIsJump);
         EXPECT_EQ(a.doneNotEngagedTicks, b.doneNotEngagedTicks);
+        EXPECT_EQ(a.yieldTicks, b.yieldTicks);
         EXPECT_EQ(a.splineRunning, b.splineRunning);
         EXPECT_EQ(a.offLine, b.offLine);
         EXPECT_EQ(a.haveSplineWindow, b.haveSplineWindow);
         EXPECT_EQ(a.stuckTickLimit, b.stuckTickLimit);
         EXPECT_EQ(a.pursuitFailLimit, b.pursuitFailLimit);
         EXPECT_EQ(a.doneNotEngagedLimit, b.doneNotEngagedLimit);
+        EXPECT_EQ(a.yieldLimit, b.yieldLimit);
     }
 
     // A spread of records across the ladder for the round-trip test.
@@ -81,6 +83,7 @@ namespace
         base.stuckTickLimit      = 5;
         base.pursuitFailLimit    = 5;
         base.doneNotEngagedLimit = 15;
+        base.yieldLimit          = 240;
 
         std::vector<DecisionRecord> recs;
         uint32_t tick = 1000;
@@ -109,6 +112,14 @@ namespace
         fa.hopDone = true;
         fa.engageDist = 30.0f;
         recs.push_back({1, tick++, fa, Verdict::MoveToFallback});
+
+        // Yield budget spent inside engage range: the stall must survive the
+        // round trip, which it cannot unless yieldTicks/yieldLimit are written.
+        Observation yieldStall = base;
+        yieldStall.hopDone = true;
+        yieldStall.engageDist = 10.0f;
+        yieldStall.yieldTicks = 240;
+        recs.push_back({1, tick++, yieldStall, Verdict::MoveToFallback});
 
         // Fill each record's verdict with the real decision so the round-trip
         // also checks the verdict field, not just the observation.

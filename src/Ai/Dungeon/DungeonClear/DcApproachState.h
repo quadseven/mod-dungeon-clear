@@ -358,6 +358,28 @@ struct DcApproachState
     // Any non-door StallDungeonClear / ClearStall drops the ownership.
     bool doorOwnsStallReason = false;
 
+    // --- RebuildAndYield counter --------------------------------------------
+    // Consecutive RebuildAndYield verdicts (hopDone + engageDist < engageRange)
+    // with no engage taking over. Past the limit the approach escalates to the same
+    // stall a dead-end route reaches. NOT cleared by OnEnteredEngageRange: a tank
+    // that is at the boss while the room trash gate or the rez hold keeps the
+    // engage closed is exactly the case this counts. A gap longer than
+    // YIELD_GAP_MS between yields means an engage ran in between, so it restarts.
+    static constexpr uint32 YIELD_GAP_MS = 3000;
+    uint32 rebuildAndYieldCount = 0;
+    uint32 lastYieldMs = 0;
+
+    // One RebuildAndYield tick at nowMs; returns the consecutive count.
+    uint32 NoteYield(uint32 nowMs)
+    {
+        if (rebuildAndYieldCount != 0 && nowMs - lastYieldMs > YIELD_GAP_MS)
+            rebuildAndYieldCount = 0;
+        lastYieldMs = nowMs;
+        return ++rebuildAndYieldCount;
+    }
+
+    void ResetYield() { rebuildAndYieldCount = 0; }
+
     // --- long-path cache state --------------------------------------------
     // The cached long-range A* result lives in its own value ("dungeon clear
     // long path"); these are the bookkeeping fields that govern when it rebuilds

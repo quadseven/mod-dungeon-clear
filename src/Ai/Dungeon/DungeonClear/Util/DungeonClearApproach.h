@@ -77,6 +77,7 @@ namespace DungeonClearApproach
         bool  hopDone          = false;
         bool  hopIsJump        = false;
         std::uint32_t doneNotEngagedTicks = 0;
+        std::uint32_t yieldTicks = 0;       // consecutive RebuildAndYield ticks, this one included
         bool  splineRunning    = false;     // a healthy escort spline is gliding
         bool  offLine          = false;     // RouteDeviation > OFF_PATH_THRESHOLD
         bool  haveSplineWindow = false;     // BuildSplineWindow produced >= 2 points
@@ -85,6 +86,7 @@ namespace DungeonClearApproach
         std::uint32_t stuckTickLimit      = 0; // DC_STUCK_TICK_LIMIT
         std::uint32_t pursuitFailLimit    = 0; // DC_PURSUIT_FAIL_LIMIT
         std::uint32_t doneNotEngagedLimit = 0; // DC_DONE_NOT_ENGAGED_LIMIT
+        std::uint32_t yieldLimit          = 0; // DC_YIELD_LIMIT; 0 = no yield budget (old captures)
     };
 
     // Returns the verdict for the first phase whose guard fires, in ladder order.

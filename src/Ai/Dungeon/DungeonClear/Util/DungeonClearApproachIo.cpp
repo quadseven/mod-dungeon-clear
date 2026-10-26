@@ -160,12 +160,14 @@ namespace DungeonClearApproachIo
           << ",\"hopDone\":" << (o.hopDone ? "true" : "false")
           << ",\"hopIsJump\":" << (o.hopIsJump ? "true" : "false")
           << ",\"doneNotEngagedTicks\":" << o.doneNotEngagedTicks
+          << ",\"yieldTicks\":" << o.yieldTicks
           << ",\"splineRunning\":" << (o.splineRunning ? "true" : "false")
           << ",\"offLine\":" << (o.offLine ? "true" : "false")
           << ",\"haveSplineWindow\":" << (o.haveSplineWindow ? "true" : "false")
           << ",\"stuckTickLimit\":" << o.stuckTickLimit
           << ",\"pursuitFailLimit\":" << o.pursuitFailLimit
           << ",\"doneNotEngagedLimit\":" << o.doneNotEngagedLimit
+          << ",\"yieldLimit\":" << o.yieldLimit
           << '}';
         return s.str();
     }
@@ -202,12 +204,14 @@ namespace DungeonClearApproachIo
         o.hopDone             = GetB(m, "hopDone", o.hopDone);
         o.hopIsJump           = GetB(m, "hopIsJump", o.hopIsJump);
         o.doneNotEngagedTicks = GetU(m, "doneNotEngagedTicks", o.doneNotEngagedTicks);
+        o.yieldTicks          = GetU(m, "yieldTicks", o.yieldTicks);
         o.splineRunning       = GetB(m, "splineRunning", o.splineRunning);
         o.offLine             = GetB(m, "offLine", o.offLine);
         o.haveSplineWindow    = GetB(m, "haveSplineWindow", o.haveSplineWindow);
         o.stuckTickLimit      = GetU(m, "stuckTickLimit", o.stuckTickLimit);
         o.pursuitFailLimit    = GetU(m, "pursuitFailLimit", o.pursuitFailLimit);
         o.doneNotEngagedLimit = GetU(m, "doneNotEngagedLimit", o.doneNotEngagedLimit);
+        o.yieldLimit          = GetU(m, "yieldLimit", o.yieldLimit);
         out.obs = o;
         return true;
     }
