@@ -38,6 +38,7 @@
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include "DcSourceScan.h"
 #include <map>
 
 // The fork core's IWorld declares AddQueryHolderCallback as a pure virtual the
@@ -729,6 +730,40 @@ TEST_F(DungeonClearStatusTest, DisableDungeonClearOverwritesLastStopReason)
     DcActionShared::DisableDungeonClear(botAI, "a different stop reason");
     EXPECT_EQ(context->GetValue<std::string&>(DcKey::LastStopReason)->Get(),
               "a different stop reason");
+}
+
+// A new run starts with no stop reason: the one an earlier run left must not
+// be read back as the reason the new run ends (wow-overseer#1518).
+TEST_F(DungeonClearStatusTest, ClearRunReasonsClearsLastStopReason)
+{
+    DcActionShared::DisableDungeonClear(botAI, "the party never became ready after 180s");
+    ASSERT_EQ(context->GetValue<std::string&>(DcKey::LastStopReason)->Get(),
+              "the party never became ready after 180s");
+    context->GetValue<std::string&>(DcKey::StallReason)->Get() = "door_blocked";
+    context->GetValue<std::string&>(DcKey::LastSaidReason)->Get() = "door_blocked";
+    context->GetValue<std::string&>(DcKey::Phase)->Get() = "advancing";
+
+    DcActionShared::ClearRunReasons(context);
+
+    EXPECT_TRUE(context->GetValue<std::string&>(DcKey::LastStopReason)->Get().empty());
+    EXPECT_TRUE(context->GetValue<std::string&>(DcKey::StallReason)->Get().empty());
+    EXPECT_TRUE(context->GetValue<std::string&>(DcKey::LastSaidReason)->Get().empty());
+    EXPECT_TRUE(context->GetValue<std::string&>(DcKey::Phase)->Get().empty());
+}
+
+// The `dc on` path is what starts a run; it must route through the helper that
+// clears the stop reason, not clear the per-run strings by hand and miss it.
+TEST(DungeonClearRunStart, DcOnClearsLastStopReason)
+{
+    std::string const code = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai" / "Dungeon" / "DungeonClear" / "Action" /
+        "DungeonClearChatActions.cpp"));
+    std::size_t const begin = code.find("bool DcOnAction::Execute(");
+    ASSERT_NE(begin, std::string::npos);
+    std::size_t const end = code.find("\nbool ", begin + 1);
+    std::string const body = code.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+    EXPECT_EQ(DcSourceScan::CallOffsets(body, "ClearRunReasons").size(), 1u)
+        << "DcOnAction::Execute must call DcActionShared::ClearRunReasons once";
 }
 
 // Test status push when paused with no recorded reason: detail falls back to a

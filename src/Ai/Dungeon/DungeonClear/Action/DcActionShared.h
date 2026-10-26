@@ -164,6 +164,13 @@ namespace DcActionShared
     // DcTestRunManager::OnRunDisabled — a no-op outside a monitored test run).
     void DisableDungeonClear(PlayerbotAI* botAI, std::string const& reason);
 
+    // Run start: clear the per-run reason strings (stall, last said, phase) AND
+    // the last stop reason. DisableDungeonClear keeps the stop reason on purpose
+    // so the overseer can read why a run ended, which means nothing else ever
+    // clears it; `dc on` calls this so a reason left by an earlier run is never
+    // attributed to the end of the new one.
+    void ClearRunReasons(AiObjectContext* ctx);
+
     // Mode stays enabled; set a stall reason the fallback trigger / `dc status`
     // read, announced once per reason change.
     void StallDungeonClear(PlayerbotAI* botAI, std::string const& reason);

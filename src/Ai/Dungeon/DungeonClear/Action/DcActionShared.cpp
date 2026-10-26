@@ -265,6 +265,14 @@ namespace DcActionShared
     }
 
 
+    void ClearRunReasons(AiObjectContext* ctx)
+    {
+        ctx->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::LastSaidReason)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::Phase)->Get().clear();
+        ctx->GetValue<std::string&>(DcKey::LastStopReason)->Get().clear();
+    }
+
     void DisableDungeonClear(PlayerbotAI* botAI, std::string const& reason)
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
