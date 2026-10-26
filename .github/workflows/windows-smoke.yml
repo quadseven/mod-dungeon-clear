@@ -89,21 +89,21 @@ jobs:
       # 1. Assemble the tree: core at the workspace root, modules underneath —
       #    the same layout tests.yml and upstream-smoke.yml build.
       - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.CORE_REPO }}
           ref: ${{ env.CORE_REF }}
           path: .
 
       - name: Checkout mod-playerbots
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.PLAYERBOTS_REPO }}
           ref: ${{ env.PLAYERBOTS_REF }}
           path: modules/mod-playerbots
 
       - name: Checkout this module (PR ref)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: modules/mod-dungeon-clear
 
@@ -115,7 +115,7 @@ jobs:
       #    windows_build.yml so the two stay on identical dependency versions —
       #    if that workflow changes its Boost/MySQL pin, mirror it here.
       - name: Cache Boost & MySQL
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             C:\local\boost_1_87_0
@@ -189,7 +189,7 @@ jobs:
       # PATH, which Ninja needs and the Visual Studio generator would otherwise
       # handle itself.
       - name: MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Ensure Ninja
         shell: bash
@@ -201,7 +201,7 @@ jobs:
       # build that writes a shared PDB (/Zi), and a compile smoke has no use for
       # debug info anyway, so the simplest fix is to not generate any.
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2
         with:
           key: dc-winsmoke-${{ github.ref_name }}
           variant: ccache
