@@ -16,6 +16,7 @@
 #include "Group.h"
 #include "PlayerbotAI.h"
 #include "AiObjectContext.h"
+#include "Engine.h"
 #include "Value.h"
 #include "World.h"
 #include "WorldMock.h"
@@ -198,6 +199,10 @@ public:
         this->ai = ai;
     }
 
+    // No actions in tests: a specific action the code under test fires (for
+    // example "dc status") resolves to unknown instead of a real action.
+    Action* GetAction(std::string const /*name*/) override { return nullptr; }
+
     UntypedValue* GetUntypedValue(std::string const name) override
     {
         auto it = values.find(name);
@@ -240,6 +245,13 @@ public:
     {
         this->bot = bot;
         this->aiObjectContext = ctx;
+        // PlayerbotAI::DoSpecificAction calls engines[i]->ExecuteAction with no
+        // null check, and DisableDungeonClear ends with DoSpecificAction("dc
+        // status"). Bare engines over the mock context resolve every action to
+        // unknown (MockAiObjectContext::GetAction returns null), so the call is
+        // a no-op here instead of a null dereference. ~PlayerbotAI deletes them.
+        for (uint8 i = 0; i < BOT_STATE_MAX; ++i)
+            this->engines[i] = new Engine(this, ctx);
     }
 };
 
@@ -650,7 +662,10 @@ protected:
         context->SetValue<ObjectGuid>("dungeon clear blocking door", ObjectGuid::Empty);
         context->SetValue<bool>("has available loot", false);
         context->SetValue<bool>("can loot", false);
-        context->SetValue<std::string>("dungeon clear phase", "idle");
+        // A reference value, as production registers it (DungeonClearStateValues.h):
+        // DisableDungeonClear reads it as std::string&, and a by-value entry
+        // fails that dynamic_cast and returns null.
+        context->SetRefValue<std::string>("dungeon clear phase", "idle");
         // Approach FSM state read by BuildStatusPayload (the long-path cache's
         // target entry drives the routeReady display); one owned struct now.
         context->SetRefValue<DcApproachState>("dungeon clear approach state", DcApproachState{});
