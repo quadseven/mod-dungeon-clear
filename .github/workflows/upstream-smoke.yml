@@ -46,25 +46,26 @@ jobs:
   smoke:
     runs-on: self-hosted
     name: full build vs upstream test-staging
+    timeout-minutes: 180
     steps:
       # 1. Assemble the tree: core at the workspace root, modules underneath.
       #    Each checkout is a fresh clone into the runner's _work sandbox.
       - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.CORE_REPO }}
           ref: ${{ env.CORE_REF }}
           path: .
 
       - name: Checkout mod-playerbots (${{ env.PLAYERBOTS_REF }})
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.PLAYERBOTS_REPO }}
           ref: ${{ env.PLAYERBOTS_REF }}
           path: modules/mod-playerbots
 
       - name: Checkout this module
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: modules/mod-dungeon-clear
 

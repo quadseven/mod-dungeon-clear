@@ -38,6 +38,7 @@ jobs:
   dc-fast:
     runs-on: ubuntu-22.04
     name: dc-fast (gtest, ${{ matrix.pins }})
+    timeout-minutes: 120
     continue-on-error: ${{ matrix.allow_failure }}
     strategy:
       fail-fast: false
@@ -56,21 +57,21 @@ jobs:
     steps:
       # 1. Assemble the tree: core at the workspace root, modules underneath.
       - name: Checkout core (${{ env.CORE_REPO }}@${{ matrix.core_ref }})
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ env.CORE_REPO }}
           ref: ${{ matrix.core_ref }}
           path: .
 
       - name: Checkout mod-playerbots (${{ matrix.playerbots_repo }}@${{ matrix.playerbots_ref }})
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: ${{ matrix.playerbots_repo }}
           ref: ${{ matrix.playerbots_ref }}
           path: modules/mod-playerbots
 
       - name: Checkout this module (PR ref)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: modules/mod-dungeon-clear
 
@@ -102,7 +103,7 @@ jobs:
       # save. Restore and save are split so a build that FAILS still saves what
       # it compiled: otherwise every retry of a broken cold build starts cold.
       - name: ccache (restore)
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: dc-tests-ccache:${{ matrix.pins }}:${{ github.ref_name }}:${{ github.run_id }}-${{ github.run_attempt }}
@@ -115,7 +116,7 @@ jobs:
       # runs instead of skipping. Populate this cache key from your own data; absent
       # it, the nav suite GTEST_SKIPs and Tier 1 still runs.
       - name: Restore map-data slice (optional)
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         continue-on-error: true
         with:
           path: modules/mod-dungeon-clear/t/fixtures/mapdata
@@ -147,7 +148,7 @@ jobs:
 
       - name: ccache (save)
         if: always()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: dc-tests-ccache:${{ matrix.pins }}:${{ github.ref_name }}:${{ github.run_id }}-${{ github.run_attempt }}
@@ -161,7 +162,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: dc-tests-results-${{ matrix.pins }}
           path: build/dc_tests.xml
