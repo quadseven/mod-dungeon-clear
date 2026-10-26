@@ -47,7 +47,8 @@ namespace DungeonClearApproach
         if (o.hopDone)
         {
             if (o.engageDist < o.engageRange)
-                return o.yieldTicks >= o.yieldLimit ? Verdict::Stall : Verdict::RebuildAndYield;
+                return (o.yieldLimit != 0 && o.yieldTicks >= o.yieldLimit)
+                    ? Verdict::Stall : Verdict::RebuildAndYield;
             if (o.doneNotEngagedTicks < o.doneNotEngagedLimit)
                 return Verdict::FinalApproach;
             if (o.waterBetween)

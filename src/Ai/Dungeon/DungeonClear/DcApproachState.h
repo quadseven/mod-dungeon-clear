@@ -340,9 +340,9 @@ struct DcApproachState
     uint32 doorStallLastMs     = 0;  // last tick the stall was observed
 
     // The stalled fallback's give-up budget (DcStalledFallbackDecision.h): which
-    // target it is walking at, whether it is closing, and the targets it has given up on.
-    // Without it the fallback outranks Advance for as long as it has a target, and only
-    // Advance can clear the stall it is running under. Self-
+    // target it is walking at, whether it is closing, and the targets it has given
+    // up on. Without it the fallback outranks Advance for as long as it has a
+    // target, and only Advance can clear the stall it is running under. Self-
     // resetting per target, so OnBossChange leaves it alone.
     DcStalledFallback::Watch stalledFallback;
     // True while the current StallReason was written by the door-blocked action

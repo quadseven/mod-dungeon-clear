@@ -206,7 +206,11 @@ namespace
     // past it the boss is declared unreachable and we stall for `dc skip`.
     constexpr uint32 DC_DONE_NOT_ENGAGED_LIMIT = 15;
     // Consecutive hopDone-inside-engage-range yields before the approach stalls.
-    constexpr uint32 DC_YIELD_LIMIT = 15;
+    // Advance ticks about 4 times a second while it yields, so 240 is about a
+    // minute: longer than a between-pulls rest or a trash pull near the boss
+    // (either pauses the yields and the gap restarts the count), far shorter
+    // than the hour run 1189170 sat at Kelris.
+    constexpr uint32 DC_YIELD_LIMIT = 240;
 
     // Consecutive direct-pursuit ticks that issued no movement (MoveTo returned
     // false and the bot is neither moving nor waiting on an in-flight move)

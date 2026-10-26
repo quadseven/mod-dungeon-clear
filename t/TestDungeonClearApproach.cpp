@@ -17,7 +17,7 @@ namespace
     constexpr uint32_t STUCK_TICK_LIMIT       = 5;   // DC_STUCK_TICK_LIMIT
     constexpr uint32_t PURSUIT_FAIL_LIMIT     = 5;   // DC_PURSUIT_FAIL_LIMIT
     constexpr uint32_t DONE_NOT_ENGAGED_LIMIT = 15;  // DC_DONE_NOT_ENGAGED_LIMIT
-    constexpr uint32_t YIELD_LIMIT            = 15;  // DC_YIELD_LIMIT
+    constexpr uint32_t YIELD_LIMIT            = 240; // DC_YIELD_LIMIT
 
     // A healthy, on-corridor tick: reachable path, on the line, a spline window
     // ready to launch. Every guard above IssueSplineWindow is inactive, so the
@@ -317,6 +317,24 @@ namespace
         o.yieldTicks = yieldTicks;
         return o;
     }
+}
+
+TEST(DungeonClearApproachTest, YieldShortOfTheLimitYields)
+{
+    EXPECT_EQ(DecideApproach(YieldingInsideRange(1)), V::RebuildAndYield);
+    EXPECT_EQ(DecideApproach(YieldingInsideRange(YIELD_LIMIT - 1)), V::RebuildAndYield);
+}
+
+// An observation with no yield budget (yieldLimit 0: a capture or caller from
+// before the budget existed) must keep the old benign verdict, not stall on its
+// first yield.
+TEST(DungeonClearApproachTest, NoYieldBudgetNeverStalls)
+{
+    Observation o = YieldingInsideRange(0);
+    o.yieldLimit = 0;
+    EXPECT_EQ(DecideApproach(o), V::RebuildAndYield);
+    o.yieldTicks = 1000;
+    EXPECT_EQ(DecideApproach(o), V::RebuildAndYield);
 }
 
 TEST(DungeonClearApproachTest, YieldAtTheLimitStalls)
