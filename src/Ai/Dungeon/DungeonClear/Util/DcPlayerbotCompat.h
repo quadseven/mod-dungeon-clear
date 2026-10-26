@@ -183,6 +183,7 @@ namespace DcPbConfig
     DC_PB_CONFIG_MEMBER(ReactDelay, reactDelay)
     DC_PB_CONFIG_MEMBER(ReactDistance, reactDistance)
     DC_PB_CONFIG_MEMBER(SightDistance, sightDistance)
+    DC_PB_CONFIG_MEMBER(SpellDistance, spellDistance)
 
 #undef DC_PB_CONFIG_MEMBER
 }
