@@ -53,7 +53,7 @@ namespace DcPartyWaitDecision
     enum class Outcome
     {
         Wait,    // keep holding the tank - the wait is still legitimate
-        Rescue,  // teleport the stranded out-of-range members to the tank, re-arm the clock, keep waiting
+        Rescue,  // teleport the stranded out-of-range members to the tank and keep waiting (once per wait)
         EndRun,  // stop the clear and report `reason`
     };
 
@@ -101,6 +101,10 @@ namespace DcPartyWaitDecision
         // Whether DungeonClear.StrandedRecovery is on. The rescue only fires when
         // the operator has opted in to teleporting members.
         bool strandedRecoveryEnabled = false;
+        // Whether this wait has already spent its one rescue (RescueFiredThisWait).
+        // A second rescue is never tried in the same wait, so a rescue that did not
+        // bring the members in leaves the ceiling to end the run.
+        bool rescueAlreadyFired = false;
     };
 
     struct Result
@@ -118,7 +122,28 @@ namespace DcPartyWaitDecision
     {
         std::uint32_t bossEntry = 0;  // 0 = no timeout remembered
         std::string why;              // who the wait was on, as DescribePartyNotReady said it
+
+        // The wait that last spent its rescue: the boss it was at and the wait's
+        // start (DcApproachState::partyNotReadySinceMs, never 0 while armed).
+        std::uint32_t rescueBossEntry = 0;
+        std::uint32_t rescueWaitStartMs = 0;  // 0 = no rescue remembered
     };
+
+    // True when the wait that started at waitStartMs, at this boss, has already
+    // had its rescue. A new wait (the party became ready, or the run was stopped
+    // and re-enabled) starts at a new time and so gets one rescue of its own.
+    inline bool RescueFiredThisWait(TimeoutMemory const& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        return mem.rescueWaitStartMs != 0 && mem.rescueWaitStartMs == waitStartMs &&
+               mem.rescueBossEntry == bossEntry;
+    }
+
+    // Remember that this wait spent its rescue. The only writer of the rescue fields.
+    inline void RecordRescue(TimeoutMemory& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        mem.rescueBossEntry = bossEntry;
+        mem.rescueWaitStartMs = waitStartMs;
+    }
 
     // True when this timeout repeats the remembered one.
     inline bool IsRepeatTimeout(TimeoutMemory const& mem, std::uint32_t bossEntry, std::string const& why)
@@ -178,8 +203,10 @@ namespace DcPartyWaitDecision
 
         // 2. Rescue once the stranded clock has elapsed. Do this before the
         //    longer party-wait ceiling so a rescuable wait gets a chance to make
-        //    progress instead of stopping at the ceiling.
-        if (in.strandedTimeoutMs > 0 && in.waitedMs >= in.strandedTimeoutMs &&
+        //    progress instead of stopping at the ceiling. Once per wait only, and
+        //    the clock is not reset by it, so the ceiling below still bounds a
+        //    rescue that did not help.
+        if (!in.rescueAlreadyFired && in.strandedTimeoutMs > 0 && in.waitedMs >= in.strandedTimeoutMs &&
             in.strandedOutOfRange > 0 && in.strandedRecoveryEnabled)
             return verdict(Outcome::Rescue, Reason::StillWaiting);
 

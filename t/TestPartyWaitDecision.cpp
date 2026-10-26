@@ -299,3 +299,45 @@ TEST(DcPartyWaitTest, DifferentBossOrDifferentMembersIsNotARepeat)
     EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 4887u, mem.why));
     EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, "Waiting on Grassfed (out of range)"));
 }
+
+// --- the rescue is bounded: one per wait -------------------------------------
+
+TEST(DcPartyWaitTest, RescueAlreadyFiredThisWaitEndsAtTheCeiling)
+{
+    // A rescue already fired at this boss in this wait and the strays are still
+    // out of range: the ceiling ends the run instead of rescuing forever.
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = in.timeoutMs;
+    in.rescueAlreadyFired = true;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, RescueAlreadyFiredThisWaitKeepsWaitingBelowTheCeiling)
+{
+    // Past the stranded clock but short of the ceiling: no second rescue, just wait.
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 120000;
+    in.rescueAlreadyFired = true;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RescueMemoryAllowsOneRescuePerWait)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
+    DcPartyWaitDecision::RecordRescue(mem, 6243u, 1000u);
+    EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
+
+    // A new wait (the run re-enabled, or the party became ready and then not) or
+    // another boss gets its own rescue.
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 2000u));
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 4887u, 1000u));
+
+    // Recording a timeout leaves the rescue record alone.
+    DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
+    EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
+}

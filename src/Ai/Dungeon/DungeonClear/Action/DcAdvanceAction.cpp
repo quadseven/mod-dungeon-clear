@@ -38,7 +38,6 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBoss.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLogThrottle.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
@@ -913,20 +912,28 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     waitIn.strandedOutOfRange =
         DcPartyState::OutOfRangeMemberCount(bot, gate.maxSpread, gate.anchor, gate.maxTankGap);
     waitIn.strandedRecoveryEnabled = DcSettings::GetBool(bot, "StrandedRecovery");
+    // The rescue record lives beside the timeout memory, outside the approach
+    // state that DisableDungeonClear wipes. See DcPartyWaitDecision::TimeoutMemory.
+    auto& memory = botAI->GetAiObjectContext()
+                       ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
+    uint32 const bossEntry = st.next ? st.next->entry : 0;
+    waitIn.rescueAlreadyFired =
+        DcPartyWaitDecision::RescueFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
 
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
 
-    // RESCUE instead of stopping: at the ceiling, teleport the stranded members
-    // to the tank, re-anchor the camp, re-arm the wait clock, and keep waiting.
+    // RESCUE before stopping: teleport the stranded members to the tank,
+    // re-anchor the camp, and keep waiting. Once per wait, and the wait clock
+    // keeps running, so a rescue that does not bring them in still ends at the
+    // ceiling instead of rescuing forever.
     if (verdict.outcome == DcPartyWaitDecision::Outcome::Rescue)
     {
+        DcPartyWaitDecision::RecordRescue(memory, bossEntry, appr.partyNotReadySinceMs);
         DcStrandedRecovery::Recover(bot);
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] between-pulls wait rescuing {} stranded out-of-range "
-                 "member(s) instead of stopping after {}ms",
+                 "member(s) after {}ms (once this wait)",
                  bot->GetName(), waitIn.strandedOutOfRange, waitIn.waitedMs);
-        appr.partyNotReadyTicks = 0;
-        appr.partyNotReadySinceMs = nowMs;  // fresh window from the rescue
         return Step::ReturnFalse;
     }
 
@@ -945,16 +952,10 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                 break;
             case DcPartyWaitDecision::Reason::Timeout:
             default:
-            {
-                // The memory of the previous timeout lives in its own value, not
-                // on the approach state: DisableDungeonClear below wipes that.
-                auto& memory = botAI->GetAiObjectContext()
-                                   ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
                 stopReason = DcPartyWaitDecision::RecordTimeout(
-                    memory, st.next ? st.next->entry : 0, st.next ? st.next->name : std::string(),
+                    memory, bossEntry, st.next ? st.next->name : std::string(),
                     waitIn.waitedMs / 1000, why);
                 break;
-            }
         }
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] between-pulls wait gave up after {} ticks / {}ms: {} "
