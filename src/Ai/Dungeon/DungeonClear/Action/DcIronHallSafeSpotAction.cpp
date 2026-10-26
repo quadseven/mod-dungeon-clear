@@ -22,6 +22,7 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcIronHallDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcThrottle.h"
@@ -149,7 +150,7 @@ namespace
             in.targetX = victim->GetPositionX();
             in.targetY = victim->GetPositionY();
             in.reach = PlayerbotAI::IsRanged(bot)
-                           ? sPlayerbotAIConfig.SpellDistance - 2.0f
+                           ? DcPbConfig::SpellDistance() - 2.0f
                            : bot->GetMeleeRange(victim) - 0.5f;
         }
         in.slotSeed = static_cast<uint32>(bot->GetGUID().GetCounter());
