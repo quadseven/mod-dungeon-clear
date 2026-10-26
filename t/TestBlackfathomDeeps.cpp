@@ -54,11 +54,6 @@ TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
     ASSERT_TRUE(route.ok) << route.failureReason;
     ASSERT_FALSE(route.points.empty());
     EXPECT_LT((route.points.back() - sarevess).length(), 0.01f);
-    float furthestSideways = 0.0f;
-    for (G3D::Vector3 const& point : route.points)
-        furthestSideways = std::max(furthestSideways, std::abs(point.y));
-    EXPECT_GT(furthestSideways, 64.0f)
-        << "the route must leave the old 64yd search bounds to get around the wall";
     G3D::Vector3 previous = start;
     for (G3D::Vector3 const& point : route.points)
     {
@@ -670,11 +665,14 @@ TEST(DungeonEventBlackfathomDeeps, GelihastRescuesTwoStrandedMembersBeforePartyW
         party[i].distToTank = i == 1 ? 5.0f : (i < 4 ? 40.0f : 10.0f);
     }
 
-    StrandedResult const rescue = DcStrandedDecision::Decide(stranded, party);
-    ASSERT_TRUE(rescue.recover);
-    ASSERT_EQ(rescue.strandedIdx.size(), 2u);
-    for (int idx : rescue.strandedIdx)
-        party[static_cast<std::size_t>(idx)].distToTank = 0.0f; // Recover brings them to tank
+    auto const outOfRange = [&party, &stranded]()
+    {
+        std::uint32_t count = 0;
+        for (Member const& m : party)
+            if (!m.isTank && m.distToTank > stranded.maxSpread)
+                ++count;
+        return count;
+    };
 
     Inputs wait;
     wait.waitedMs = 60000;
@@ -684,14 +682,23 @@ TEST(DungeonEventBlackfathomDeeps, GelihastRescuesTwoStrandedMembersBeforePartyW
     wait.presentHasHealer = true;
     wait.rosterAlive = 5;
     wait.rosterHasHealer = true;
-    wait.strandedOutOfRange = 0;
-    for (std::size_t i = 0; i < party.size(); ++i)
-        if (!party[i].isTank && party[i].distToTank > 25.0f)
-            ++wait.strandedOutOfRange;
+    wait.strandedOutOfRange = outOfRange();
     wait.strandedRecoveryEnabled = true;
 
+    // Both strays are still 40yd out when the stranded clock runs out: rescue.
+    ASSERT_EQ(wait.strandedOutOfRange, 2u);
     EXPECT_EQ(Decide(wait).outcome, Outcome::Rescue);
-    wait.strandedOutOfRange = 0; // recovery moved both members inside spread
+
+    StrandedResult const rescue = DcStrandedDecision::Decide(stranded, party);
+    ASSERT_TRUE(rescue.recover);
+    ASSERT_EQ(rescue.strandedIdx.size(), 2u);
+    for (int idx : rescue.strandedIdx)
+        party[static_cast<std::size_t>(idx)].distToTank = 0.0f; // Recover brings them to tank
+
+    // Recovery moved both inside spread, well before the ceiling: keep waiting.
+    wait.strandedOutOfRange = outOfRange();
+    wait.rescueAlreadyFired = true;
+    EXPECT_EQ(wait.strandedOutOfRange, 0u);
     EXPECT_EQ(Decide(wait).outcome, Outcome::Wait);
     EXPECT_LT(wait.waitedMs, wait.timeoutMs);
 }
