@@ -51,6 +51,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -779,7 +780,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
 
 // Between-pulls rest: yield so food/drink can run and stragglers catch up.
 // The multiplier suppresses wander actions during the wait.
-DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& st)
 {
     // From the context, NOT st.appr: this gate runs in the PRE-ROUTE part of the
     // ladder, well before Execute fills st.appr, so st.appr is still null here
@@ -900,12 +901,42 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     DcPartyWaitDecision::Inputs waitIn;
     waitIn.waitedMs = getMSTimeDiff(appr.partyNotReadySinceMs, nowMs);
     waitIn.timeoutMs = DcSettings::GetUInt(bot, "PartyWaitTimeoutSecs") * 1000;
+    waitIn.strandedTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
     waitIn.presentAlive = presence.presentAlive;
     waitIn.presentHasHealer = presence.presentHasHealer;
     waitIn.rosterAlive = presence.rosterAlive;
     waitIn.rosterHasHealer = presence.rosterHasHealer;
+    // How many living bot members on the leader's map are out of spread of the
+    // tank - the strays the stranded rescue can teleport. And whether the
+    // operator has opted into teleporting members at all.
+    waitIn.strandedOutOfRange =
+        DcPartyState::OutOfRangeMemberCount(bot, gate.maxSpread, gate.anchor, gate.maxTankGap);
+    waitIn.strandedRecoveryEnabled = DcSettings::GetBool(bot, "StrandedRecovery");
+    // The rescue record lives beside the timeout memory, outside the approach
+    // state that DisableDungeonClear wipes. See DcPartyWaitDecision::TimeoutMemory.
+    auto& memory = botAI->GetAiObjectContext()
+                       ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
+    uint32 const bossEntry = st.next ? st.next->entry : 0;
+    waitIn.rescueAlreadyFired =
+        DcPartyWaitDecision::RescueFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
 
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
+
+    // RESCUE before stopping: teleport the stranded members to the tank,
+    // re-anchor the camp, and keep waiting. Once per wait, and the wait clock
+    // keeps running, so a rescue that does not bring them in still ends at the
+    // ceiling instead of rescuing forever.
+    if (verdict.outcome == DcPartyWaitDecision::Outcome::Rescue)
+    {
+        DcPartyWaitDecision::RecordRescue(memory, bossEntry, appr.partyNotReadySinceMs);
+        DcStrandedRecovery::Recover(bot);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] between-pulls wait rescuing {} stranded out-of-range "
+                 "member(s) after {}ms (once this wait)",
+                 bot->GetName(), waitIn.strandedOutOfRange, waitIn.waitedMs);
+        return Step::ReturnFalse;
+    }
+
     if (verdict.outcome == DcPartyWaitDecision::Outcome::EndRun)
     {
         std::string stopReason;
@@ -921,9 +952,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                 break;
             case DcPartyWaitDecision::Reason::Timeout:
             default:
-                stopReason = "Dungeon clear stopped: the party never became ready after " +
-                             std::to_string(waitIn.waitedMs / 1000) + "s" +
-                             (why.empty() ? "." : (" (" + why + ")."));
+                stopReason = DcPartyWaitDecision::RecordTimeout(
+                    memory, bossEntry, st.next ? st.next->name : std::string(),
+                    waitIn.waitedMs / 1000, why);
                 break;
         }
         LOG_INFO("playerbots.dungeonclear",
