@@ -298,14 +298,18 @@ namespace DcDefiasGunpowder
 
     // WHAT A FULL-BAGGED OPENER THROWS AWAY. One item in its backpack or a
     // general-purpose bag (a slot the gunpowder could take once it is empty;
-    // an ammo pouch, quiver or soul bag slot cannot hold it). Only junk a
-    // player would drop without a second thought: poor (grey) or common
-    // (white) quality, a vendor price above zero (a hearthstone, quest
-    // pickup or bound token sells for nothing), not a quest item, key or
-    // container, and not an item that starts a quest. Grey goes before
-    // white, then the lowest vendor value of the whole stack, ties to the
-    // earlier slot.
-    constexpr std::uint32_t ITEM_QUALITY_NORMAL_   = 1;
+    // an ammo pouch, quiver or soul bag slot cannot hold it). Only vendor
+    // trash: poor (grey) quality with a vendor price above zero (a
+    // hearthstone, quest pickup or bound token sells for nothing), not a
+    // quest item, key or container, and not an item that starts a quest.
+    // Common (white) items are never thrown away: white covers the trade
+    // goods and reagents crafters keep (cloth, herbs, ore, dyes), the
+    // reagents spells use, the hunter's ammo, food and water, and the
+    // profession tools (a mining pick, a skinning knife, a blacksmith hammer,
+    // thieves' tools). A party with no grey to spare keeps the old report.
+    // The lowest vendor value of the whole stack goes, ties to the earlier
+    // slot.
+    constexpr std::uint32_t ITEM_QUALITY_POOR_     = 0;
     constexpr std::uint32_t ITEM_CLASS_CONTAINER_  = 1;
     constexpr std::uint32_t ITEM_CLASS_QUEST_      = 12;
     constexpr std::uint32_t ITEM_CLASS_KEY_        = 13;
@@ -322,7 +326,7 @@ namespace DcDefiasGunpowder
 
     inline bool IsDiscardable(BagItem const& i)
     {
-        return i.inGeneralSlot && i.quality <= ITEM_QUALITY_NORMAL_ && i.sellPrice > 0 &&
+        return i.inGeneralSlot && i.quality == ITEM_QUALITY_POOR_ && i.sellPrice > 0 &&
                i.itemClass != ITEM_CLASS_QUEST_ && i.itemClass != ITEM_CLASS_KEY_ &&
                i.itemClass != ITEM_CLASS_CONTAINER_ && !i.startsQuest;
     }
@@ -342,10 +346,9 @@ namespace DcDefiasGunpowder
                 continue;
             }
             BagItem const& b = items[best];
-            bool const greyer = i.quality < b.quality;
             std::uint64_t const value = std::uint64_t(i.sellPrice) * (i.count ? i.count : 1);
             std::uint64_t const bestValue = std::uint64_t(b.sellPrice) * (b.count ? b.count : 1);
-            if (greyer || (i.quality == b.quality && value < bestValue))
+            if (value < bestValue)
                 best = static_cast<int>(k);
         }
         return best;

@@ -481,29 +481,56 @@ TEST(DcDefiasGunpowder, OnlyJunkInAGeneralSlotIsThrownAway)
 {
     // {quality, class, sellPrice, count, startsQuest, inGeneralSlot}
     BagItem const hearthstone{1, 15, 0, 1, false, true};
-    BagItem const questItem{1, 12, 5, 1, false, true};
-    BagItem const key{1, 13, 5, 1, false, true};
-    BagItem const emptyBag{1, 1, 250, 1, false, true};
-    BagItem const questStarter{1, 0, 5, 1, true, true};
+    BagItem const questItem{0, 12, 5, 1, false, true};
+    BagItem const key{0, 13, 5, 1, false, true};
+    BagItem const emptyBag{0, 1, 250, 1, false, true};
+    BagItem const questStarter{0, 0, 5, 1, true, true};
+    BagItem const greyNoPrice{0, 15, 0, 1, false, true};
     BagItem const greenItem{2, 2, 5, 1, false, true};
     BagItem const inAmmoPouch{0, 6, 1, 200, false, false};
-    for (BagItem const& b : {hearthstone, questItem, key, emptyBag, questStarter, greenItem,
-                             inAmmoPouch})
+    for (BagItem const& b : {hearthstone, questItem, key, emptyBag, questStarter, greyNoPrice,
+                             greenItem, inAmmoPouch})
         EXPECT_FALSE(IsDiscardable(b));
     BagItem const keepAll[] = {hearthstone, questItem, greenItem, inAmmoPouch};
     EXPECT_EQ(PickDiscard(keepAll, 4), -1);
     EXPECT_EQ(PickDiscard(nullptr, 3), -1);
 
-    // Grey goes before white, then the cheapest whole stack, ties to the earlier slot.
-    BagItem const whiteCheap{1, 2, 1, 1, false, true};
+    // The cheapest whole grey stack goes, ties to the earlier slot.
     BagItem const greyDear{0, 4, 900, 1, false, true};
-    BagItem const meatStack{1, 7, 5, 4, false, true};    // 20 copper in all
-    BagItem const boots{1, 4, 6, 1, false, true};        // 6 copper
-    BagItem const boots2{1, 4, 6, 1, false, true};
-    BagItem const bags[] = {hearthstone, whiteCheap, greyDear};
-    EXPECT_EQ(PickDiscard(bags, 3), 2);
-    BagItem const whites[] = {hearthstone, meatStack, boots, boots2};
-    EXPECT_EQ(PickDiscard(whites, 4), 2);
+    BagItem const greyStack{0, 15, 5, 4, false, true};  // 20 copper in all
+    BagItem const greyBoots{0, 4, 6, 1, false, true};   // 6 copper
+    BagItem const greyBoots2{0, 4, 6, 1, false, true};
+    BagItem const greys[] = {hearthstone, greyDear, greyStack, greyBoots, greyBoots2};
+    EXPECT_EQ(PickDiscard(greys, 5), 3);
+}
+
+// mod-dungeon-clear#85 review: white (common) items are never junk. White is
+// where the trade goods and reagents crafters keep live (linen cloth, herbs,
+// ore, dyes), the reagents spells use, the hunter's ammo in a backpack,
+// food and water, and the profession tools (a mining pick, a skinning knife,
+// a blacksmith hammer and thieves' tools are all white and sell for copper).
+// A full bag of whites with no grey keeps the old NoEligibleOpener report.
+TEST(DcDefiasGunpowder, WhiteItemsAreNeverThrownAway)
+{
+    // {quality, class, sellPrice, count, startsQuest, inGeneralSlot}
+    BagItem const linenCloth{1, 7, 13, 20, false, true};    // trade goods
+    BagItem const peacebloom{1, 7, 5, 10, false, true};     // herb
+    BagItem const symbolOfKings{1, 5, 2, 20, false, true};  // spell reagent
+    BagItem const roughArrows{1, 6, 1, 200, false, true};   // ammo in the backpack
+    BagItem const bakedBread{1, 0, 1, 5, false, true};      // food
+    BagItem const miningPick{1, 2, 16, 1, false, true};     // profession tool
+    BagItem const thievesTools{1, 7, 25, 1, false, true};   // rogue's lockpicks
+    BagItem const whiteShirt{1, 4, 1, 1, false, true};
+    for (BagItem const& b : {linenCloth, peacebloom, symbolOfKings, roughArrows, bakedBread,
+                             miningPick, thievesTools, whiteShirt})
+        EXPECT_FALSE(IsDiscardable(b));
+    BagItem const allWhite[] = {linenCloth, peacebloom, symbolOfKings, roughArrows,
+                                bakedBread, miningPick, thievesTools, whiteShirt};
+    EXPECT_EQ(PickDiscard(allWhite, 8), -1);
+    // One grey among them is the only thing that goes, however dear it is.
+    BagItem const greyDear{0, 4, 900, 1, false, true};
+    BagItem const mixed[] = {whiteShirt, linenCloth, greyDear, roughArrows};
+    EXPECT_EQ(PickDiscard(mixed, 4), 2);
 }
 
 // Someone in the party already carries it: no trip to the chest.

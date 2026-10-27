@@ -661,7 +661,22 @@ namespace
                 uint32 const count = d.item ? d.item->GetCount() : 0;
                 uint32 const copper = d.item ? d.item->GetTemplate()->SellPrice * count : 0;
                 if (d.item)
+                {
+                    // Player::DestroyItem returns nothing: read the slot back.
+                    // A slot still holding the item means the core refused it;
+                    // say so, and the step holds on this report until its
+                    // timeout instead of claiming the slot was freed.
                     actor->DestroyItem(d.bag, d.slot, true);
+                    if (actor->GetItemByPos(d.bag, d.slot) != nullptr)
+                    {
+                        LOG_WARN("playerbots.dungeonclear",
+                                 "[DC:{}] Deadmines cannon: {} could not destroy {} x{} "
+                                 "(bag {}, slot {}); the slot stays full",
+                                 bot->GetName(), actor->GetName(), name, count,
+                                 uint32(d.bag), uint32(d.slot));
+                        return ObjectiveArriveResult::Running;
+                    }
+                }
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] Deadmines cannon: running, {} ({} destroys {} x{}, worth {} copper)",
                          bot->GetName(), Describe(plan.action), actor->GetName(), name, count,
