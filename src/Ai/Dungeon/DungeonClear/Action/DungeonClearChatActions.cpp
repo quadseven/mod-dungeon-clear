@@ -14,6 +14,8 @@
 #include <vector>
 
 #include "Creature.h"
+#include "GameObject.h"
+#include "Log.h"
 #include "Group.h"
 #include "Map.h"
 #include "MotionMaster.h"
@@ -31,6 +33,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTanklessLead.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSfkSorcererGateDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -59,6 +62,30 @@ namespace
         if (!master || GET_PLAYERBOT_AI(master))
             LOG_WARN("playerbots.dungeonclear", "DC command refused for {}: {}",
                      bot ? bot->GetName() : "<unknown>", why);
+    }
+
+    // Shadowfang Keep: refuse a `dc skip` of a boss behind a shut Sorcerer's
+    // Gate (GO 18972). Skipping Nandos and then Arugal cannot get the party
+    // through the gate, and the second skip empties the boss list and switches
+    // the run off. Refused here, before any run state changes, with one logged
+    // line naming the gate (always logged, unlike DcRefuse, so the live proof
+    // can read it whoever issued the skip). The decision is
+    // DcSfkSorcererGate::RefusesSkip; a gate that is not loaded is not judged.
+    bool RefuseSkipBehindShutSorcererGate(PlayerbotAI* botAI, Player* bot, uint32 skipTargetEntry)
+    {
+        constexpr float GATE_SCAN = 250.0f;
+        uint32 const mapId = bot->GetMapId();
+        if (mapId != DcSfkSorcererGate::MAP_ID)
+            return false;
+        GameObject* gate = bot->FindNearestGameObject(DcSfkSorcererGate::GATE_ENTRY, GATE_SCAN);
+        bool const gateShut = gate && gate->GetGoState() != GO_STATE_ACTIVE;
+        if (!DcSfkSorcererGate::RefusesSkip(mapId, skipTargetEntry, gateShut))
+            return false;
+
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] dc skip refused: {}", bot->GetName(),
+                 DcSfkSorcererGate::SKIP_REFUSED_REASON);
+        botAI->TellError(DcSfkSorcererGate::SKIP_REFUSED_REASON);
+        return true;
     }
 
     bool IsAuthorized(Player* bot, Event const& event)
@@ -533,6 +560,11 @@ bool DcSkipAction::Execute(Event event)
         DcRefuse(botAI, bot, "No current boss to skip.");
         return false;
     }
+
+    // A boss behind Shadowfang Keep's shut Sorcerer's Gate cannot be skipped
+    // to: refuse before touching the skip list or the enabled flag.
+    if (RefuseSkipBehindShutSorcererGate(botAI, bot, current->entry))
+        return false;
 
     std::unordered_set<uint32>& skipped =
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();

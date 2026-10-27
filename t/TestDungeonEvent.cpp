@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -16,6 +17,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLyceumCloseUpDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPackLeashDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSfkSorcererGateDecision.h"
+#include "DcSourceScan.h"
 
 namespace
 {
@@ -1909,6 +1912,128 @@ TEST(DungeonEventConditional, ShadowfangSorcererGateVoidwalkerEventShape)
     EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
     EXPECT_EQ(e->steps[4].goEntry, 18972u);  // Sorcerer's Gate
     EXPECT_EQ(e->steps[4].wantState, 0u);    // GO_STATE_ACTIVE (open)
+}
+
+// Shadowfang Keep #34: a party that reaches the voidwalker ring after Arugal's
+// Voidwalkers despawned. The registered event's real step list is folded
+// through the real Advance: the spawn wait runs out, the Optional event ends
+// Skipped, Drive's timeout test says it was a timeout, and the event's own
+// hook decision opens the Sorcerer's Gate for the step that timed out. With
+// the gate open, Optional latches the event and the clear goes on to Nandos,
+// whose skip is no longer refused.
+TEST(DungeonEventConditional, ShadowfangSorcererGateOpensWhenVoidwalkersMissed)
+{
+    namespace G = DcSfkSorcererGate;
+    DungeonEvent const* e = DungeonEventRegistry::Find(G::MAP_ID, 3);
+    ASSERT_NE(e, nullptr);
+    ASSERT_TRUE(static_cast<bool>(e->onStepTimeout))
+        << "the voidwalker event must carry the gate-opening step-timeout hook";
+
+    DungeonEventProgress prog = Prog(3, 0, 0);
+    uint32 now = 1000;
+    // 1. The party reaches the spawn ring.
+    ASSERT_EQ(DungeonEventExecutor::Advance(*e, prog, StepResult::Done, now, 30000),
+              EventDriveOutcome::Running);
+    ASSERT_EQ(prog.stepIndex, 1u);
+    // 2. The adds are long gone: the spawn wait keeps Running until its timeout.
+    uint32 const spawnTimeout = e->steps[1].timeoutMs;
+    ASSERT_GT(spawnTimeout, 0u);
+    EXPECT_EQ(DungeonEventExecutor::Advance(*e, prog, StepResult::Running,
+                                            now + spawnTimeout - 1, 30000),
+              EventDriveOutcome::Running);
+    EventDriveOutcome const outcome = DungeonEventExecutor::Advance(
+        *e, prog, StepResult::Running, now + spawnTimeout, 30000);
+    EXPECT_EQ(outcome, EventDriveOutcome::Skipped);
+    ASSERT_TRUE(DungeonEventExecutor::IsStepTimeout(StepResult::Running, outcome));
+
+    // 3. The step Drive hands the hook is the one that timed out.
+    ASSERT_LT(prog.stepIndex, e->steps.size());
+    EventStep const& timedOut = e->steps[prog.stepIndex];
+    EXPECT_EQ(timedOut.kind, EventStepKind::WaitForSpawn);
+    EXPECT_TRUE(G::OpensOnTimeout(timedOut.kind, timedOut.creatureEntry, /*fenrusDead*/ true,
+                                  /*gateShut*/ true, /*voidwalkerAlive*/ false));
+
+    // 4. Gate open: Nandos is the next target and skipping him is not refused.
+    EXPECT_FALSE(G::RefusesSkip(G::MAP_ID, G::NANDOS, /*gateShut*/ false));
+}
+
+// The gate opens ONLY for a missed summon, never for anything else.
+TEST(DungeonEventConditional, ShadowfangSorcererGateStaysShutOtherwise)
+{
+    namespace G = DcSfkSorcererGate;
+    DungeonEvent const* e = DungeonEventRegistry::Find(G::MAP_ID, 3);
+    ASSERT_NE(e, nullptr);
+    EventStep const& wait = e->steps[1];
+    // Adds still alive: the party can still kill one and earn the gate.
+    EXPECT_FALSE(G::OpensOnTimeout(wait.kind, wait.creatureEntry, true, true, true));
+    // Fenrus alive: the summon has not even started.
+    EXPECT_FALSE(G::OpensOnTimeout(wait.kind, wait.creatureEntry, false, true, false));
+    // Gate already open: nothing to do.
+    EXPECT_FALSE(G::OpensOnTimeout(wait.kind, wait.creatureEntry, true, false, false));
+    // A later step (the sweep, the by-entry kill, the gate confirm) timing out
+    // is not a missed summon.
+    for (std::size_t i = 2; i < e->steps.size(); ++i)
+        EXPECT_FALSE(G::OpensOnTimeout(e->steps[i].kind, e->steps[i].creatureEntry, true, true,
+                                       false))
+            << "step " << i;
+    // A step that FAILED by itself (not Running into its timeout), and a
+    // non-terminal outcome, are not timeouts, so Drive never runs the hook.
+    EXPECT_FALSE(DungeonEventExecutor::IsStepTimeout(StepResult::Failed, EventDriveOutcome::Skipped));
+    EXPECT_FALSE(DungeonEventExecutor::IsStepTimeout(StepResult::Blocked, EventDriveOutcome::Stalled));
+    EXPECT_FALSE(DungeonEventExecutor::IsStepTimeout(StepResult::Running, EventDriveOutcome::Running));
+    EXPECT_TRUE(DungeonEventExecutor::IsStepTimeout(StepResult::Running, EventDriveOutcome::Stalled));
+    EXPECT_TRUE(DungeonEventExecutor::IsStepTimeout(StepResult::Running, EventDriveOutcome::Aborted));
+}
+
+// Drive runs the hook only on a real timeout, and only with the step that ran.
+TEST(DungeonEventConditional, DriveRunsStepTimeoutHookOnlyOnTimeout)
+{
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.cpp"));
+    auto const at = src.find("ev.onStepTimeout(bot, context, active)");
+    ASSERT_NE(at, std::string::npos) << "Drive must call the event's step-timeout hook";
+    auto const lineStart = src.rfind("if (", at);
+    ASSERT_NE(lineStart, std::string::npos);
+    EXPECT_NE(src.substr(lineStart, at - lineStart).find("IsStepTimeout(result, outcome)"),
+              std::string::npos)
+        << "the hook must be gated on a real step timeout";
+}
+
+// Sorcerer's Gate shut: `dc skip` of either boss behind it is refused with one
+// reason naming GO 18972, before the skip list or the enabled flag change, so
+// the run is not switched off while Nandos and Arugal remain.
+TEST(DungeonEventConditional, DcSkipRefusedWhileSorcererGateShut)
+{
+    namespace G = DcSfkSorcererGate;
+    EXPECT_TRUE(G::RefusesSkip(G::MAP_ID, G::NANDOS, /*gateShut*/ true));
+    EXPECT_TRUE(G::RefusesSkip(G::MAP_ID, G::ARUGAL, /*gateShut*/ true));
+    // Bosses in front of the gate, other maps, and an open gate are not judged.
+    EXPECT_FALSE(G::RefusesSkip(G::MAP_ID, G::FENRUS, true));
+    EXPECT_FALSE(G::RefusesSkip(36, G::NANDOS, true));
+    EXPECT_FALSE(G::RefusesSkip(G::MAP_ID, G::ARUGAL, false));
+    EXPECT_NE(std::string(G::SKIP_REFUSED_REASON).find("GO 18972"), std::string::npos);
+    EXPECT_NE(std::string(G::OPENED_ON_TIMEOUT_LOG).find("GO 18972"), std::string::npos);
+
+    // DcSkipAction consults the decision before it records the skip or can
+    // clear the enabled flag.
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Action/DungeonClearChatActions.cpp"));
+    auto const body = src.find("bool DcSkipAction::Execute(");
+    ASSERT_NE(body, std::string::npos);
+    auto const refuse = src.find("RefuseSkipBehindShutSorcererGate(botAI, bot, current->entry)", body);
+    auto const record = src.find("skipped.insert(current->entry)", body);
+    auto const disable = src.find("enabled = false", body);
+    ASSERT_NE(refuse, std::string::npos) << "dc skip must consult the Sorcerer's Gate refusal";
+    ASSERT_NE(record, std::string::npos);
+    ASSERT_NE(disable, std::string::npos);
+    EXPECT_LT(refuse, record);
+    EXPECT_LT(refuse, disable);
+    auto const helper = src.find("bool RefuseSkipBehindShutSorcererGate(");
+    ASSERT_NE(helper, std::string::npos);
+    auto const helperEnd = src.find("return true;", helper);
+    std::string const helperBody = src.substr(helper, helperEnd - helper);
+    EXPECT_NE(helperBody.find("DcSfkSorcererGate::RefusesSkip("), std::string::npos);
+    EXPECT_NE(helperBody.find("LOG_INFO("), std::string::npos);
 }
 
 // The synthetic latch key is pure, injective, and lives in a high range that
