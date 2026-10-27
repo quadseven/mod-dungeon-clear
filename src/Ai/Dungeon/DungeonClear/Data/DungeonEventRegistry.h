@@ -433,6 +433,10 @@ enum class EventActivation : uint8
     Conditional,  // fired by a predicate (condition) each tick
 };
 
+// Called when a step's TIMEOUT (not a step's own Failed/Blocked) ends the
+// event, with the step that ran out of time. See DungeonEvent::onStepTimeout.
+using EventStepTimeoutHook = std::function<void(Player*, AiObjectContext*, EventStep const&)>;
+
 struct DungeonEvent
 {
     uint32 mapId{0};
@@ -459,6 +463,16 @@ struct DungeonEvent
     // A failed required event can end the run when human intervention cannot
     // make the automated party progress (Deadmines cannon).
     bool abortOnFailure{false};
+
+    // Optional. Run once by DungeonEventExecutor::Drive when a step's timeout
+    // (or the no-progress backstop) ends the event as Skipped, Stalled or
+    // Aborted, with the step that timed out. Never run on a step that itself
+    // returned Failed or Blocked, and never on `dc skip`. For a set-piece whose
+    // missed trigger leaves the world in a state no later step can recover
+    // (Shadowfang Keep's Sorcerer's Gate, see ShadowfangKeepEvents.cpp); the
+    // hook decides from the step and the live world whether to act, and must be
+    // idempotent (a Stalled event can time out again on a later drive).
+    EventStepTimeoutHook onStepTimeout{};
 
     // Conditional events only. A normal conditional event latches DONE the moment
     // its step list completes (DcRunEventAction inserts its ConditionalLatchKey),
@@ -660,6 +674,8 @@ public:
     EventBuilder& Conditional(EventCondition condition);
     EventBuilder& Optional();
     EventBuilder& AbortOnFailure();
+    // Run `hook` once when a step timeout ends the event (DungeonEvent::onStepTimeout).
+    EventBuilder& OnStepTimeout(EventStepTimeoutHook hook);
     EventBuilder& Repeatable();
     EventBuilder& Persistent();
     // Complete the whole event as soon as `goEntry` reads `wantState` (see

@@ -1741,9 +1741,7 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // still running"; a step that itself returned Failed is not a timeout and
     // must not be reported as one.
     else if (bot && active.timeoutRetries > 0 && !prog.timeoutFailLogged &&
-             result == StepResult::Running &&
-             (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped ||
-              outcome == EventDriveOutcome::Aborted))
+             IsStepTimeout(result, outcome))
     {
         prog.timeoutFailLogged = true;
         LOG_INFO("playerbots.dungeonclear",
@@ -1751,6 +1749,13 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
                  bot->GetName(), ev.name, stepBefore, static_cast<uint32>(active.kind),
                  prog.timeoutRewinds);
     }
+
+    // The event's own timeout hook (DungeonEvent::onStepTimeout): only for a
+    // real timeout, never for a step that failed by itself. Skipped latches the
+    // event, so an Optional event's hook runs once; a Stalled event can be
+    // driven again while it waits for the human, so hooks must be idempotent.
+    if (bot && ev.onStepTimeout && IsStepTimeout(result, outcome))
+        ev.onStepTimeout(bot, context, active);
 
     return outcome;
 }

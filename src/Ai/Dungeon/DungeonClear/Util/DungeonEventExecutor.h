@@ -175,6 +175,19 @@ public:
     static EventDriveOutcome Advance(DungeonEvent const& ev, DungeonEventProgress& prog,
                                      StepResult result, uint32 nowMs, uint32 defaultTimeoutMs);
 
+    // PURE: did a TIMEOUT end the event this tick? `stepResult` is the step's
+    // own RunStep result and `outcome` is what Advance made of it. A step still
+    // Running that Advance turned terminal was failed by its timeout (or the
+    // no-progress backstop); a step that returned Failed or Blocked itself was
+    // not. Drive uses it to run DungeonEvent::onStepTimeout and to log a spent
+    // retry budget, so both agree on what counts as a timeout.
+    static bool IsStepTimeout(StepResult stepResult, EventDriveOutcome outcome)
+    {
+        return stepResult == StepResult::Running &&
+               (outcome == EventDriveOutcome::Stalled || outcome == EventDriveOutcome::Skipped ||
+                outcome == EventDriveOutcome::Aborted);
+    }
+
     // PURE: true exactly once per attempt at the current step (a fresh
     // (stepIndex, stepStartMs) pair), and records it. Drive uses it to clear a
     // Custom hook's "last reported reason" before the hook runs, so the reason

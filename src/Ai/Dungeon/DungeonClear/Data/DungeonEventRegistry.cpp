@@ -46,6 +46,12 @@ EventBuilder& EventBuilder::Optional()
     return *this;
 }
 
+EventBuilder& EventBuilder::OnStepTimeout(EventStepTimeoutHook hook)
+{
+    _ev.onStepTimeout = std::move(hook);
+    return *this;
+}
+
 EventBuilder& EventBuilder::AbortOnFailure()
 {
     _ev.abortOnFailure = true;

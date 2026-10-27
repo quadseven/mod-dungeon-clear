@@ -12,6 +12,7 @@
 #include "Playerbots.h"
 #include "SharedDefines.h"
 #include "Timer.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSfkSorcererGateDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
 #include <atomic>
@@ -71,10 +72,11 @@ namespace
     bool SfkCourtyardAlliance(Player* bot, AiObjectContext* context);
     bool SfkCourtyardHorde(Player* bot, AiObjectContext* context);
     bool SfkSorcererGate(Player* bot, AiObjectContext* context);
+    void SfkSorcererGateOnStepTimeout(Player* bot, AiObjectContext* context, EventStep const& step);
 
-    constexpr uint32 SFK_SORCERER_GATE = 18972;
-    constexpr uint32 SFK_FENRUS = 4274;
-    constexpr uint32 SFK_VOIDWALKER = 4627;
+    constexpr uint32 SFK_SORCERER_GATE = DcSfkSorcererGate::GATE_ENTRY;  // 18972
+    constexpr uint32 SFK_FENRUS = DcSfkSorcererGate::FENRUS;             // 4274
+    constexpr uint32 SFK_VOIDWALKER = DcSfkSorcererGate::VOIDWALKER;     // 4627
 
     // Centroid of the four creature_summon_groups spawn points (summonerId 4275,
     // groupId 1) — every one of them is 7.4-7.8yd from here, so the sweep below
@@ -95,9 +97,11 @@ namespace
     // The summon lands 6s after Fenrus dies; 45s is a wide margin on that and
     // still expires INSIDE the 60s out-of-combat despawn, so a wipe-and-return
     // (adds long gone, gate shut forever) fails the step promptly instead of
-    // parking the party in an empty room for minutes. Optional() then degrades
-    // it to the ordinary door-blocked pause, which auto-resumes via
-    // DungeonClearDoorReopenedTrigger if a human opens the gate.
+    // parking the party in an empty room for minutes. That timeout means the
+    // summon was missed (the adds came and went, or a wipe burned the despawn),
+    // so the event's step-timeout hook opens the gate itself (see
+    // SfkSorcererGateOnStepTimeout); Optional() then lets the clear go on to
+    // Nandos through it.
     constexpr uint32 SFK_VOIDWALKER_SPAWN_TIMEOUT = 45000;
     // Four level-20 adds; generous but bounded.
     constexpr uint32 SFK_VOIDWALKER_FIGHT_TIMEOUT = 180000;
@@ -209,11 +213,15 @@ void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out)
                       //    the party into a shut gate and calling it navigation.
                       .WaitForGOState(SFK_SORCERER_GATE, /*GO_STATE_ACTIVE*/ 0,
                                       SFK_SORCERER_GATE_TIMEOUT)
-                      // Degrade, don't stall: if the adds are gone (a wipe burned
-                      // the 60s despawn) no amount of waiting brings them back, so
-                      // fall through to the door-blocked pause and let the human
-                      // open the gate — that pause auto-resumes the run the
-                      // instant it opens.
+                      // Degrade, don't stall: if the adds are gone (the party
+                      // reached the ring after the 60s despawn, or a wipe burned
+                      // it) no amount of waiting brings them back. The spawn
+                      // wait's timeout opens the gate (OnStepTimeout below), and
+                      // Optional lets the clear advance to Nandos through it. If
+                      // the hook cannot open it the ordinary door-blocked pause
+                      // still holds, and `dc skip` refuses to skip the bosses
+                      // behind a shut gate (DcSfkSorcererGate::RefusesSkip).
+                      .OnStepTimeout(&SfkSorcererGateOnStepTimeout)
                       .Optional()
                       .Build());
 }
@@ -308,5 +316,40 @@ namespace
         if (!gate || gate->GetGoState() != GO_STATE_READY)
             return false;  // not in the room yet, or the gate is already open
         return DcTargeting::FindLiveCreatureOnMap(bot, SFK_FENRUS) == nullptr;
+    }
+
+    // --- Sorcerer's Gate step-timeout hook ---------------------------------
+    // Run by DungeonEventExecutor::Drive when a step of the voidwalker event
+    // times out. Only the spawn wait timing out means the summon was missed;
+    // DcSfkSorcererGate::OpensOnTimeout decides, and this applies it to the
+    // world. Opening the gate for a dead Fenrus is the state the instance
+    // script itself restores when the gate GO is created again, and the same
+    // Set GO State the voidwalker's own death would have done.
+    void SfkSorcererGateOnStepTimeout(Player* bot, AiObjectContext* /*context*/,
+                                      EventStep const& step)
+    {
+        if (!bot)
+            return;
+        GameObject* gate = bot->FindNearestGameObject(SFK_SORCERER_GATE, SFK_VOIDWALKER_SCAN);
+        bool const gateShut = gate && gate->GetGoState() != GO_STATE_ACTIVE;
+        bool const fenrusDead = DcTargeting::FindLiveCreatureOnMap(bot, SFK_FENRUS) == nullptr;
+        bool const voidwalkerAlive =
+            bot->FindNearestCreature(SFK_VOIDWALKER, SFK_VOIDWALKER_SCAN, /*alive*/ true) != nullptr;
+
+        if (!DcSfkSorcererGate::OpensOnTimeout(step.kind, step.creatureEntry, fenrusDead, gateShut,
+                                               voidwalkerAlive))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] SFK Sorcerer's Gate (GO 18972) left as is after step kind {} timed out: "
+                     "gate={} fenrus={} voidwalker={}",
+                     bot->GetName(), static_cast<uint32>(step.kind),
+                     !gate ? "missing" : (gateShut ? "shut" : "open"),
+                     fenrusDead ? "dead" : "alive", voidwalkerAlive ? "alive" : "none");
+            return;
+        }
+
+        gate->SetGoState(GO_STATE_ACTIVE);
+        LOG_INFO("playerbots.dungeonclear", "[DC:{}] {}", bot->GetName(),
+                 DcSfkSorcererGate::OPENED_ON_TIMEOUT_LOG);
     }
 }
