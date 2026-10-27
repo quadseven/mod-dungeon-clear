@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -656,8 +655,9 @@ namespace
                 if (!context || !DmReportChanged(context, plan.action))
                     return ObjectiveArriveResult::Running;
                 DmDiscard const d = DmFindDiscard(actor);
-                std::string const name =
-                    d.item ? d.item->GetTemplate()->Name1 : std::string("nothing");
+                // The item is logged by its template entry (static game data),
+                // not by name: enough to look it up in item_template.
+                uint32 const entry = d.item ? d.item->GetEntry() : 0;
                 uint32 const count = d.item ? d.item->GetCount() : 0;
                 uint32 const copper = d.item ? d.item->GetTemplate()->SellPrice * count : 0;
                 if (d.item)
@@ -670,16 +670,16 @@ namespace
                     if (actor->GetItemByPos(d.bag, d.slot) != nullptr)
                     {
                         LOG_WARN("playerbots.dungeonclear",
-                                 "[DC:{}] Deadmines cannon: {} could not destroy {} x{} "
+                                 "[DC:{}] Deadmines cannon: {} could not destroy grey item {} x{} "
                                  "(bag {}, slot {}); the slot stays full",
-                                 bot->GetName(), actor->GetName(), name, count,
+                                 bot->GetName(), actor->GetName(), entry, count,
                                  uint32(d.bag), uint32(d.slot));
                         return ObjectiveArriveResult::Running;
                     }
                 }
                 LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] Deadmines cannon: running, {} ({} destroys {} x{}, worth {} copper)",
-                         bot->GetName(), Describe(plan.action), actor->GetName(), name, count,
+                         "[DC:{}] Deadmines cannon: running, {} ({} destroys grey item {} x{}, worth {} copper)",
+                         bot->GetName(), Describe(plan.action), actor->GetName(), entry, count,
                          copper);
                 return ObjectiveArriveResult::Running;
             }
