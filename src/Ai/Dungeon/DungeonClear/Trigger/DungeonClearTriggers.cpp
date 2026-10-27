@@ -1103,9 +1103,27 @@ bool DungeonClearPullTrigger::IsActive()
     // a PULL-BACK boss: the pull pipeline is the ONLY thing that may engage him,
     // because the walk-in engage would go to where he stands — which for Ghaz'an is
     // the middle of a lake.
-    if (DcTickMemoAccess::AtBossEngage(bot, context, *next) &&
-        !DcTargeting::IsRoomClearActive(bot, context) && !pullback)
-        return false;
+    //
+    // The room-clear exception ends when the at-boss valve opens past the room
+    // trash: from then on the engage (30) must get the tick this rung (35) would
+    // otherwise keep taking. The valve is asked only where it can change the
+    // answer, so the common at-boss tick pays nothing new. See
+    // DcAtBossGate::PullStandsDownAtBoss.
+    if (DcTickMemoAccess::AtBossEngage(bot, context, *next))
+    {
+        bool const roomClear = DcTargeting::IsRoomClearActive(bot, context);
+        bool const valveOpen = roomClear && !pullback &&
+                               DcAtBoss::Evaluate(bot, botAI, context, *next).valveOpen;
+        if (DcAtBossGate::PullStandsDownAtBoss(/*atBossEngage*/ true, roomClear, pullback,
+                                               valveOpen))
+        {
+            if (valveOpen)
+                DC_PULL_DEBUG("[DC:{}] pull trigger: at-boss valve open at {} -> the "
+                              "room clear stands down for the boss engage",
+                              bot->GetName(), next->name);
+            return false;
+        }
+    }
     if (!IsBetweenPullsReady(bot, context))
         return false;
 

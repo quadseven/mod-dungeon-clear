@@ -39,6 +39,14 @@ namespace DcAtBossGate
         return losBlocked && shutDoorsOnChord > eventGatesOnChord;
     }
 
+    bool PullStandsDownAtBoss(bool atBossEngage, bool roomClearActive, bool pullbackBoss,
+                              bool atBossValveOpen)
+    {
+        if (!atBossEngage || pullbackBoss)
+            return false;
+        return !roomClearActive || atBossValveOpen;
+    }
+
     Gate FirstClosed(Inputs const& in)
     {
         if (!in.driving)
