@@ -110,6 +110,8 @@ namespace DcDefiasGunpowder
                                             // healer, so it can be sent to the chest
         bool    openingAttempted = false;   // ReopenAttempted(): a reopen this attempt
                                             // still left the gunpowder in the chest
+        bool    openerMustDiscard = false;  // the opener's bags are full, and it frees
+                                            // one slot first (PickOpener's second pass)
     };
 
     enum class Action : std::uint8_t
@@ -141,6 +143,10 @@ namespace DcDefiasGunpowder
         CarrierDead,  // the Defias Gunpowder is on a dead carrier and the chest is
                       // spent: nobody can loot another one, so the step holds on a
                       // named report until they are back on their feet (a report)
+        // Appended, so the report codes of the actions above do not move.
+        DiscardForRoom,  // every bag that could take the gunpowder is full: the
+                         // opener destroys its cheapest junk item (PickDiscard) the
+                         // way a player would, then opens the chest
     };
 
     struct Plan
@@ -198,6 +204,10 @@ namespace DcDefiasGunpowder
         // up to it only to say so there (mod-dungeon-clear#36).
         if (!in.hasOpeningSpell)
             return {Action::NoOpeningSpell, GO_GUNPOWDER};
+        // Full bags: free one slot before the walk, so the gunpowder has
+        // somewhere to go when the loot window opens (mod-dungeon-clear#36).
+        if (in.openerMustDiscard)
+            return {Action::DiscardForRoom, GO_GUNPOWDER};
         if (in.botToChest > CHEST_REACH)
             return {Action::WalkToChest, GO_GUNPOWDER};
         // An Opened chest has had its window closed on the gunpowder (see the
@@ -217,6 +227,8 @@ namespace DcDefiasGunpowder
         bool         isHealer = false;  // sending one leaves the party without healing
         bool         knowsOpening = true;  // knows a spell that opens the chest's lock
                                            // (the generic Opening, 3365, on lock 57)
+        bool         canDiscard = false;   // its full bags hold a junk item it can
+                                           // destroy to make room (PickDiscard)
     };
 
     // A member who could go to the chest: out of combat, not a healer, bags
@@ -243,6 +255,20 @@ namespace DcDefiasGunpowder
     // one, walked to the chest, reported NoOpeningSpell until the event failed,
     // and the guild run sat at 3 of 7 bosses until its cap, while a party
     // member with the generic Opening spell stood by.
+    //
+    // A party whose bags are all full is not stuck either (mod-dungeon-clear#36):
+    // on the realm three guild runs in one day sat at the cannon on "no
+    // out-of-combat non-healer can open the Defias Gunpowder chest" until their
+    // cap, every non-healer's general bags full. When nobody with room can go,
+    // a second pass picks an out-of-combat non-healer that knows an Opening
+    // spell and holds a junk item it can destroy (CanOpenAfterDiscard), the
+    // hook's own bot first, then the earliest member. The step has it discard
+    // the item first (DiscardForRoom), as a player with full bags would.
+    inline bool CanOpenAfterDiscard(Looter const& l)
+    {
+        return !l.inCombat && !l.isHealer && !l.canStore && l.canDiscard && l.knowsOpening;
+    }
+
     inline int PickOpener(Looter const* looters, std::size_t n)
     {
         if (!looters || n == 0)
@@ -254,6 +280,77 @@ namespace DcDefiasGunpowder
             if (CanOpen(looters[i]) &&
                 (best < 0 || looters[i].bagSpace < looters[best].bagSpace))
                 best = static_cast<int>(i);
+        if (best >= 0)
+            return best;
+        for (std::size_t i = 0; i < n; ++i)
+            if (CanOpenAfterDiscard(looters[i]))
+                return static_cast<int>(i);
+        return -1;
+    }
+
+    // Does the picked opener have to free a bag slot first? Only when it came
+    // from PickOpener's second pass: its bags cannot hold the gunpowder.
+    inline bool MustDiscard(Looter const* looters, std::size_t n, int picked)
+    {
+        return looters && picked >= 0 && static_cast<std::size_t>(picked) < n &&
+               !looters[picked].canStore;
+    }
+
+    // WHAT A FULL-BAGGED OPENER THROWS AWAY. One item in its backpack or a
+    // general-purpose bag (a slot the gunpowder could take once it is empty;
+    // an ammo pouch, quiver or soul bag slot cannot hold it). Only vendor
+    // trash: poor (grey) quality with a vendor price above zero (a
+    // hearthstone, quest pickup or bound token sells for nothing), not a
+    // quest item, key or container, and not an item that starts a quest.
+    // Common (white) items are never thrown away: white covers the trade
+    // goods and reagents crafters keep (cloth, herbs, ore, dyes), the
+    // reagents spells use, the hunter's ammo, food and water, and the
+    // profession tools (a mining pick, a skinning knife, a blacksmith hammer,
+    // thieves' tools). A party with no grey to spare keeps the old report.
+    // The lowest vendor value of the whole stack goes, ties to the earlier
+    // slot.
+    constexpr std::uint32_t ITEM_QUALITY_POOR_     = 0;
+    constexpr std::uint32_t ITEM_CLASS_CONTAINER_  = 1;
+    constexpr std::uint32_t ITEM_CLASS_QUEST_      = 12;
+    constexpr std::uint32_t ITEM_CLASS_KEY_        = 13;
+
+    struct BagItem
+    {
+        std::uint32_t quality = 0;
+        std::uint32_t itemClass = 0;
+        std::uint32_t sellPrice = 0;    // copper, one item
+        std::uint32_t count = 1;        // stack size
+        bool          startsQuest = false;
+        bool          inGeneralSlot = true;  // backpack, or a general-purpose bag
+    };
+
+    inline bool IsDiscardable(BagItem const& i)
+    {
+        return i.inGeneralSlot && i.quality == ITEM_QUALITY_POOR_ && i.sellPrice > 0 &&
+               i.itemClass != ITEM_CLASS_QUEST_ && i.itemClass != ITEM_CLASS_KEY_ &&
+               i.itemClass != ITEM_CLASS_CONTAINER_ && !i.startsQuest;
+    }
+
+    // The index of the item to destroy, or -1 when nothing is junk.
+    inline int PickDiscard(BagItem const* items, std::size_t n)
+    {
+        int best = -1;
+        for (std::size_t k = 0; items && k < n; ++k)
+        {
+            BagItem const& i = items[k];
+            if (!IsDiscardable(i))
+                continue;
+            if (best < 0)
+            {
+                best = static_cast<int>(k);
+                continue;
+            }
+            BagItem const& b = items[best];
+            std::uint64_t const value = std::uint64_t(i.sellPrice) * (i.count ? i.count : 1);
+            std::uint64_t const bestValue = std::uint64_t(b.sellPrice) * (b.count ? b.count : 1);
+            if (value < bestValue)
+                best = static_cast<int>(k);
+        }
         return best;
     }
 
@@ -306,7 +403,7 @@ namespace DcDefiasGunpowder
                                                         // ReopenChest started no cast
     constexpr std::uint8_t REPORT_CAST_AGAIN   = 0x80;  // UseOnCannon again: the last use's
                                                         // cast ended with the door still shut
-    static_assert(static_cast<std::uint8_t>(Action::CarrierDead) + 1 <= REPORT_ACTION_MASK,
+    static_assert(static_cast<std::uint8_t>(Action::DiscardForRoom) + 1 <= REPORT_ACTION_MASK,
                   "every action's report code must fit under REPORT_ACTION_MASK");
 
     inline std::uint8_t ReportCode(Action a, bool castRefused, std::uint8_t last)
@@ -373,6 +470,7 @@ namespace DcDefiasGunpowder
             case Action::NoBagRoom:      return "no party bot has room in its bags for the Defias Gunpowder";
             case Action::NoEligibleOpener: return "no out-of-combat non-healer can open the Defias Gunpowder chest";
             case Action::CarrierDead: return "the Defias Gunpowder is on a dead carrier; the step resumes when they are back on their feet";
+            case Action::DiscardForRoom: return "every bag is full: the opener destroys its cheapest junk item to make room for the Defias Gunpowder";
         }
         return "?";
     }
