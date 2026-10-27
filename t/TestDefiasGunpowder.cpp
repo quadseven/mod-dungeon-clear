@@ -421,6 +421,91 @@ TEST(DcDefiasGunpowder, NobodyWhoCanOpenTheChestIsAReportNotAWalk)
     EXPECT_EQ(Decide(in).action, Action::NoEligibleOpener);
 }
 
+// mod-dungeon-clear#36, live 2026-10-27: three guild runs in one day sat at
+// the cannon on "no out-of-combat non-healer can open the Defias Gunpowder
+// chest" until their cap. Every non-healer in those parties was out of combat,
+// knew Opening, and had full general bags; the only healer had full bags too.
+// A full-bagged member with junk to throw away is now the opener, and it
+// frees a slot before it walks to the chest.
+TEST(DcDefiasGunpowder, AFullBaggedPartyDiscardsJunkInsteadOfStalling)
+{
+    using L = Looter;
+    // {canStore, bagSpace, inCombat, isHealer, knowsOpening, canDiscard}
+    L const fullBags[] = {{false, 100, false, false, true, true},   // the tank (hook bot)
+                          {false, 100, false, true, true, true},    // the healer
+                          {false, 100, false, false, true, true}};  // a dps
+    int const i = PickOpener(fullBags, 3);
+    EXPECT_EQ(i, 0) << "the hook's own bot goes first";
+    EXPECT_TRUE(MustDiscard(fullBags, 3, i));
+    OpenerFlags const f = OpenerFlagsFor(fullBags, 3, i);
+    EXPECT_TRUE(f.eligible && f.hasRoom && f.hasOpeningSpell);
+
+    Inputs in = AtTheCannonEmptyHanded();
+    in.openerEligible = f.eligible;
+    in.openerHasRoom = f.hasRoom;
+    in.hasOpeningSpell = f.hasOpeningSpell;
+    in.openerMustDiscard = MustDiscard(fullBags, 3, i);
+    Plan const p = Decide(in);
+    EXPECT_EQ(p.action, Action::DiscardForRoom);
+    EXPECT_FALSE(IsReport(p.action));
+    EXPECT_EQ(p.goEntry, GO_GUNPOWDER);
+
+    // Once the slot is free the same opener walks to the chest.
+    in.openerMustDiscard = false;
+    EXPECT_EQ(Decide(in).action, Action::WalkToChest);
+}
+
+TEST(DcDefiasGunpowder, ADiscardIsOnlyTheFallbackAndKeepsTheOldGuards)
+{
+    using L = Looter;
+    // A member with room always beats one that would have to throw something away.
+    L const oneWithRoom[] = {{false, 100, false, false, true, true}, {true, 70}};
+    EXPECT_EQ(PickOpener(oneWithRoom, 2), 1);
+    EXPECT_FALSE(MustDiscard(oneWithRoom, 2, 1));
+    // The hook's bot cannot discard (or is fighting, or a healer, or cannot
+    // open the chest): the first member that can goes.
+    L const hookCannot[] = {{false, 100, false, false, true, false},
+                            {false, 100, true, false, true, true},
+                            {false, 100, false, true, true, true},
+                            {false, 100, false, false, false, true},
+                            {false, 100, false, false, true, true}};
+    EXPECT_EQ(PickOpener(hookCannot, 5), 4);
+    EXPECT_TRUE(MustDiscard(hookCannot, 5, 4));
+    // Nothing to throw away anywhere: still nobody, the old report.
+    L const noJunk[] = {{false, 100}, {false, 100}};
+    EXPECT_EQ(PickOpener(noJunk, 2), -1);
+    EXPECT_FALSE(MustDiscard(noJunk, 2, -1));
+}
+
+TEST(DcDefiasGunpowder, OnlyJunkInAGeneralSlotIsThrownAway)
+{
+    // {quality, class, sellPrice, count, startsQuest, inGeneralSlot}
+    BagItem const hearthstone{1, 15, 0, 1, false, true};
+    BagItem const questItem{1, 12, 5, 1, false, true};
+    BagItem const key{1, 13, 5, 1, false, true};
+    BagItem const emptyBag{1, 1, 250, 1, false, true};
+    BagItem const questStarter{1, 0, 5, 1, true, true};
+    BagItem const greenItem{2, 2, 5, 1, false, true};
+    BagItem const inAmmoPouch{0, 6, 1, 200, false, false};
+    for (BagItem const& b : {hearthstone, questItem, key, emptyBag, questStarter, greenItem,
+                             inAmmoPouch})
+        EXPECT_FALSE(IsDiscardable(b));
+    BagItem const keepAll[] = {hearthstone, questItem, greenItem, inAmmoPouch};
+    EXPECT_EQ(PickDiscard(keepAll, 4), -1);
+    EXPECT_EQ(PickDiscard(nullptr, 3), -1);
+
+    // Grey goes before white, then the cheapest whole stack, ties to the earlier slot.
+    BagItem const whiteCheap{1, 2, 1, 1, false, true};
+    BagItem const greyDear{0, 4, 900, 1, false, true};
+    BagItem const meatStack{1, 7, 5, 4, false, true};    // 20 copper in all
+    BagItem const boots{1, 4, 6, 1, false, true};        // 6 copper
+    BagItem const boots2{1, 4, 6, 1, false, true};
+    BagItem const bags[] = {hearthstone, whiteCheap, greyDear};
+    EXPECT_EQ(PickDiscard(bags, 3), 2);
+    BagItem const whites[] = {hearthstone, meatStack, boots, boots2};
+    EXPECT_EQ(PickDiscard(whites, 4), 2);
+}
+
 // Someone in the party already carries it: no trip to the chest.
 TEST(DcDefiasGunpowder, ACarrierSkipsTheChest)
 {
@@ -529,7 +614,8 @@ TEST(DcDefiasGunpowder, EveryBranchHasItsOwnReport)
                           Action::UseOnCannon,   Action::WaitForPlayer, Action::TakeFromChest,
                           Action::WalkToChest,   Action::OpenChest,    Action::NoCannon,
                           Action::NoChest,       Action::ChestSpent,   Action::NoOpeningSpell,
-                          Action::NoBagRoom,     Action::NoEligibleOpener, Action::CarrierDead};
+                          Action::NoBagRoom,     Action::NoEligibleOpener, Action::CarrierDead,
+                          Action::DiscardForRoom};
     std::vector<std::uint8_t> seen;
     for (Action a : all)
     {

@@ -7,9 +7,11 @@
 
 #include <atomic>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "Bag.h"
 #include "Creature.h"
 #include "CreatureAI.h"
 #include "DBCStores.h"
@@ -250,6 +252,52 @@ namespace
 
     uint32 DmFindOpeningSpell(Player* bot, GameObject* chest);
 
+    // The junk item a full-bagged opener destroys to make room for the
+    // gunpowder (DcDefiasGunpowder::PickDiscard), or no item. Only the
+    // backpack and general-purpose bags count: an ammo pouch, quiver or soul
+    // bag slot cannot take the gunpowder once it is empty.
+    struct DmDiscard
+    {
+        Item* item = nullptr;
+        uint8 bag = 0;
+        uint8 slot = 0;
+    };
+
+    DmDiscard DmFindDiscard(Player* p)
+    {
+        std::vector<DmDiscard> where;
+        std::vector<DcDefiasGunpowder::BagItem> items;
+        auto add = [&](Item* item, uint8 bag, uint8 slot)
+        {
+            if (!item)
+                return;
+            ItemTemplate const* t = item->GetTemplate();
+            if (!t)
+                return;
+            DcDefiasGunpowder::BagItem b;
+            b.quality = t->Quality;
+            b.itemClass = t->Class;
+            b.sellPrice = t->SellPrice;
+            b.count = item->GetCount();
+            b.startsQuest = t->StartQuest != 0;
+            b.inGeneralSlot = true;
+            where.push_back({item, bag, slot});
+            items.push_back(b);
+        };
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            add(p->GetItemByPos(INVENTORY_SLOT_BAG_0, slot), INVENTORY_SLOT_BAG_0, slot);
+        for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+        {
+            Bag* bag = p->GetBagByPos(bagSlot);
+            if (!bag || !bag->GetTemplate() || bag->GetTemplate()->SubClass != ITEM_SUBCLASS_CONTAINER)
+                continue;
+            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
+                add(bag->GetItemByPos(uint8(slot)), bagSlot, uint8(slot));
+        }
+        int const k = DcDefiasGunpowder::PickDiscard(items.data(), items.size());
+        return k < 0 ? DmDiscard{} : where[static_cast<std::size_t>(k)];
+    }
+
     // The party bot that opens the chest (DcDefiasGunpowder::PickOpener): `bot`
     // when it can go, else the out-of-combat non-healer in the event area with
     // the emptiest bags that can; null when nobody can. A bot that knows no
@@ -265,6 +313,7 @@ namespace
         bool    anyEligible = false; // some party bot is out of combat and not a healer
         bool    anyOpeningSpell = false;  // OpenerFlagsFor: true with a pick, false when
                                           // nobody who could go knows a spell for the lock
+        bool    mustDiscard = false;  // the opener's bags are full: it frees a slot first
     };
 
     DmOpenerPick DmPickOpener(Player* bot, GameObject* chest)
@@ -282,6 +331,7 @@ namespace
                 l.bagSpace = ai->GetAiObjectContext()->GetValue<uint8>(DcKey::Stock::BagSpace)->Get();
             l.inCombat = p->IsInCombat();
             l.isHealer = PlayerbotAI::IsHeal(p);
+            l.canDiscard = !l.canStore && DmFindDiscard(p).item != nullptr;
             return l;
         };
 
@@ -304,6 +354,7 @@ namespace
             DcDefiasGunpowder::OpenerFlagsFor(looters.data(), looters.size(), i);
         DmOpenerPick pick{};
         pick.opener = i < 0 ? nullptr : members[static_cast<std::size_t>(i)];
+        pick.mustDiscard = DcDefiasGunpowder::MustDiscard(looters.data(), looters.size(), i);
         pick.anyBagRoom = flags.hasRoom;
         pick.anyEligible = flags.eligible;
         pick.anyOpeningSpell = flags.hasOpeningSpell;
@@ -423,6 +474,7 @@ namespace
         // was passed over only for want of an Opening spell, so the step names
         // that (NoOpeningSpell) at the cannon instead of walking to the chest.
         in.hasOpeningSpell = opener ? openSpell != 0 : pick.anyOpeningSpell;
+        in.openerMustDiscard = opener != nullptr && pick.mustDiscard;
 
         Plan const plan = Decide(in);
         switch (plan.action)
@@ -590,6 +642,30 @@ namespace
                                  bot->GetName(), actor->GetName(), openSpell, uint32(res),
                                  DmTakeText(took));
                 }
+                return ObjectiveArriveResult::Running;
+            }
+
+            case Action::DiscardForRoom:
+            {
+                // What a player with full bags does before looting a quest
+                // item: destroy the cheapest junk. The next tick finds room,
+                // and the opener walks to the chest. One item per change of
+                // report: a tick that still reads DiscardForRoom right after
+                // one (the slot did not help) holds instead of emptying the
+                // bags, and the step's timeout bounds it.
+                if (!context || !DmReportChanged(context, plan.action))
+                    return ObjectiveArriveResult::Running;
+                DmDiscard const d = DmFindDiscard(actor);
+                std::string const name =
+                    d.item ? d.item->GetTemplate()->Name1 : std::string("nothing");
+                uint32 const count = d.item ? d.item->GetCount() : 0;
+                uint32 const copper = d.item ? d.item->GetTemplate()->SellPrice * count : 0;
+                if (d.item)
+                    actor->DestroyItem(d.bag, d.slot, true);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] Deadmines cannon: running, {} ({} destroys {} x{}, worth {} copper)",
+                         bot->GetName(), Describe(plan.action), actor->GetName(), name, count,
+                         copper);
                 return ObjectiveArriveResult::Running;
             }
 
