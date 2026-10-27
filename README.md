@@ -1,6 +1,6 @@
 # mod-dungeon-clear
 
-An AzerothCore module that lets a mod-playerbots tank bot clear a dungeon on its own.
+A drop-in AzerothCore module that lets a mod-playerbots tank bot clear a dungeon on its own.
 
 A tank bot drives the party from boss to boss: it clears trash, paths the
 layout, pauses for loot, rests between fights, and handles doors and scripted
@@ -74,7 +74,7 @@ keywords, and the companion addon's `DC` addon messages all dispatch to the
 same tank-bot actions.
 
 The tank bot routes over the live navigation mesh, with no waypoints or
-hardcoded paths; the hand-built data the module carries is for scripted events
+hardcoded paths, so the clear works in any instance; the hand-built data the module carries is for scripted events
 and known navmesh breaks, not for routing. Follower bots stay with the tank
 while the clear is on. It runs against a stock, unmodified mod-playerbots
 checkout and touches no playerbots file. Details:
@@ -220,8 +220,9 @@ these automatically as part of the normal boss route, with no player input.
 
 Event support currently covers, in classic: Deadmines, Shadowfang Keep, Wailing
 Caverns, Uldaman, Sunken Temple, Razorfen Downs, Scarlet Monastery, Zul'Farrak,
-Blackrock Depths, Scholomance, Stratholme, and Dire Maul; and in Burning
-Crusade: Hellfire Ramparts, Blood Furnace, Shattered Halls, Slave Pens,
+Blackrock Depths, Upper Blackrock Spire, Scholomance, Stratholme, and
+Dire Maul; and in Burning Crusade: Hellfire Ramparts, Blood Furnace,
+Shattered Halls, Slave Pens,
 Underbog, Steamvault, Sethekk Halls, Mechanar, Arcatraz, Black Morass, Old
 Hillsbrad, and Magisters' Terrace; and in Wrath of the Lich King: Utgarde Keep,
 the Nexus, Azjol-Nerub, Ahn'kahet, Drak'Tharon Keep, the Violet Hold, Gundrak,
@@ -256,7 +257,12 @@ and gears it, sends it to a dungeon entrance and lets it clear the place on its
 own. You stay out of the party and watch, or `.dc test watch` the camera along.
 Every run records its seed, so a run that hits a bug can be replayed with the
 exact same party, and `.dc test plan` runs the same dungeon N times to give you
-a success *rate* rather than an anecdote.
+a success *rate* rather than an anecdote. `.dc test plan start pool=a,b:heroic,...
+total=0` runs a whole pool of dungeons until stopped: the Test Deck's
+Continuous mode, which keeps every failure and its logs across restarts.
+
+- `exclude=<class>[,<class>...]` leaves classes out of the party (`exclude=rogue`); a role left with no class is refused.
+- `from=<boss>` starts the run at that boss, with the earlier bosses marked skipped (`from=Mr. Smite`).
 
 **[Test Runs](https://github.com/jrad7/mod-dungeon-clear/wiki/Test-Runs)**: the
 full command reference, gear and party options, plans, watching, the headless
