@@ -409,9 +409,8 @@ bool DcOnAction::Execute(Event event)
     // forces a fresh long-path build on the first Advance tick so a stale path
     // from a previous `dc on`/`dc off` cycle can't be reused. See DcApproachState.
     context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().Reset();
-    context->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
-    context->GetValue<std::string&>(DcKey::LastSaidReason)->Get().clear();
-    context->GetValue<std::string&>(DcKey::Phase)->Get().clear();
+    // Stall / last-said / phase, plus the last stop reason a previous run left.
+    DcActionShared::ClearRunReasons(context);
     context->GetValue<ObjectGuid>(DcKey::FallbackTarget)->Set(ObjectGuid::Empty);
     context->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
     context->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
