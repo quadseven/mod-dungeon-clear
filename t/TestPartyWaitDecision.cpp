@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "DcPartyWaitDecision.h"
+#include <string>
 
 using DcPartyWaitDecision::Decide;
 using DcPartyWaitDecision::Inputs;
@@ -168,4 +169,175 @@ TEST(DcPartyWaitTest, TheMinimumViablePartyIsTankPlusHealer)
     // Pins the constant the policy turns on, so a future change to it is a
     // deliberate one rather than a silent widening.
     EXPECT_EQ(DcPartyWaitDecision::kMinViableMembers, 2u);
+}
+
+// --- the rescue: at the stranded clock, before the party-wait ceiling --------
+
+namespace
+{
+    Inputs HealthyWithStranded()
+    {
+        Inputs in = Healthy();
+        in.strandedOutOfRange = 2;  // two bots out of spread of the tank
+        in.strandedRecoveryEnabled = true;
+        return in;
+    }
+}
+
+TEST(DcPartyWaitTest, CeilingWithStrandedMembersAndRescueOnRescues)
+{
+    // At the 180s ceiling with two out-of-range members and StrandedRecovery on:
+    // rescue instead of ending the run.
+    Inputs in = HealthyWithStranded();
+    in.waitedMs = 180000;
+    in.strandedTimeoutMs = 60000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::Rescue);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::StillWaiting);
+}
+
+TEST(DcPartyWaitTest, CeilingWithStrandedMembersButRescueOffTimesOut)
+{
+    // Same ceiling, same strays, but StrandedRecovery is off: the run ends.
+    Inputs in = HealthyWithStranded();
+    in.strandedRecoveryEnabled = false;
+    in.waitedMs = 180000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, CeilingWithoutStrandedMembersTimesOut)
+{
+    // Everyone in range, so there is nothing to rescue: the run ends.
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, RescueDoesNotFireBeforeTheStrandedClock)
+{
+    // Strays present, rescue on, but the stranded clock has not elapsed: wait.
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 59999;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RescueFiresAtStrandedClockBeforePartyWaitCeiling)
+{
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 60000;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Rescue);
+}
+
+TEST(DcPartyWaitTest, ZeroTimeoutMeansNoRescueEither)
+{
+    // With the ceiling disabled, a wait that never ends is not rescued - there is
+    // no ceiling to rescue at.
+    Inputs in = HealthyWithStranded();
+    in.timeoutMs = 0;
+    in.waitedMs = 24u * 60u * 60u * 1000u;  // a day
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, ViabilityStillOutranksRescue)
+{
+    // An unviable party stops now even if there are strays and rescue is on: the
+    // viability check runs first, without reference to the clock.
+    Inputs in = HealthyWithStranded();
+    in.waitedMs = 0;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;  // the one who left was the healer
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::LostHealer);
+}
+
+// Criterion 2 (issue #66): a second party-wait timeout at the same boss for the
+// same members ends the run with a distinct reason that names the boss and the
+// members. The memory is kept outside DcApproachState because the stop resets it.
+TEST(DcPartyWaitTest, FirstTimeoutIsNotARepeat)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, "Waiting on Gorvash (out of range)"));
+    std::string const r = DcPartyWaitDecision::TimeoutStopReason(
+        false, 180, "Gelihast", "Waiting on Gorvash (out of range)");
+    EXPECT_NE(r.find("the party never became ready after 180s"), std::string::npos);
+    EXPECT_EQ(r.find("RepeatedTimeout"), std::string::npos);
+}
+
+TEST(DcPartyWaitTest, SecondIdenticalTimeoutIsARepeatNamingBossAndMembers)
+{
+    std::string const why = "Waiting on Gorvash (out of range), Grassfed (out of range)";
+    DcPartyWaitDecision::TimeoutMemory mem;
+    mem.bossEntry = 6243u;  // Gelihast
+    mem.why = why;
+    ASSERT_TRUE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, why));
+
+    // The ceiling itself still says Timeout; the repeat is told apart by the memory.
+    Inputs in = Healthy();
+    in.waitedMs = in.timeoutMs;
+    EXPECT_EQ(Decide(in).reason, DcPartyWaitDecision::Reason::Timeout);
+
+    std::string const r = DcPartyWaitDecision::TimeoutStopReason(true, 180, "Gelihast", why);
+    EXPECT_NE(r.find("RepeatedTimeout"), std::string::npos);
+    EXPECT_NE(r.find("Gelihast"), std::string::npos);
+    EXPECT_NE(r.find("Gorvash"), std::string::npos);
+    EXPECT_NE(r.find("Grassfed"), std::string::npos);
+    EXPECT_EQ(r.find("the party never became ready after"), std::string::npos);
+}
+
+TEST(DcPartyWaitTest, DifferentBossOrDifferentMembersIsNotARepeat)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    mem.bossEntry = 6243u;
+    mem.why = "Waiting on Gorvash (out of range)";
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 4887u, mem.why));
+    EXPECT_FALSE(DcPartyWaitDecision::IsRepeatTimeout(mem, 6243u, "Waiting on Grassfed (out of range)"));
+}
+
+// --- the rescue is bounded: one per wait -------------------------------------
+
+TEST(DcPartyWaitTest, RescueAlreadyFiredThisWaitEndsAtTheCeiling)
+{
+    // A rescue already fired at this boss in this wait and the strays are still
+    // out of range: the ceiling ends the run instead of rescuing forever.
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = in.timeoutMs;
+    in.rescueAlreadyFired = true;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, DcPartyWaitDecision::Outcome::EndRun);
+    EXPECT_EQ(r.reason, DcPartyWaitDecision::Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, RescueAlreadyFiredThisWaitKeepsWaitingBelowTheCeiling)
+{
+    // Past the stranded clock but short of the ceiling: no second rescue, just wait.
+    Inputs in = HealthyWithStranded();
+    in.strandedTimeoutMs = 60000;
+    in.waitedMs = 120000;
+    in.rescueAlreadyFired = true;
+    EXPECT_EQ(Decide(in).outcome, DcPartyWaitDecision::Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RescueMemoryAllowsOneRescuePerWait)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
+    DcPartyWaitDecision::RecordRescue(mem, 6243u, 1000u);
+    EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
+
+    // A new wait (the run re-enabled, or the party became ready and then not) or
+    // another boss gets its own rescue.
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 2000u));
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 4887u, 1000u));
+
+    // Recording a timeout leaves the rescue record alone.
+    DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
+    EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
 }

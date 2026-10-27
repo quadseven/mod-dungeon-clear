@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DCPARTYWAITDECISION_H
 
 #include <cstdint>
+#include <string>
 
 // Pure decision kernel for the between-pulls wait's GIVE-UP step.
 //
@@ -52,6 +53,7 @@ namespace DcPartyWaitDecision
     enum class Outcome
     {
         Wait,    // keep holding the tank - the wait is still legitimate
+        Rescue,  // teleport the stranded out-of-range members to the tank and keep waiting (once per wait)
         EndRun,  // stop the clear and report `reason`
     };
 
@@ -80,6 +82,7 @@ namespace DcPartyWaitDecision
     {
         std::uint32_t waitedMs = 0;       // how long this uninterrupted wait has run
         std::uint32_t timeoutMs = 0;      // DungeonClear.PartyWaitTimeoutSecs * 1000; 0 = no ceiling
+        std::uint32_t strandedTimeoutMs = 0; // StrandedRecoveryNoProgressSecs * 1000; 0 = disabled
 
         // Living members sharing the LEADER'S OWN Map (the leader included).
         // "Same Map object", never "same map id" - see DcSameInstance.h.
@@ -91,6 +94,17 @@ namespace DcPartyWaitDecision
         // instance" without needing to remember the comp the run started with.
         std::uint32_t rosterAlive = 0;
         bool rosterHasHealer = false;
+
+        // Living bot members on the leader's map that are out of spread of the
+        // tank - the strays the stranded rescue would teleport to the tank.
+        std::uint32_t strandedOutOfRange = 0;
+        // Whether DungeonClear.StrandedRecovery is on. The rescue only fires when
+        // the operator has opted in to teleporting members.
+        bool strandedRecoveryEnabled = false;
+        // Whether this wait has already spent its one rescue (RescueFiredThisWait).
+        // A second rescue is never tried in the same wait, so a rescue that did not
+        // bring the members in leaves the ceiling to end the run.
+        bool rescueAlreadyFired = false;
     };
 
     struct Result
@@ -98,6 +112,70 @@ namespace DcPartyWaitDecision
         Outcome outcome = Outcome::Wait;
         Reason  reason  = Reason::StillWaiting;
     };
+
+    // Memory of the last party-wait timeout, so a second identical stop (same
+    // boss, same members waited on) can be told from the first. It lives in its
+    // own per-bot value (DcKey::PartyWaitMemory), NOT on DcApproachState: the
+    // stop itself runs DisableDungeonClear, which wipes the approach state, and
+    // the memory has to survive exactly that to be of any use.
+    struct TimeoutMemory
+    {
+        std::uint32_t bossEntry = 0;  // 0 = no timeout remembered
+        std::string why;              // who the wait was on, as DescribePartyNotReady said it
+
+        // The wait that last spent its rescue: the boss it was at and the wait's
+        // start (DcApproachState::partyNotReadySinceMs, never 0 while armed).
+        std::uint32_t rescueBossEntry = 0;
+        std::uint32_t rescueWaitStartMs = 0;  // 0 = no rescue remembered
+    };
+
+    // True when the wait that started at waitStartMs, at this boss, has already
+    // had its rescue. A new wait (the party became ready, or the run was stopped
+    // and re-enabled) starts at a new time and so gets one rescue of its own.
+    inline bool RescueFiredThisWait(TimeoutMemory const& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        return mem.rescueWaitStartMs != 0 && mem.rescueWaitStartMs == waitStartMs &&
+               mem.rescueBossEntry == bossEntry;
+    }
+
+    // Remember that this wait spent its rescue. The only writer of the rescue fields.
+    inline void RecordRescue(TimeoutMemory& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        mem.rescueBossEntry = bossEntry;
+        mem.rescueWaitStartMs = waitStartMs;
+    }
+
+    // True when this timeout repeats the remembered one.
+    inline bool IsRepeatTimeout(TimeoutMemory const& mem, std::uint32_t bossEntry, std::string const& why)
+    {
+        return mem.bossEntry != 0 && mem.bossEntry == bossEntry && mem.why == why;
+    }
+
+    // The stop reason for a Timeout. The repeat form starts with "RepeatedTimeout"
+    // and names the boss and the members, so whatever re-enables runs can tell
+    // that a third try will end the same way.
+    inline std::string TimeoutStopReason(bool repeated, std::uint32_t waitedSecs,
+                                         std::string const& bossName, std::string const& why)
+    {
+        std::string const secs = std::to_string(waitedSecs) + "s";
+        if (repeated)
+            return "Dungeon clear stopped: RepeatedTimeout at " + bossName + " after " + secs +
+                   " waiting on the same member(s) as the last stop (" + why + ").";
+        return "Dungeon clear stopped: the party never became ready after " + secs +
+               (why.empty() ? "." : (" (" + why + ")."));
+    }
+
+    // The Timeout stop as the caller speaks it: tell a repeat from the memory,
+    // build the matching reason, then remember this stop so the next identical
+    // one is the repeat. The only writer of TimeoutMemory.
+    inline std::string RecordTimeout(TimeoutMemory& mem, std::uint32_t bossEntry, std::string const& bossName,
+                                     std::uint32_t waitedSecs, std::string const& why)
+    {
+        bool const repeated = IsRepeatTimeout(mem, bossEntry, why);
+        mem.bossEntry = bossEntry;
+        mem.why = why;
+        return TimeoutStopReason(repeated, waitedSecs, bossName, why);
+    }
 
     inline Result Decide(Inputs const& in)
     {
@@ -123,7 +201,16 @@ namespace DcPartyWaitDecision
                 return verdict(Outcome::EndRun, Reason::LostHealer);
         }
 
-        // 2. The ceiling. Disabled (0) only by an operator who has decided a
+        // 2. Rescue once the stranded clock has elapsed. Do this before the
+        //    longer party-wait ceiling so a rescuable wait gets a chance to make
+        //    progress instead of stopping at the ceiling. Once per wait only, and
+        //    the clock is not reset by it, so the ceiling below still bounds a
+        //    rescue that did not help.
+        if (!in.rescueAlreadyFired && in.strandedTimeoutMs > 0 && in.waitedMs >= in.strandedTimeoutMs &&
+            in.strandedOutOfRange > 0 && in.strandedRecoveryEnabled)
+            return verdict(Outcome::Rescue, Reason::StillWaiting);
+
+        // 3. The ceiling. Disabled (0) only by an operator who has decided a
         //    frozen run is preferable to an ended one; the registry's floor keeps
         //    the enabled values long enough that a legitimate rest never trips it.
         if (in.timeoutMs && in.waitedMs >= in.timeoutMs)
