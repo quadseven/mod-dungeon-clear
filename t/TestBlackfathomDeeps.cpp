@@ -5,9 +5,12 @@
 
 #include "gtest/gtest.h"
 
+#include "DcSourceScan.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
@@ -569,4 +572,113 @@ TEST(DungeonEventBlackfathomDeeps, AtBossGateReportsTheFirstGateDown)
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::ClosedDoor));
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::AnchoredHops));
     EXPECT_FALSE(DcAtBossGate::ValveCanOverride(Gate::PartyNotReady));
+}
+
+// ---------------------------------------------------------------------------
+// The valve has to win the tick, not only open.
+//
+// Live (2026-10-27, run 2798): the tank sat at Gelihast from 07:55:31Z to
+// 08:10:21Z on gate 'room trash' with the party ready and nothing to loot. The
+// valve opened at 40050 ms and logged "engaging anyway" 30 times, up to 884176
+// ms, and the tank never moved: Gelihast is a room-clear boss, and the pull
+// rung (DcRel::Pull, 35) keeps its room-clear exception at the boss, so it took
+// every tick the at-boss engage (DcRel::AtBoss, 30) needed. The pull now stands
+// down once the valve is open.
+// ---------------------------------------------------------------------------
+
+// Ticks the gate at Gelihast with room trash that never clears and reports, per
+// tick, whether the pull rung would still hold the tick. Returns the ms at which
+// the engage first both fires and has the pull out of its way, or UINT32_MAX.
+namespace
+{
+    uint32_t MsToEngageTakingTheTick(DcAtBossGate::Inputs in, bool pullbackBoss,
+                                     uint32_t budgetMs)
+    {
+        in.heldSinceMs = 0;
+        for (uint32_t t = 0; t <= budgetMs; t += TICK_MS)
+        {
+            in.nowMs = 50000 + t;
+            DcAtBossGate::Verdict const v = DcAtBossGate::Decide(in);
+            in.heldSinceMs = v.heldSinceMs;
+            bool const pullStandsDown = DcAtBossGate::PullStandsDownAtBoss(
+                /*atBossEngage*/ true, /*roomClearActive*/ in.roomTrash, pullbackBoss,
+                v.valveOpen);
+            if (v.fire && pullStandsDown)
+                return t;
+        }
+        return UINT32_MAX;
+    }
+}
+
+TEST(DungeonEventBlackfathomDeeps, GelihastValveHandsTheTickFromTheRoomClearPullToTheEngage)
+{
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+
+    // Before the valve: the room clear is the pull's, and the engage is held.
+    EXPECT_FALSE(DcAtBossGate::PullStandsDownAtBoss(true, /*roomClear*/ true,
+                                                    /*pullback*/ false, /*valve*/ false));
+
+    uint32_t const took = MsToEngageTakingTheTick(in, /*pullbackBoss*/ false,
+                                                  3 * DC_AT_BOSS_HOLD_VALVE_MS);
+    ASSERT_NE(took, UINT32_MAX)
+        << "the valve opened but the pull rung kept the tick: the engage never ran";
+    EXPECT_LE(took, DC_AT_BOSS_HOLD_VALVE_MS);
+    EXPECT_GE(took, DC_AT_BOSS_HOLD_VALVE_MS - TICK_MS);
+}
+
+// The rest of the pull rung's at-boss rule is unchanged: at a plain boss it
+// stands down, away from the boss this rule does not stand it down, and a
+// pull-back boss keeps the pull whatever the valve says (the walk-in would go
+// where he stands).
+TEST(DungeonEventBlackfathomDeeps, PullStandDownAtTheBossKeepsItsOtherCases)
+{
+    EXPECT_TRUE(DcAtBossGate::PullStandsDownAtBoss(true, false, false, false));
+    EXPECT_FALSE(DcAtBossGate::PullStandsDownAtBoss(false, false, false, false));
+    EXPECT_FALSE(DcAtBossGate::PullStandsDownAtBoss(false, true, false, true));
+    EXPECT_FALSE(DcAtBossGate::PullStandsDownAtBoss(true, false, true, false));
+    EXPECT_FALSE(DcAtBossGate::PullStandsDownAtBoss(true, true, true, true));
+
+    DcAtBossGate::Inputs in = AtGelihast();
+    in.roomTrash = true;
+    EXPECT_EQ(MsToEngageTakingTheTick(in, /*pullbackBoss*/ true, 3 * DC_AT_BOSS_HOLD_VALVE_MS),
+              UINT32_MAX);
+}
+
+// The live pull trigger asks this predicate with the live valve, rather than
+// keeping its own copy of the room-clear exception.
+TEST(DungeonEventBlackfathomDeeps, PullTriggerAsksTheValveAtTheBoss)
+{
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.cpp"));
+    auto const begin = src.find("bool DungeonClearPullTrigger::IsActive()");
+    ASSERT_NE(begin, std::string::npos);
+    auto const end = src.find("bool DungeonClearPullManeuverTrigger::IsActive()", begin);
+    ASSERT_NE(end, std::string::npos);
+    std::string const body = src.substr(begin, end - begin);
+    EXPECT_FALSE(DcSourceScan::CallOffsets(body, "PullStandsDownAtBoss").empty());
+    EXPECT_NE(body.find(".valveOpen"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Razorfen Downs: Tuten'kash (entry 7355) is summoned by the gong, so until the
+// third ring there is no live boss at his anchor. The valve must not open on an
+// empty anchor (the gong event owns that wait), and once he is up the same room
+// trash hold at him goes through the valve and the pull hands the tick over,
+// as at Gelihast.
+// ---------------------------------------------------------------------------
+TEST(DungeonEventRazorfenDowns, TutenkashAtBossValveWaitsForTheSummonThenEngages)
+{
+    DcAtBossGate::Inputs in = AtGelihast();   // same shape: at the anchor, party ready
+    in.roomTrash = true;
+
+    in.liveBoss = false;   // before the gong's third ring
+    EXPECT_EQ(MsToFire(in, 1000, 3 * DC_AT_BOSS_HOLD_VALVE_MS), UINT32_MAX)
+        << "the valve opened on an anchor with no boss on it";
+
+    in.liveBoss = true;    // summoned
+    uint32_t const took = MsToEngageTakingTheTick(in, /*pullbackBoss*/ false,
+                                                  3 * DC_AT_BOSS_HOLD_VALVE_MS);
+    ASSERT_NE(took, UINT32_MAX);
+    EXPECT_LE(took, DC_AT_BOSS_HOLD_VALVE_MS);
 }

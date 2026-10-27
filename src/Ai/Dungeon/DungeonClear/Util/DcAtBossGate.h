@@ -83,6 +83,22 @@ namespace DcAtBossGate
     bool DoorVetoes(bool losBlocked, std::uint32_t shutDoorsOnChord,
                     std::uint32_t eventGatesOnChord);
 
+    // Does the pull pipeline (DcRel::Pull, 35) stand down at the boss?
+    //
+    // At the boss the at-boss engage (DcRel::AtBoss, 30) owns the pull, so the
+    // pull rung stands down there, with two exceptions: a pull-back boss (the pull
+    // is the only thing that may engage him) and a room clear in progress (the
+    // pull pipeline is what clears that room). The valve ends the second one.
+    // Once the valve has opened past room trash, the room clear has had its
+    // chance and the boss is engaged anyway; a pull rung that kept the room-clear
+    // exception would outrank the very engage the valve opened, every tick.
+    // Live, Blackfathom Deeps (2026-10-27, run 2798): the valve at Gelihast
+    // logged "engaging anyway" 30 times over 14 minutes while the tank never
+    // moved, because the room-clear pull at 35 held the tick the engage at 30
+    // needed. A pull-back boss stays with the pull, valve or not.
+    bool PullStandsDownAtBoss(bool atBossEngage, bool roomClearActive, bool pullbackBoss,
+                              bool atBossValveOpen);
+
     struct Inputs
     {
         bool driving = false;
