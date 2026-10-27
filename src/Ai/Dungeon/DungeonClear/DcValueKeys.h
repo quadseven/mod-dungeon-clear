@@ -62,6 +62,10 @@ namespace DcKey
     // Diagnostic heartbeat, 0 == never. Written only by DcTickHeartbeat, read
     // only by the teardown snapshot; nothing steers off it. See DcTickMemo.h.
     inline constexpr char const* LastTickMs              = "dungeon clear last tick ms";
+    // Memory of the last party-wait timeout (boss + who was waited on). Outside
+    // DcApproachState on purpose: DisableDungeonClear resets that. See
+    // DcPartyWaitDecision::TimeoutMemory.
+    inline constexpr char const* PartyWaitMemory         = "dungeon clear party wait memory";
     inline constexpr char const* FarTargets              = "dungeon clear far targets";
     inline constexpr char const* Hazards                 = "dungeon clear hazards";
     // Ground pools (persistent-area-aura DynamicObjects) near the bot. A SEPARATE

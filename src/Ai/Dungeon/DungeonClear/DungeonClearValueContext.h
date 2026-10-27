@@ -54,6 +54,7 @@ public:
         creators[DcKey::GlideRecord] = &DungeonClearValueContext::dungeon_clear_glide_record;
         creators[DcKey::CurrentHop] = &DungeonClearValueContext::dungeon_clear_current_hop;
         creators[DcKey::LastTickMs] = &DungeonClearValueContext::dungeon_clear_last_tick_ms;
+        creators[DcKey::PartyWaitMemory] = &DungeonClearValueContext::dungeon_clear_party_wait_memory;
         creators[DcKey::FarTargets] = &DungeonClearValueContext::dungeon_clear_far_targets;
         creators[DcKey::Hazards] = &DungeonClearValueContext::dungeon_clear_hazards;
         creators[DcKey::GroundHazards] = &DungeonClearValueContext::dungeon_clear_ground_hazards;
@@ -114,6 +115,7 @@ private:
     static UntypedValue* dungeon_clear_glide_record(PlayerbotAI* ai) { return new DungeonClearGlideRecordValue(ai); }
     static UntypedValue* dungeon_clear_current_hop(PlayerbotAI* ai) { return new DungeonClearCurrentHopValue(ai); }
     static UntypedValue* dungeon_clear_last_tick_ms(PlayerbotAI* ai) { return new DungeonClearLastTickMsValue(ai); }
+    static UntypedValue* dungeon_clear_party_wait_memory(PlayerbotAI* ai) { return new DungeonClearPartyWaitMemoryValue(ai); }
     static UntypedValue* dungeon_clear_far_targets(PlayerbotAI* ai) { return new DungeonClearFarTargetsValue(ai); }
     static UntypedValue* dungeon_clear_hazards(PlayerbotAI* ai) { return new DungeonClearHazardsValue(ai); }
     static UntypedValue* dungeon_clear_ground_hazards(PlayerbotAI* ai) { return new DungeonClearGroundHazardsValue(ai); }
