@@ -209,6 +209,14 @@ public:
     // deadlock the run through this.
     static bool HasDeadSameMapMember(Player* bot);
 
+    // Count of living bot members on the bot's map that are out of spread of the
+    // tank - the strays the stranded rescue would teleport. Mirrors the spread
+    // check in IsPartyReady / DescribePartyNotReady: same Map object, alive, bot,
+    // and distance beyond maxSpread (or maxTankGap when set).
+    static std::uint32_t OutOfRangeMemberCount(Player* bot, float maxSpread,
+                                               Position const* spreadAnchor = nullptr,
+                                               float maxTankGap = 0.0f);
+
     // Returns true if any LIVING bot party member on the bot's map (excluding
     // `bot` itself) currently has a corpse it intends to loot — in any phase,
     // walking in (has available loot) or within reach (can loot). Reads each

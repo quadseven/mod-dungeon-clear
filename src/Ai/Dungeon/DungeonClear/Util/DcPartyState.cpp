@@ -688,6 +688,40 @@ bool DcPartyState::HasDeadSameMapMember(Player* bot)
     return false;
 }
 
+std::uint32_t DcPartyState::OutOfRangeMemberCount(Player* bot, float maxSpread,
+                                                  Position const* spreadAnchor,
+                                                  float maxTankGap)
+{
+    if (!bot)
+        return 0;
+    Group* group = bot->GetGroup();
+    if (!group)
+        return 0;
+
+    std::uint32_t count = 0;
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || member == bot)
+            continue;
+        if (!member->IsAlive() || !DcSameInstance(member, bot))
+            continue;
+        // Only bots are teleported; a human is never relocated.
+        if (!GET_PLAYERBOT_AI(member))
+            continue;
+        float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
+                                          : bot->GetDistance(member);
+        if (spread > maxSpread)
+        {
+            ++count;
+            continue;
+        }
+        if (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)
+            ++count;
+    }
+    return count;
+}
+
 bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 {
     if (!bot)

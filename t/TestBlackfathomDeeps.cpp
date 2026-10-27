@@ -18,8 +18,16 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
+
+using DcPartyWaitDecision::Decide;
+using DcPartyWaitDecision::Inputs;
+using DcPartyWaitDecision::Outcome;
+using DcPartyWaitDecision::Reason;
+using DcPartyWaitDecision::Result;
 
 TEST(DungeonEventBlackfathomDeeps, SwimRouteGoesAroundFloodedWallToSarevess)
 {
@@ -681,4 +689,122 @@ TEST(DungeonEventRazorfenDowns, TutenkashAtBossValveWaitsForTheSummonThenEngages
                                                   3 * DC_AT_BOSS_HOLD_VALVE_MS);
     ASSERT_NE(took, UINT32_MAX);
     EXPECT_LE(took, DC_AT_BOSS_HOLD_VALVE_MS);
+}
+
+// Criterion 1 (issue #66): at the 180s ceiling at Gelihast (map 48) with two
+// out-of-range members and StrandedRecovery on, the wait is rescued instead of
+// ended - the same kernel the live BFD Gelihast stall would hit, framed against
+// map 48.
+TEST(DungeonEventBlackfathomDeeps, AtTheCeilingAtGelihastWithStrandedMembersRescuesInsteadOfStopping)
+{
+    // The tank and healer are here, two members are out of spread, the 180s
+    // ceiling has run, and StrandedRecovery is opted in: teleport the strays to
+    // the tank and keep waiting, do not end the run.
+    Inputs in;
+    in.waitedMs = 180000;
+    in.timeoutMs = 180000;
+    in.strandedTimeoutMs = 60000;
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    in.rosterAlive = 5;
+    in.rosterHasHealer = true;
+    in.strandedOutOfRange = 2;
+    in.strandedRecoveryEnabled = true;
+
+    Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::Rescue);
+    EXPECT_EQ(r.reason, Reason::StillWaiting);
+}
+
+// Criterion 1 (issue #66): Gelihast's tank is still holding while two living
+// bots, present in the instance but with no walkable route, remain 40yd away.
+// The stranded clock expires before the longer party-wait ceiling; rescue both
+// and keep the wait alive rather than waiting for the ceiling to stop the run.
+TEST(DungeonEventBlackfathomDeeps, GelihastRescuesTwoStrandedMembersBeforePartyWaitCeiling)
+{
+    using DcStrandedDecision::Member;
+    using StrandedInputs = DcStrandedDecision::Inputs;
+    using StrandedResult = DcStrandedDecision::Result;
+
+    StrandedInputs stranded;
+    stranded.enabled = true;
+    stranded.nowMs = 160000;
+    stranded.lastProgressMs = 100000;
+    stranded.noProgressTimeoutMs = 60000;
+    stranded.maxSpread = 25.0f;
+
+    std::vector<Member> party(5);
+    party[0].isBot = true;
+    party[0].isAlive = true;
+    party[0].onMap = true;
+    party[0].isTank = true; // Pongakiah, holding at Gelihast's spot
+    for (std::size_t i = 1; i < party.size(); ++i)
+    {
+        party[i].isBot = true;
+        party[i].isAlive = true;
+        party[i].onMap = true; // present in the same BFD instance
+        party[i].distToTank = i == 1 ? 5.0f : (i < 4 ? 40.0f : 10.0f);
+    }
+
+    auto const outOfRange = [&party, &stranded]()
+    {
+        std::uint32_t count = 0;
+        for (Member const& m : party)
+            if (!m.isTank && m.distToTank > stranded.maxSpread)
+                ++count;
+        return count;
+    };
+
+    Inputs wait;
+    wait.waitedMs = 60000;
+    wait.timeoutMs = 180000;
+    wait.strandedTimeoutMs = 60000;
+    wait.presentAlive = 5;
+    wait.presentHasHealer = true;
+    wait.rosterAlive = 5;
+    wait.rosterHasHealer = true;
+    wait.strandedOutOfRange = outOfRange();
+    wait.strandedRecoveryEnabled = true;
+
+    // Both strays are still 40yd out when the stranded clock runs out: rescue.
+    ASSERT_EQ(wait.strandedOutOfRange, 2u);
+    EXPECT_EQ(Decide(wait).outcome, Outcome::Rescue);
+
+    StrandedResult const rescue = DcStrandedDecision::Decide(stranded, party);
+    ASSERT_TRUE(rescue.recover);
+    ASSERT_EQ(rescue.strandedIdx.size(), 2u);
+    for (int idx : rescue.strandedIdx)
+        party[static_cast<std::size_t>(idx)].distToTank = 0.0f; // Recover brings them to tank
+
+    // Recovery moved both inside spread, well before the ceiling: keep waiting.
+    wait.strandedOutOfRange = outOfRange();
+    wait.rescueAlreadyFired = true;
+    EXPECT_EQ(wait.strandedOutOfRange, 0u);
+    EXPECT_EQ(Decide(wait).outcome, Outcome::Wait);
+    EXPECT_LT(wait.waitedMs, wait.timeoutMs);
+}
+
+// Criterion 2 (issue #66): the run is stopped at Gelihast for Gorvash and
+// Grassfed, re-enabled, and stopped again for the same pair. The second stop is
+// spoken through the same memory the call site keeps across DisableDungeonClear,
+// so it ends with the distinct RepeatedTimeout reason, not another plain timeout.
+TEST(DungeonEventBlackfathomDeeps, SecondGelihastTimeoutOnTheSameMembersEndsWithRepeatedTimeout)
+{
+    std::string const why = "Waiting on Gorvash (out of range), Grassfed (out of range)";
+    DcPartyWaitDecision::TimeoutMemory mem;
+
+    std::string const first = DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, why);
+    EXPECT_NE(first.find("the party never became ready after 180s"), std::string::npos);
+    EXPECT_EQ(first.find("RepeatedTimeout"), std::string::npos);
+
+    std::string const second = DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, why);
+    EXPECT_NE(second.find("RepeatedTimeout at Gelihast"), std::string::npos);
+    EXPECT_NE(second.find("Gorvash"), std::string::npos);
+    EXPECT_NE(second.find("Grassfed"), std::string::npos);
+    EXPECT_EQ(second.find("the party never became ready after"), std::string::npos);
+
+    // A stop on someone else is a fresh first timeout again.
+    std::string const other = DcPartyWaitDecision::RecordTimeout(
+        mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
+    EXPECT_EQ(other.find("RepeatedTimeout"), std::string::npos);
 }
