@@ -773,6 +773,27 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                     ++sameMap;
         followDist = std::max(followDist, DcFormation::RingRadius(sameMap, followDist));
     }
+    else if (Group* group = bot->GetGroup())
+    {
+        // PARTY: numbered seats on a ring wide enough to stand apart
+        // (DcFormation::PartyFollowAngle). The trail rung above keeps `dist`,
+        // so its leash (dist + 2) stays outside this ring and a seated
+        // follower is not sent back down the trail.
+        uint32 slot = 0;
+        for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
+        {
+            Player* const member = gref->GetSource();
+            if (!member || member == tank)
+                continue;
+            if (member == bot)
+            {
+                angle = DcFormation::PartyFollowAngle(slot);
+                followDist = std::max(followDist, DcFormation::kPartyFollowRadiusYd);
+                break;
+            }
+            ++slot;
+        }
+    }
     return Follow(tank, followDist, angle);
 }
 
