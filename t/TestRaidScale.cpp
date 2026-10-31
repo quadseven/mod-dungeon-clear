@@ -5,7 +5,10 @@
 
 #include "gtest/gtest.h"
 
+#include <cmath>
+
 #include "Ai/Dungeon/DungeonClear/Util/DcFormation.h"
+#include "DcSourceScan.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezDecision.h"
 
 // Raid-scale kernels (raid-support plan, Plan B): the parallel rez pairing,
@@ -194,6 +197,32 @@ TEST(DcRaidRezTest, ALiveRaidWipeDisablesInsteadOfReviving)
 }
 
 // --- Formation geometry ----------------------------------------------------
+
+TEST(DcFormationTest, PartyFollowSeatsStandApart)
+{
+    // Four followers on the 5-man ring: every pair clears the slot spacing,
+    // which the old GUID fan at 1.5yd could not.
+    for (uint32 a = 0; a < 4; ++a)
+    {
+        for (uint32 b = a + 1; b < 4; ++b)
+        {
+            float const r = DcFormation::kPartyFollowRadiusYd;
+            float const ax = r * std::cos(DcFormation::PartyFollowAngle(a));
+            float const ay = r * std::sin(DcFormation::PartyFollowAngle(a));
+            float const bx = r * std::cos(DcFormation::PartyFollowAngle(b));
+            float const by = r * std::sin(DcFormation::PartyFollowAngle(b));
+            EXPECT_GE(std::hypot(ax - bx, ay - by), DcFormation::kSlotSpacingYd);
+        }
+    }
+}
+
+TEST(DcFormationTest, PartyFollowUsesNumberedSeats)
+{
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Action/DcFollowerActions.cpp"));
+    EXPECT_FALSE(DcSourceScan::CallOffsets(src, "PartyFollowAngle").empty());
+    EXPECT_NE(src.find("DcFormation::kPartyFollowRadiusYd"), std::string::npos);
+}
 
 TEST(DcFormationTest, RingRadiusFloorsAndGrows)
 {

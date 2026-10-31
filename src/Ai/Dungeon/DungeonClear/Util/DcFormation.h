@@ -85,6 +85,23 @@ namespace DcFormation
         return { radius * std::cos(angle), radius * std::sin(angle) };
     }
 
+    // THE 5-MAN FOLLOW RING. At the stock 1.5yd follow distance four followers
+    // on a GUID-seeded fan stood inside each other: sampled on the dev realm
+    // 2026-10-30, 22% of out-of-combat member pairs in five-man groups were
+    // under 1.5yd, in reach of the stock anti-stack shuffle, which then walked
+    // them round each other. A GUID seed is as good as random for a guild
+    // group's scattered GUIDs, so two members can draw nearly one bearing.
+    // Seats are numbered instead, and on this ring the four seats stand at
+    // least kSlotSpacingYd apart.
+    inline constexpr float kPartyFollowRadiusYd = 3.0f;
+
+    // Bearing of follower seat `slot` (0 for the first non-tank group member).
+    inline float PartyFollowAngle(uint32 slot)
+    {
+        constexpr float kTwoPi = 2.0f * 3.14159265f;
+        return std::fmod(static_cast<float>(slot) * kGoldenAngle, kTwoPi);
+    }
+
     // Follow-fan angle for a raid: the member's SUBGROUP picks one of eight
     // ring segments behind/around the tank, and the seed fans within it — a
     // 40-bot raid trails as eight short arcs instead of one conga line whose
