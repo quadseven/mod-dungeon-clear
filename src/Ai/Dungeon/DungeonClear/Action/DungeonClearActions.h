@@ -578,11 +578,14 @@ public:
     bool Execute(Event event) override;
 };
 
-class DungeonClearDisableOnClearedAction : public Action
+class DungeonClearDisableOnClearedAction : public DcMovementAction
 {
 public:
-    DungeonClearDisableOnClearedAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear disable on cleared") {}
+    DungeonClearDisableOnClearedAction(PlayerbotAI* botAI) : DcMovementAction(botAI, "dungeon clear disable on cleared") {}
     bool Execute(Event event) override;
+
+private:
+    bool WaitForKeyReward();
 };
 
 // Phantom-combat escape hatch. Fired by DungeonClearBreakStuckCombatTrigger once a

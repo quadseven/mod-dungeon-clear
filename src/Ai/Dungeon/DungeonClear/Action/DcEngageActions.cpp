@@ -56,6 +56,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorOpener.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCompletionLoot.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPackLeashDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
@@ -2780,8 +2781,124 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
 
 bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
 {
+    if (WaitForKeyReward())
+        return false; // ordinary movement/loot actions still get this tick
     DisableDungeonClear(RunOwnerAI(bot, botAI), DcActionShared::kReasonAllCleared);
     return true;
+}
+
+bool DungeonClearDisableOnClearedAction::WaitForKeyReward()
+{
+    PlayerbotAI* const ownerAI = RunOwnerAI(bot, botAI);
+    if (!bot || !bot->IsInWorld() || !ownerAI)
+        return true;
+    auto& run = DcRun::Of(ownerAI);
+    if (!run.enabled || run.paused || !bot->IsAlive() ||
+        ownerAI->GetAiObjectContext()->GetValue<std::optional<DungeonBossInfo>>(
+            DcKey::NextDungeonBoss)->Get().has_value())
+        return true;
+
+    std::vector<Player*> party;
+    auto addMember = [&](Player* member)
+    {
+        if (member && DcSameInstance(bot, member) && member->IsAlive())
+            party.push_back(member);
+    };
+    if (Group* group = bot->GetGroup())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            addMember(ref->GetSource());
+    else
+        addMember(bot);
+    DcCompletionLoot::Inputs in;
+    in.mayAct = std::none_of(party.begin(), party.end(),
+                            [](Player* member) { return member->IsInCombat(); });
+    if (!in.mayAct)
+        return true;
+
+    if (run.completionKeyChest.IsEmpty())
+    {
+        float nearest = DcCompletionLoot::MAX_APPROACH_YARDS;
+        for (ObjectGuid guid : context->GetValue<GuidVector>("nearest game objects")->Get())
+        {
+            GameObject* go = botAI->GetGameObject(guid);
+            if (!go || !DcSameInstance(bot, go) || !go->isSpawned() ||
+                go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
+                continue;
+            uint32 const key = DcCompletionLoot::KeyForChest(go->GetEntry());
+            float const yards = bot->GetDistance(go);
+            if (!key || yards > nearest)
+                continue;
+            std::vector<ObjectGuid> missing;
+            for (Player* member : party)
+                if (!member->HasItemCount(key, 1, true))
+                    missing.push_back(member->GetGUID());
+            if (missing.empty())
+                continue;
+            nearest = yards;
+            run.completionKeyChest = guid;
+            run.completionKeyItem = key;
+            run.completionKeyMissing = std::move(missing);
+        }
+        if (run.completionKeyChest.IsEmpty())
+            return false;
+        run.completionKeySinceMs = getMSTime();
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] completion key chest {}: {} member(s) need item {}; ordinary loot follows",
+                 bot->GetName(), run.completionKeyChest.GetEntry(),
+                 run.completionKeyMissing.size(), run.completionKeyItem);
+    }
+
+    auto& missing = run.completionKeyMissing;
+    missing.erase(std::remove_if(missing.begin(), missing.end(), [&](ObjectGuid guid)
+    {
+        Player* member = ObjectAccessor::FindPlayer(guid);
+        if (!member || !DcSameInstance(bot, member) ||
+            !member->HasItemCount(run.completionKeyItem, 1, false))
+            return false;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] completion key pickup: '{}' now carries item {} from chest {}",
+                 bot->GetName(), member->GetName(), run.completionKeyItem,
+                 run.completionKeyChest.GetEntry());
+        return true;
+    }), missing.end());
+
+    GameObject* go = botAI->GetGameObject(run.completionKeyChest);
+    in.started = true;
+    in.needsKey = !missing.empty();
+    in.chestPresent = go && DcSameInstance(bot, go) && go->isSpawned();
+    in.yards = in.chestPresent ? bot->GetDistance(go) : 0.0f;
+    in.lootRadius = DcPbConfig::LootDistance();
+    in.elapsedMs = getMSTimeDiff(run.completionKeySinceMs, getMSTime());
+    in.busy = !bot->GetLootGUID().IsEmpty() || bot->IsNonMeleeSpellCast(false);
+    if (in.chestPresent && in.yards > in.lootRadius - 1.0f)
+        in.busy = in.busy || AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ||
+                  AI_VALUE(bool, DcKey::Stock::CanLoot) ||
+                  DcPartyState::IsAnyPartyMemberLooting(bot);
+    in.walking = run.completionKeyWalking && bot->isMoving();
+    switch (DcCompletionLoot::Decide(in))
+    {
+        case DcCompletionLoot::Step::Finish:
+            return false;
+        case DcCompletionLoot::Step::TimedOut:
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] completion key pickup timed out after {}ms; {} member(s) still missing item {}",
+                     bot->GetName(), in.elapsedMs, missing.size(), run.completionKeyItem);
+            return false;
+        case DcCompletionLoot::Step::Approach:
+            DcMovement::ResolveEscortConflict(bot);
+            if (!DcMoveDeferred(MovementPriority::MOVEMENT_NORMAL))
+            {
+                run.completionKeyWalking = DcMoveTo(
+                    go->GetMapId(), go->GetPositionX(), go->GetPositionY(), go->GetPositionZ(),
+                    false, false, true, false, MovementPriority::MOVEMENT_NORMAL,
+                    false, false, /*ignoreEnemyTargets*/ false);
+            }
+            return true;
+        case DcCompletionLoot::Step::Loot:
+        case DcCompletionLoot::Step::Wait:
+            return true;
+    }
+    return false;
 }
 
 bool DungeonClearBreakStuckCombatAction::Execute(Event /*event*/)

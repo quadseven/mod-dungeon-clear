@@ -75,6 +75,13 @@ struct DcRunState
     uint32      runInstanceId   = 0;    // instance that accepted `dc on`; 0 = none
     bool        corpseRunHold   = false; // released owner ghost; resume there after resurrection
 
+    // Bounded required-key pickup after the last boss; Reset clears the episode.
+    ObjectGuid completionKeyChest;
+    uint32 completionKeyItem = 0;
+    uint32 completionKeySinceMs = 0;
+    bool completionKeyWalking = false;
+    std::vector<ObjectGuid> completionKeyMissing;
+
     // This run is on a RAID map — stamped by `dc on` from Map::IsRaid(), read
     // via DcRun::IsRaid. Raid runs change the non-interference contract: DC
     // owns everything BETWEEN fights and stands down completely during a boss
