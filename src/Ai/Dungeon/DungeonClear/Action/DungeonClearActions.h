@@ -49,8 +49,8 @@ protected:
     // hostile. That fires exactly in DC's pull approach, which deliberately walks
     // to and past the aggro edge; DC owns its own aggro geometry (nav penalties,
     // hazard registries, camp anchors, pull governor) and a silent truncation
-    // upstream of all of that is strictly harmful. No current caller passes
-    // false; the knob exists so one can, deliberately. Pre-#2747 it is accepted
+    // upstream of all of that is strictly harmful. Completion-key pickup passes
+    // false so a chest detour keeps the ordinary hostile path guard. Pre-#2747 it is accepted
     // and dropped.
     bool DcMoveTo(uint32 mapId, float x, float y, float z, bool idle = false, bool react = false,
                   bool normal_only = false, bool exact_waypoint = false,

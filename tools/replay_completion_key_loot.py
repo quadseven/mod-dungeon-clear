@@ -19,13 +19,27 @@ loot_source = (root / "src/Ai/Dungeon/DungeonClear/Util/DcLootPolicy.cpp").read_
 owned_start = loot_source.index("            uint32 const key = DcCompletionLoot::KeyForChest(go->GetEntry());")
 owned_end = loot_source.index("keep = false;", owned_start) + len("keep = false;")
 owned_filter = loot_source[owned_start:owned_end]
+pickup_start = source.index("    missing.erase(std::remove_if(missing.begin(), missing.end(), [&](ObjectGuid guid)", opening)
+pickup_end = source.index("    GameObject* go =", pickup_start)
+pickup = source[pickup_start:pickup_end]
 prefix = r'''
 #include "DcCompletionLoot.h"
 #include <cassert>
 using uint32 = std::uint32_t;
 #include <iostream>
 struct Event {};
-struct Player {};
+#include <algorithm>
+#include <map>
+#include <vector>
+using ObjectGuid = unsigned;
+struct Player
+{
+    bool carried = false;
+    bool banked = false;
+    bool sameInstance = true;
+    bool HasItemCount(unsigned, unsigned, bool bank) const
+    { return carried || (bank && banked); }
+};
 struct PlayerbotAI {};
 namespace DcActionShared { constexpr char kReasonAllCleared[] = "cleared"; }
 unsigned disabled = 0;
@@ -51,6 +65,26 @@ owned_suffix = r'''
     return keep;
 }
 '''
+pickup_prefix = r'''
+unsigned pickupLogs = 0;
+#define LOG_INFO(...) (++pickupLogs)
+namespace ObjectAccessor
+{
+    std::map<ObjectGuid, Player*> players;
+    Player* FindPlayer(ObjectGuid id)
+    {
+        auto const it = players.find(id);
+        return it == players.end() ? nullptr : it->second;
+    }
+}
+bool DcSameInstance(Player*, Player* member) { return member->sameInstance; }
+struct Run { unsigned completionKeyItem = 7146; Chest completionKeyChest{103821}; };
+void Reconcile(std::vector<ObjectGuid>& missing, Run const& run, Player* bot)
+{
+'''
+pickup_suffix = r'''
+}
+'''
 suffix = r'''
 int main()
 {
@@ -65,6 +99,22 @@ int main()
     }
     Chest unrelated{12345u};
     assert(KeepChest(&unrelated, &held));
+    // AI-REVIEW 2026-10-31 [poolside/laguna-s-2.1] H2 (PR #92):
+    // Only actual carried keys in this instance justify a pickup success log.
+    Player bankOnly, elsewhere, driver;
+    bankOnly.banked = true;
+    elsewhere.carried = true;
+    elsewhere.sameInstance = false;
+    ObjectAccessor::players = {{1, &bankOnly}, {2, &elsewhere}};
+    std::vector<ObjectGuid> absent{1, 2, 3};
+    Run run;
+    Reconcile(absent, run, &driver);
+    assert(absent.size() == 3 && pickupLogs == 0);
+    bankOnly.carried = true;
+    Reconcile(absent, run, &driver);
+    assert((absent == std::vector<ObjectGuid>{2, 3}) && pickupLogs == 1);
+    Reconcile(absent, run, &driver);
+    assert(pickupLogs == 1);
     using namespace DcCompletionLoot;
     Inputs in;
     in.started = in.needsKey = in.chestPresent = true;
@@ -103,7 +153,8 @@ int main()
 with tempfile.TemporaryDirectory() as directory:
     cpp = Path(directory) / "completion.cpp"
     binary = Path(directory) / "completion"
-    cpp.write_text(prefix + action + owned_prefix + owned_filter + owned_suffix + suffix)
+    cpp.write_text(prefix + action + owned_prefix + owned_filter + owned_suffix +
+                   pickup_prefix + pickup + pickup_suffix + suffix)
     subprocess.run(
         ["g++", "-std=c++17", "-Wall", "-Wextra", "-I",
          str(root / "src/Ai/Dungeon/DungeonClear/Util"), str(cpp), "-o", str(binary)],
