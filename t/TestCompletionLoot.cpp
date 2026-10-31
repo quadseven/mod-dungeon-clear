@@ -69,3 +69,13 @@ TEST(DcCompletionLoot, UsesTheOrdinaryLootKeyCatalogue)
     EXPECT_EQ(DcCompletionLoot::KeyForChest(179516), 18266u);
     EXPECT_EQ(DcCompletionLoot::KeyForChest(12345), 0u);
 }
+
+// AI-REVIEW 2026-10-31 [poolside/laguna-s-2.1] L1 (PR #92):
+// An already-owned key must finish before any approach, not only after looting.
+TEST(DcCompletionLoot, AlreadyOwnedKeyNeverStartsAnApproach)
+{
+    auto in = MissingKey();
+    in.started = false;
+    in.needsKey = false;
+    EXPECT_EQ(DcCompletionLoot::Decide(in), DcCompletionLoot::Step::Finish);
+}

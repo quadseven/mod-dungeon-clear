@@ -15,9 +15,14 @@ while depth:
     depth += (source[end] == "{") - (source[end] == "}")
     end += 1
 action = source[start:end]
+loot_source = (root / "src/Ai/Dungeon/DungeonClear/Util/DcLootPolicy.cpp").read_text()
+owned_start = loot_source.index("            uint32 const key = DcCompletionLoot::KeyForChest(go->GetEntry());")
+owned_end = loot_source.index("keep = false;", owned_start) + len("keep = false;")
+owned_filter = loot_source[owned_start:owned_end]
 prefix = r'''
 #include "DcCompletionLoot.h"
 #include <cassert>
+using uint32 = std::uint32_t;
 #include <iostream>
 struct Event {};
 struct Player {};
@@ -35,9 +40,31 @@ struct DungeonClearDisableOnClearedAction
     bool Execute(Event);
 };
 '''
+owned_prefix = r'''
+struct Chest { unsigned entry; unsigned GetEntry() const { return entry; } };
+struct Holder { bool owns; bool HasItemCount(unsigned, unsigned, bool) const { return owns; } };
+bool KeepChest(Chest* go, Holder* bot)
+{
+    bool keep = true;
+'''
+owned_suffix = r'''
+    return keep;
+}
+'''
 suffix = r'''
 int main()
 {
+    // AI-REVIEW 2026-10-31 [poolside/laguna-s-2.1] L1 (PR #92):
+    // Compile the real filter, including bank ownership, rather than a copy.
+    Holder held{true}, missing{false};
+    for (unsigned entry : {103821u, 179516u})
+    {
+        Chest chest{entry};
+        assert(!KeepChest(&chest, &held));
+        assert(KeepChest(&chest, &missing));
+    }
+    Chest unrelated{12345u};
+    assert(KeepChest(&unrelated, &held));
     using namespace DcCompletionLoot;
     Inputs in;
     in.started = in.needsKey = in.chestPresent = true;
@@ -76,7 +103,7 @@ int main()
 with tempfile.TemporaryDirectory() as directory:
     cpp = Path(directory) / "completion.cpp"
     binary = Path(directory) / "completion"
-    cpp.write_text(prefix + action + suffix)
+    cpp.write_text(prefix + action + owned_prefix + owned_filter + owned_suffix + suffix)
     subprocess.run(
         ["g++", "-std=c++17", "-Wall", "-Wextra", "-I",
          str(root / "src/Ai/Dungeon/DungeonClear/Util"), str(cpp), "-o", str(binary)],
