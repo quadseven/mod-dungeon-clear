@@ -16,9 +16,15 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBreathSource.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPoolExitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRawPathDrive.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
@@ -807,4 +813,414 @@ TEST(DungeonEventBlackfathomDeeps, SecondGelihastTimeoutOnTheSameMembersEndsWith
     std::string const other = DcPartyWaitDecision::RecordTimeout(
         mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
     EXPECT_EQ(other.find("RepeatedTimeout"), std::string::npos);
+}
+
+// Upstream 2026-10-26: the party-wide chain kernels and the Forgotten Pool exit.
+// Its tests of the authored jump puzzle, swims, fires and roster are not here:
+// production keeps its own (BlackfathomDeepsEvents.cpp).
+
+namespace
+{
+    constexpr uint32 BFD = 48;
+
+    DungeonEvent const* Ev(uint32 id)
+    {
+        DungeonEvent const* ev = DungeonEventRegistry::Find(BFD, id);
+        EXPECT_NE(ev, nullptr) << "map 48 event " << id << " is not registered";
+        return ev;
+    }
+
+    std::vector<G3D::Vector3> Line()
+    {
+        return {G3D::Vector3(0, 0, 0), G3D::Vector3(10, 0, 0), G3D::Vector3(20, 0, 0),
+                G3D::Vector3(30, 0, 0)};
+    }
+}
+
+// --- DcRawPathDrive ---------------------------------------------------------
+
+TEST(DcRawPathDrive, FirstTickIssuesFromTheCursorAndArmsTheWatch)
+{
+    DcProgressWatchdog w;
+    auto const d = DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-5, 0, 0), 3.0f, /*spline*/ false, 1000, w);
+    EXPECT_EQ(d.verdict, DcRawPathDrive::Verdict::Issue);
+    EXPECT_EQ(d.cursor, 0u);
+    EXPECT_EQ(w.lastProgressMs, 1000u);
+}
+
+TEST(DcRawPathDrive, CursorAdvancesPastReachedPointsAndRearmsPerPoint)
+{
+    DcProgressWatchdog w;
+    DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-5, 0, 0), 3.0f, false, 1000, w);
+    // Standing on point 1 (10,0,0): points 0 and 1 are consumed, the cursor
+    // moves to 2, and the watchdog is re-armed for the new point.
+    auto const d = DcRawPathDrive::Step(Line(), 0, G3D::Vector3(10.5f, 0, 0), 3.0f, true, 3000, w);
+    EXPECT_EQ(d.cursor, 2u);
+    EXPECT_EQ(d.verdict, DcRawPathDrive::Verdict::InFlight);
+    EXPECT_EQ(w.lastProgressMs, 3000u);
+}
+
+TEST(DcRawPathDrive, LastPointIsNeverConsumedShortOfTheArriveRadius)
+{
+    DcProgressWatchdog w;
+    // 2.9yd from the last point with pointReached 3 but arriveRadius 1.5: the
+    // leg is NOT done and the cursor stays on the last point.
+    auto const d = DcRawPathDrive::Step(Line(), 3, G3D::Vector3(27.1f, 0, 0), 1.5f, false, 1000, w);
+    EXPECT_NE(d.verdict, DcRawPathDrive::Verdict::Arrived);
+    EXPECT_EQ(d.cursor, 3u);
+    auto const e = DcRawPathDrive::Step(Line(), 3, G3D::Vector3(29.0f, 0, 0), 1.5f, false, 1000, w);
+    EXPECT_EQ(e.verdict, DcRawPathDrive::Verdict::Arrived);
+}
+
+TEST(DcRawPathDrive, ArrivedIsIdempotentFromAnyCursor)
+{
+    DcProgressWatchdog w;
+    auto const d = DcRawPathDrive::Step(Line(), 0, G3D::Vector3(30, 0.5f, 0), 3.0f, false, 1000, w);
+    EXPECT_EQ(d.verdict, DcRawPathDrive::Verdict::Arrived);
+}
+
+TEST(DcRawPathDrive, NoProgressForStuckMsIsAWedge)
+{
+    DcProgressWatchdog w;
+    DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-5, 0, 0), 3.0f, false, 1000, w);
+    EXPECT_EQ(DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-5, 0, 0), 3.0f, true, 6000, w).verdict,
+              DcRawPathDrive::Verdict::InFlight);
+    EXPECT_EQ(DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-5, 0, 0), 3.0f, true, 7100, w).verdict,
+              DcRawPathDrive::Verdict::Wedged);
+    // Closing again (after the caller re-issued) is progress and clears the wedge.
+    w.Reset();
+    EXPECT_EQ(DcRawPathDrive::Step(Line(), 0, G3D::Vector3(-2, 0, 0), 3.0f, true, 7200, w).verdict,
+              DcRawPathDrive::Verdict::InFlight);
+}
+
+TEST(DcRawPathDrive, FarFromTheCurrentPointIsOffLeg)
+{
+    DcProgressWatchdog w;
+    auto const d = DcRawPathDrive::Step(Line(), 1, G3D::Vector3(10, 80, 0), 3.0f, false, 1000, w);
+    EXPECT_EQ(d.verdict, DcRawPathDrive::Verdict::OffLeg);
+}
+
+TEST(DcRawPathDrive, EmptyPathIsArrived)
+{
+    DcProgressWatchdog w;
+    EXPECT_EQ(DcRawPathDrive::Step({}, 0, G3D::Vector3(0, 0, 0), 3.0f, false, 1, w).verdict,
+              DcRawPathDrive::Verdict::Arrived);
+}
+
+// --- DcChainRelease ----------------------------------------------------------
+
+TEST(DcChainRelease, ReleaseAfterStepIsTheFirstJumpElseTheFirstRawPath)
+{
+    DungeonEvent const* puzzle = Ev(6);
+    ASSERT_NE(puzzle, nullptr);
+    // MoveTo take-off(0), Jump 1(1), walk(2) ...: a follower starts once the bot
+    // ahead is PAST step 1, i.e. has landed on the ridge and is walking it.
+    EXPECT_EQ(DcChainRelease::ReleaseAfterStep(*puzzle), 1u);
+
+    DungeonEvent const* swim = Ev(1);
+    ASSERT_NE(swim, nullptr);
+    EXPECT_EQ(DcChainRelease::ReleaseAfterStep(*swim), 1u);
+}
+
+TEST(DcChainRelease, ThreeFollowersReleaseOneStoneApart)
+{
+    using namespace DcChainRelease;
+    uint32 const after = 2;
+    uint32 const spacing = 8000;
+
+    // Leader not started: nobody goes.
+    Ahead leader;
+    EXPECT_FALSE(MayStart(leader, after, 1000, spacing));
+    leader.known = true;
+    EXPECT_FALSE(MayStart(leader, after, 1000, spacing));
+
+    // Leader on the rim (step 1) / on A's hop (step 2): follower 1 waits.
+    leader.startedMs = 1000;
+    leader.stepIndex = 1;
+    EXPECT_FALSE(MayStart(leader, after, 2000, spacing));
+    leader.stepIndex = 2;
+    EXPECT_FALSE(MayStart(leader, after, 3000, spacing));
+    // Leader landed A, now on B's hop (step 3): follower 1 is released.
+    leader.stepIndex = 3;
+    EXPECT_TRUE(MayStart(leader, after, 4000, spacing));
+
+    // Follower 2 keys on follower 1, not on the leader: still waiting while
+    // follower 1 is on the rim ...
+    Ahead f1;
+    f1.known = true;
+    f1.startedMs = 4000;
+    f1.stepIndex = 1;
+    EXPECT_FALSE(MayStart(f1, after, 5000, spacing));
+    // ... released once it has left stone A ...
+    f1.stepIndex = 3;
+    EXPECT_TRUE(MayStart(f1, after, 6000, spacing));
+    // ... or when it finished, or by the time-spacing fallback.
+    Ahead f2;
+    f2.known = true;
+    f2.startedMs = 6000;
+    f2.stepIndex = 1;
+    EXPECT_FALSE(MayStart(f2, after, 10000, spacing));
+    EXPECT_TRUE(MayStart(f2, after, 14000, spacing));
+    f2.done = true;
+    EXPECT_TRUE(MayStart(f2, after, 6500, spacing));
+}
+
+// --- DcFallVolume ------------------------------------------------------------
+
+TEST(DcFallVolume, ClassifiesPoolTakeOffIslandsAndLanding)
+{
+    DungeonEvent const* puzzle = Ev(6);
+    ASSERT_NE(puzzle, nullptr);
+    DcFallVolume const& f = puzzle->fall;
+    ASSERT_TRUE(f.enabled);
+    // In the pool: inside the cavern box, below the water line — including the
+    // gaps between the islands and the water at the foot of the pocket's ramp.
+    EXPECT_TRUE(f.Contains(-300.0f, 60.0f, -59.0f));
+    EXPECT_TRUE(f.Contains(-344.0f, 46.0f, -59.0f));
+    EXPECT_TRUE(f.Contains(-357.1f, 33.1f, -58.1f));
+    // On the take-off / an island / the landing: above the water line.
+    EXPECT_FALSE(f.Contains(-360.27f, 34.96f, -53.09f));
+    EXPECT_FALSE(f.Contains(-337.57f, 43.21f, -53.12f));
+    EXPECT_FALSE(f.Contains(-323.65f, 50.43f, -53.12f));
+    EXPECT_FALSE(f.Contains(-314.77f, 68.71f, -53.57f));
+    // Deep but outside the cavern box (the lake beyond the tunnel): not a fall.
+    EXPECT_FALSE(f.Contains(-400.0f, 200.0f, -66.0f));
+    // Disabled volume never matches.
+    DcFallVolume off;
+    EXPECT_FALSE(off.Contains(-300.0f, 60.0f, -59.0f));
+}
+
+TEST(DcFallVolume, ArmedFromTheFirstHopNotOnTheApproachSwim)
+{
+    DungeonEvent const* puzzle = Ev(6);
+    ASSERT_NE(puzzle, nullptr);
+    // Step 0 is the approach: a follower may still be swimming it, through
+    // the very water the volume covers. Armed from jump 1 on.
+    EXPECT_FALSE(DcPartyWideChain::FallArmed(*puzzle, 0));
+    for (uint32 i = 1; i < puzzle->steps.size(); ++i)
+        EXPECT_TRUE(DcPartyWideChain::FallArmed(*puzzle, i)) << "step " << i;
+
+    // A submerged RawPath is an approach, not a hop: never arms the volume.
+    DungeonEvent swim;
+    EventStep move;
+    move.kind = EventStepKind::MoveTo;
+    EventStep sub;
+    sub.kind = EventStepKind::RawPath;
+    sub.swim = true;
+    swim.steps = {move, sub};
+    EXPECT_FALSE(DcPartyWideChain::FallArmed(swim, 1));
+    swim.steps[1].swim = false;
+    EXPECT_TRUE(DcPartyWideChain::FallArmed(swim, 1));
+}
+
+// --- DcBreathSource -----------------------------------------------------------
+
+namespace
+{
+    DcBreathSource::Member Bot(bool aura = false, bool shaman = false, bool warlock = false)
+    {
+        DcBreathSource::Member m;
+        m.isBot = true;
+        m.alive = true;
+        m.hasAura = aura;
+        m.canCastShamanBreath = shaman;
+        m.canCastWarlockBreath = warlock;
+        return m;
+    }
+}
+
+TEST(DcBreathSource, ShamanCoversEveryoneIncludingItself)
+{
+    std::vector<DcBreathSource::Member> party = {Bot(), Bot(false, true), Bot(), Bot(), Bot()};
+    auto const plan = DcBreathSource::Plan(party);
+    ASSERT_EQ(plan.size(), 5u);
+    for (auto const& a : plan)
+    {
+        EXPECT_EQ(a.kind, DcBreathSource::Kind::Shaman);
+        EXPECT_EQ(a.caster, 1);
+    }
+    EXPECT_FALSE(DcBreathSource::AllBotsCovered(plan));
+}
+
+TEST(DcBreathSource, WarlockWithoutShamanThenElixirWithNeither)
+{
+    std::vector<DcBreathSource::Member> party = {Bot(), Bot(false, false, true), Bot()};
+    auto const plan = DcBreathSource::Plan(party);
+    for (auto const& a : plan)
+    {
+        EXPECT_EQ(a.kind, DcBreathSource::Kind::Warlock);
+        EXPECT_EQ(a.caster, 1);
+    }
+    std::vector<DcBreathSource::Member> none = {Bot(), Bot(), Bot()};
+    for (auto const& a : DcBreathSource::Plan(none))
+    {
+        EXPECT_EQ(a.kind, DcBreathSource::Kind::Elixir);
+        EXPECT_EQ(a.caster, -1);
+    }
+}
+
+TEST(DcBreathSource, ShamanBeatsWarlockAndCoveredHumanDeadAreLeftAlone)
+{
+    DcBreathSource::Member human;
+    human.isBot = false;
+    human.alive = true;
+    DcBreathSource::Member dead = Bot();
+    dead.alive = false;
+    std::vector<DcBreathSource::Member> party = {Bot(true), Bot(false, false, true), Bot(false, true), human, dead};
+    auto const plan = DcBreathSource::Plan(party);
+    EXPECT_EQ(plan[0].kind, DcBreathSource::Kind::Covered);
+    EXPECT_EQ(plan[1].kind, DcBreathSource::Kind::Shaman);
+    EXPECT_EQ(plan[1].caster, 2);
+    EXPECT_EQ(plan[2].kind, DcBreathSource::Kind::Shaman);
+    EXPECT_EQ(plan[3].kind, DcBreathSource::Kind::Human);
+    EXPECT_EQ(plan[4].kind, DcBreathSource::Kind::Dead);
+
+    std::vector<DcBreathSource::Member> covered = {Bot(true), Bot(true), human, dead};
+    EXPECT_TRUE(DcBreathSource::AllBotsCovered(DcBreathSource::Plan(covered)));
+}
+
+TEST(DcBreathSource, UnderwaterVerdicts)
+{
+    using namespace DcBreathSource;
+    // Short dips are nothing.
+    EXPECT_EQ(DecideUnderwater(5000, false, false), Verdict::None);
+    // 20s under with no swim leg and no fight: stranded -> rescue.
+    EXPECT_EQ(DecideUnderwater(21000, false, false), Verdict::Rescue);
+    // The same 20s ON a swim leg, or in combat: leave it.
+    EXPECT_EQ(DecideUnderwater(21000, true, false), Verdict::None);
+    EXPECT_EQ(DecideUnderwater(21000, false, true), Verdict::None);
+    // 150s of the 180s timer: rescue out of combat, log only in it.
+    EXPECT_EQ(DecideUnderwater(151000, true, false), Verdict::Rescue);
+    EXPECT_EQ(DecideUnderwater(151000, true, true), Verdict::LogOnly);
+}
+
+// --- pooled spawns -------------------------------------------------------------
+
+TEST(DcPooledSpawn, ResolveLiveSpawnPicksTheOneWithALiveCreatureElseTheFirst)
+{
+    std::vector<DcSpawnPoint> spawns = {{-622.4f, -10.4f, -22.8f}, {-455.9f, -40.0f, -32.5f},
+                                        {-474.2f, -86.9f, -39.9f}};
+    auto near = [](float x, float y, float) { return std::fabs(x + 455.9f) < 1.0f && std::fabs(y + 40.0f) < 1.0f; };
+    EXPECT_EQ(ResolveLiveSpawn(spawns, near), 1u);
+    auto none = [](float, float, float) { return false; };
+    EXPECT_EQ(ResolveLiveSpawn(spawns, none), 0u);
+    std::vector<DcSpawnPoint> single;
+    EXPECT_EQ(ResolveLiveSpawn(single, near), 0u);
+}
+
+// --- the authored events ------------------------------------------------------
+
+TEST(DungeonEventBlackfathom, BuilderStampsPartyWideAndLastMovementOntoSteps)
+{
+    DungeonEvent ev = EventBuilder(1, 1, "x")
+                          .Anchored(0)
+                          .Persistent()
+                          .PartyWide()
+                          .EnsureWaterBreathing()
+                          .MoveTo(0, 0, 0, 2)
+                          .RawPath({G3D::Vector3(1, 0, 0), G3D::Vector3(2, 0, 0)}, 1.5f)
+                          .Swim()
+                          .Jump(3, 0, 0, 1.5f)
+                          .JumpSpeedZ(5.0f)
+                          .UseGO(7, 10)
+                          .SkipIfInstanceData(4, 3)
+                          .Build();
+    ASSERT_EQ(ev.steps.size(), 5u);
+    EXPECT_TRUE(ev.partyWide);
+    for (EventStep const& s : ev.steps)
+        EXPECT_TRUE(s.partyWide);
+    EXPECT_FALSE(ev.steps[1].lastMovementStep);
+    EXPECT_FALSE(ev.steps[2].lastMovementStep);
+    EXPECT_TRUE(ev.steps[3].lastMovementStep);
+    EXPECT_FALSE(ev.steps[4].lastMovementStep);
+    EXPECT_TRUE(ev.steps[2].swim);
+    EXPECT_FLOAT_EQ(ev.steps[2].x, 2.0f) << "RawPath mirrors its last point into x/y/z";
+    EXPECT_FLOAT_EQ(ev.steps[3].jumpSpeedZ, 5.0f);
+    EXPECT_EQ(ev.steps[4].skipIfDataId, 4);
+    EXPECT_EQ(ev.steps[4].skipIfDataValue, 3u);
+    EXPECT_TRUE(IsMovementStepKind(EventStepKind::RawPath));
+    EXPECT_TRUE(IsOffMeshStepKind(EventStepKind::Jump));
+    EXPECT_FALSE(IsOffMeshStepKind(EventStepKind::MoveTo));
+    EXPECT_FALSE(IsMovementStepKind(EventStepKind::EnsureWaterBreathing));
+}
+
+// --- the Forgotten Pool exit --------------------------------------------------
+// Positions are the sk-20261022-002111 timeouts' own (tank parked under Kelris,
+// swimming the pool) and the walkway they fell from; floors are the offline
+// navmesh/VMAP reads. A bot is "in the pool" only over deep water inside it.
+
+TEST(DcPoolExit, InPoolOnlyOverDeepWaterInsideThePool)
+{
+    DcPoolExit::Pool const& pool = DcBlackfathomDeeps::ForgottenPool();
+    // tr-...-1026's final tank position, on the pool floor under Kelris.
+    EXPECT_TRUE(DcPoolExit::InPool(pool, -808.3f, -153.0f, -36.2f, -38.4f));
+    // tr-...-690's, bobbing at the surface under the walkway overhang.
+    EXPECT_TRUE(DcPoolExit::InPool(pool, -818.8f, -154.5f, -29.5f, -40.0f));
+    // Swimming mid-pool where it fell in.
+    EXPECT_TRUE(DcPoolExit::InPool(pool, -689.9f, -55.9f, -36.6f, -37.2f));
+
+    // The walkway's north end: ankle-deep water at the surface level.
+    EXPECT_FALSE(DcPoolExit::InPool(pool, -770.1f, -14.5f, -31.3f, -31.3f));
+    // Kelris's walkway: above the surface.
+    EXPECT_FALSE(DcPoolExit::InPool(pool, -818.8f, -155.6f, -25.9f, -25.9f));
+    // The ramp top itself (the leg's end) is out, whatever is under it.
+    EXPECT_FALSE(DcPoolExit::InPool(pool, -740.39f, -2.38f, -31.28f, -40.0f));
+    // Outside the box: Aku'mai's lake, and the corridor in from Lorgus.
+    EXPECT_FALSE(DcPoolExit::InPool(pool, -848.4f, -453.9f, -33.9f, -50.0f));
+    EXPECT_FALSE(DcPoolExit::InPool(pool, -709.7f, 28.4f, -29.8f, -40.0f));
+}
+
+TEST(DcPoolExit, LegFollowsTheFloorCorridorOffTheFloorThenUpTheRamp)
+{
+    DcPoolExit::Pool const& pool = DcBlackfathomDeeps::ForgottenPool();
+    // pathq's floor corridor from the -1026 spot (start point first).
+    std::vector<G3D::Vector3> const corridor = {
+        {-808.3f, -153.0f, -38.4f}, {-801.6f, -110.7f, -37.8f}, {-768.0f, -64.0f, -44.2f},
+        {-760.8f, -49.1f, -40.5f},  {-746.7f, -10.9f, -35.2f}};
+    std::vector<G3D::Vector3> const leg = DcPoolExit::BuildLeg(pool, corridor);
+    // Start dropped, the four corridor points, then the ramp top (the foot is
+    // already the corridor's end, so it is not doubled).
+    ASSERT_EQ(leg.size(), 5u);
+    EXPECT_FLOAT_EQ(leg[0].x, -801.6f);
+    EXPECT_FLOAT_EQ(leg[1].z, -44.2f + pool.floorLift) << "swum off the floor";
+    for (G3D::Vector3 const& q : leg)
+        EXPECT_LE(q.z, pool.surfaceZ) << "never above the water";
+    EXPECT_EQ(leg.back(), pool.rampTop);
+    // It reaches the walkway (#0) at the user's .gps.
+    EXPECT_FLOAT_EQ(leg.back().x, -740.39f);
+    EXPECT_FLOAT_EQ(leg.back().y, -2.38f);
+}
+
+TEST(DcPoolExit, NoCorridorStillSwimsToTheFootAndUpTheRamp)
+{
+    DcPoolExit::Pool const& pool = DcBlackfathomDeeps::ForgottenPool();
+    std::vector<G3D::Vector3> const leg = DcPoolExit::BuildLeg(pool, {});
+    ASSERT_EQ(leg.size(), 2u);
+    EXPECT_FLOAT_EQ(leg[0].x, pool.rampFoot.x);
+    EXPECT_EQ(leg[1], pool.rampTop);
+    // A partial corridor that stops short gets the foot appended.
+    std::vector<G3D::Vector3> const partial = DcPoolExit::BuildLeg(
+        pool, {{-808.3f, -153.0f, -38.4f}, {-783.7f, -133.6f, -31.4f}});
+    ASSERT_EQ(partial.size(), 3u);
+    EXPECT_FLOAT_EQ(partial[1].x, pool.rampFoot.x);
+}
+
+TEST(DungeonEventBlackfathom, PoolExitIsARepeatableConditionalCustomHook)
+{
+    using namespace DcBlackfathomDeeps;
+    DungeonEvent const* ev = Ev(EVENT_POOL_EXIT);
+    ASSERT_NE(ev, nullptr);
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    EXPECT_TRUE(ev->condition != nullptr);
+    EXPECT_TRUE(ev->repeatable) << "a second fall must re-arm it";
+    EXPECT_TRUE(ev->stepsOwnMovement) << "the hook issues its own spline";
+    EXPECT_FALSE(ev->drivesInCombat) << "a fight in the water is the combat engine's";
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EXPECT_EQ(ev->steps[0].kind, EventStepKind::Custom);
+    EXPECT_EQ(ev->steps[0].hookId, HOOK_POOL_EXIT);
+    EXPECT_EQ(ev->steps[0].timeoutMs, POOL_EXIT_TIMEOUT_MS);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(HOOK_POOL_EXIT));
+    // PanelBeforeBoss on a Repeatable event is a permanent pull hold.
+    EXPECT_EQ(ev->panelGatesBossEntry, 0u);
+    EXPECT_EQ(ev->panelSortAfterBossEntry, NPC_LORGUS_JETT);
 }
