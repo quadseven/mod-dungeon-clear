@@ -65,6 +65,7 @@ public:
         creators[DcKey::FollowerState] = &DungeonClearValueContext::dungeon_clear_follower_state;
         creators[DcKey::SwimState] = &DungeonClearValueContext::dungeon_clear_swim_state;
         creators[DcKey::BreathState] = &DungeonClearValueContext::dungeon_clear_breath_state;
+        creators[DcKey::ChainState] = &DungeonClearValueContext::dungeon_clear_chain_state;
         creators[DcKey::LootSkip] = &DungeonClearValueContext::dungeon_clear_loot_skip;
         creators[DcKey::LootCampGuid] = &DungeonClearValueContext::dungeon_clear_loot_camp_guid;
         creators[DcKey::LootCampStart] = &DungeonClearValueContext::dungeon_clear_loot_camp_start;
@@ -129,6 +130,7 @@ private:
     static UntypedValue* dungeon_clear_follower_state(PlayerbotAI* ai) { return new DungeonClearFollowerStateValue(ai); }
     static UntypedValue* dungeon_clear_swim_state(PlayerbotAI* ai) { return new DungeonClearSwimStateValue(ai); }
     static UntypedValue* dungeon_clear_breath_state(PlayerbotAI* ai) { return new DungeonClearBreathStateValue(ai); }
+    static UntypedValue* dungeon_clear_chain_state(PlayerbotAI* ai) { return new DcChainStateValue(ai); }
     static UntypedValue* dungeon_clear_loot_skip(PlayerbotAI* ai) { return new DungeonClearLootSkipValue(ai); }
     static UntypedValue* dungeon_clear_loot_camp_guid(PlayerbotAI* ai) { return new DungeonClearLootCampGuidValue(ai); }
     static UntypedValue* dungeon_clear_loot_camp_start(PlayerbotAI* ai) { return new DungeonClearLootCampStartValue(ai); }
