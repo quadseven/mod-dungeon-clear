@@ -286,6 +286,11 @@ bool DcLootPolicy::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
                     DcEncounterChests::IsEncounterChest(go->GetEntry())) &&
                    go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
                    target.skillId != SKILL_HERBALISM && target.skillId != SKILL_MINING;
+            // A unique key already owned cannot be picked up again. Leave the
+            // chest to party members who still need it instead of reopening it.
+            uint32 const key = DcCompletionLoot::KeyForChest(go->GetEntry());
+            if (key && bot->HasItemCount(key, 1, true))
+                keep = false;
         }
         // else: loose item loot or an unresolvable guid -> not a corpse or chest.
 

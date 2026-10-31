@@ -7,6 +7,7 @@
 #define _DC_LOOT_POLICY_H
 
 #include "Define.h"
+#include "DcCompletionLoot.h"
 
 class Player;
 class Creature;
@@ -41,7 +42,7 @@ public:
     // party that skipped them could never earn the key it now needs.
     static constexpr bool IsDoorKeyChest(uint32 goEntry)
     {
-        return goEntry == 103821 || goEntry == 179516;
+        return DcCompletionLoot::KeyForChest(goEntry) != 0;
     }
 
     // --- Per-corpse loot give-up list ---------------------------------------

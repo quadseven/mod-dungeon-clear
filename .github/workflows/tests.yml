@@ -76,6 +76,9 @@ jobs:
           path: modules/mod-dungeon-clear
 
       # 2. Cheap, build-free gates first.
+      - name: Completion loot replay
+        run: python3 -B modules/mod-dungeon-clear/tools/replay_completion_key_loot.py
+
       - name: Determinism lint
         run: bash modules/mod-dungeon-clear/tools/check_determinism.sh
 

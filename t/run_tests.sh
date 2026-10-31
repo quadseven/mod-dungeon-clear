@@ -13,6 +13,8 @@ echo "Repository Root: ${REPO_ROOT}"
 echo "Build Directory: ${BUILD_DIR}"
 echo "----------------------------------------------------------"
 
+python3 -B "${SCRIPT_DIR}/../tools/replay_completion_key_loot.py"
+
 # Configure with unit testing enabled
 echo "Configuring build system with BUILD_TESTING=ON..."
 cd "${REPO_ROOT}"

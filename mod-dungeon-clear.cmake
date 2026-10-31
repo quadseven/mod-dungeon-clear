@@ -73,6 +73,7 @@ if (BUILD_TESTING)
         # Define our standalone test target
         add_executable(dungeon_clear_tests
             "${MOD_PATH}/t/TestDoorPolicy.cpp"
+            "${MOD_PATH}/t/TestCompletionLoot.cpp"
             "${MOD_PATH}/t/TestDungeonClearMath.cpp"
             "${MOD_PATH}/t/TestHealReposition.cpp"
             "${MOD_PATH}/t/TestCombatRegroup.cpp"
