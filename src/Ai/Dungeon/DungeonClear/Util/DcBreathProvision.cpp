@@ -82,17 +82,10 @@ namespace
     bool DrinkElixir(Player* p)
     {
         Item* elixir = p->GetItemByEntry(DcBreathSource::ITEM_ELIXIR_OF_WATER_BREATHING);
+        // Production grants nothing a player could not earn, so a bot drinks an
+        // elixir it already carries and otherwise goes without.
         if (!elixir)
-        {
-            p->AddItem(DcBreathSource::ITEM_ELIXIR_OF_WATER_BREATHING, 1);
-            elixir = p->GetItemByEntry(DcBreathSource::ITEM_ELIXIR_OF_WATER_BREATHING);
-            if (!elixir)
-                return false;  // bags full this tick — retry
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] water breathing: granted an Elixir of Water Breathing (no shaman or "
-                     "warlock to buff)",
-                     p->GetName());
-        }
+            return false;
         if (p->HasSpellCooldown(DcBreathSource::SPELL_ELIXIR_OF_WATER_BREATHING))
             return false;
         DcFormGate::DropBlockingForm(p, elixir);

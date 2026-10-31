@@ -830,6 +830,39 @@ namespace
         return ev;
     }
 
+    // Upstream's jump chain and swim, built here because this branch does not
+    // register them. They exercise the chain kernels with real coordinates.
+    DungeonEvent JumpChain()
+    {
+        return EventBuilder(BFD, 6, "Cross the jump puzzle")
+            .Anchored(0)
+            .Persistent()
+            .PartyWide()
+            .FallVolume(-366.0f, -265.0f, 0.0f, 120.0f, -57.0f, -360.27f, 34.96f, -53.09f, -314.77f,
+                        68.71f, -53.57f, 3)
+            .MoveTo(-360.27f, 34.96f, -53.09f, 1.5f)
+            .Jump(-354.35f, 35.09f, -52.12f, 1.5f)
+            .MoveTo(-337.57f, 43.21f, -53.12f, 1.5f)
+            .Jump(-334.89f, 48.72f, -53.12f, 1.5f)
+            .MoveTo(-330.01f, 50.59f, -53.12f, 1.5f)
+            .Jump(-323.65f, 50.43f, -53.12f, 1.5f)
+            .MoveTo(-315.25f, 61.75f, -53.12f, 1.5f)
+            .Jump(-314.77f, 68.71f, -53.57f, 2.0f)
+            .Build();
+    }
+
+    DungeonEvent SwimChain()
+    {
+        return EventBuilder(BFD, 1, "Swim")
+            .Anchored(1)
+            .Persistent()
+            .PartyWide()
+            .MoveTo(-378.0f, 292.0f, -56.0f, 3.0f)
+            .RawPath({G3D::Vector3(-370.0f, 296.0f, -62.0f), G3D::Vector3(-348.0f, 320.0f, -55.5f)}, 4.0f)
+            .Swim()
+            .Build();
+    }
+
     std::vector<G3D::Vector3> Line()
     {
         return {G3D::Vector3(0, 0, 0), G3D::Vector3(10, 0, 0), G3D::Vector3(20, 0, 0),
@@ -911,15 +944,14 @@ TEST(DcRawPathDrive, EmptyPathIsArrived)
 
 TEST(DcChainRelease, ReleaseAfterStepIsTheFirstJumpElseTheFirstRawPath)
 {
-    DungeonEvent const* puzzle = Ev(6);
-    ASSERT_NE(puzzle, nullptr);
+    DungeonEvent const chain = JumpChain();
+    DungeonEvent const* puzzle = &chain;
     // MoveTo take-off(0), Jump 1(1), walk(2) ...: a follower starts once the bot
     // ahead is PAST step 1, i.e. has landed on the ridge and is walking it.
     EXPECT_EQ(DcChainRelease::ReleaseAfterStep(*puzzle), 1u);
 
-    DungeonEvent const* swim = Ev(1);
-    ASSERT_NE(swim, nullptr);
-    EXPECT_EQ(DcChainRelease::ReleaseAfterStep(*swim), 1u);
+    DungeonEvent const swim = SwimChain();
+    EXPECT_EQ(DcChainRelease::ReleaseAfterStep(swim), 1u);
 }
 
 TEST(DcChainRelease, ThreeFollowersReleaseOneStoneApart)
@@ -969,8 +1001,8 @@ TEST(DcChainRelease, ThreeFollowersReleaseOneStoneApart)
 
 TEST(DcFallVolume, ClassifiesPoolTakeOffIslandsAndLanding)
 {
-    DungeonEvent const* puzzle = Ev(6);
-    ASSERT_NE(puzzle, nullptr);
+    DungeonEvent const chain = JumpChain();
+    DungeonEvent const* puzzle = &chain;
     DcFallVolume const& f = puzzle->fall;
     ASSERT_TRUE(f.enabled);
     // In the pool: inside the cavern box, below the water line — including the
@@ -992,8 +1024,8 @@ TEST(DcFallVolume, ClassifiesPoolTakeOffIslandsAndLanding)
 
 TEST(DcFallVolume, ArmedFromTheFirstHopNotOnTheApproachSwim)
 {
-    DungeonEvent const* puzzle = Ev(6);
-    ASSERT_NE(puzzle, nullptr);
+    DungeonEvent const chain = JumpChain();
+    DungeonEvent const* puzzle = &chain;
     // Step 0 is the approach: a follower may still be swimming it, through
     // the very water the volume covers. Armed from jump 1 on.
     EXPECT_FALSE(DcPartyWideChain::FallArmed(*puzzle, 0));

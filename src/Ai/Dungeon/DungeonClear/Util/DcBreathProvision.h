@@ -19,9 +19,8 @@ class Player;
 //     per tick (through PlayerbotAI::CastSpell, so GCD / range / cost handling
 //     is the stock one and the cast shows in the normal logs; Water Breathing's
 //     Shiny Fish Scales reagent is waived by playerbots' triggered cast). The
-//     elixir route grants item 5996 with Player::AddItem — the Deadmines
-//     gunpowder / Old Hillsbrad bomb / Mechanar key pattern — and has the
-//     member use it. Druids found in Aquatic Form are shifted out first.
+//     elixir route has a member use item 5996 if it already carries one; this
+//     branch grants nothing. Druids found in Aquatic Form are shifted out first.
 //     Done once every bot carries the aura; after
 //     DC_BREATH_PROVISION_TIMEOUT_MS the uncovered members are logged at INFO
 //     and the step completes anyway (the watchdog below remains).
