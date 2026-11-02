@@ -392,6 +392,16 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     }
 }
 
+// The Final Chamber gate (142207) lies about 90yd up the route to
+// Thermaplugg. The ordinary 80yd lookahead misses it on route rebuild, leaving
+// the tank to walk for minutes before door-blocked can recover the approach.
+TEST(DcDoorPolicyTest, GnomereganFinalChamberIsFoundOnTheThermapluggRoute)
+{
+    constexpr uint32 FINAL_CHAMBER = 142207;
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(FINAL_CHAMBER));
+    EXPECT_GE(DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD, 90.0f);
+}
+
 // Blackwing Lair's Chromaggus cage. The portcullis (179116) is opened ONLY by
 // the Lever (179148) 65yd away on the raid's side of it: go_chromaggus_lever's
 // GossipHello clears his IMMUNE_TO_PC, walks him out and calls HandleGameObject

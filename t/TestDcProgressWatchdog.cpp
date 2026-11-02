@@ -194,6 +194,21 @@ TEST(DcDoorStallWatchdog, ArmsOnFirstObservationAndTimesOutAtTheBudget)
     EXPECT_TRUE(s.ObserveDoorStall(gate, 1000u + TIMEOUT_MS, REARM_MS, TIMEOUT_MS));
 }
 
+TEST(DcDoorStallWatchdog, GnomereganFinalChamberRecoversAfterLongBossQuiet)
+{
+    DcApproachState s;
+    ObjectGuid const gate = DoorGuid(142207);
+    constexpr uint32 noKillMs = 31u * 60u * 1000u;
+
+    // The Thermaplugg approach can be quiet for over 30 minutes. Once the
+    // route scan finds the Final Chamber gate, the usual door interaction
+    // clears its stall window instead of leaving the run to the two-hour cap.
+    EXPECT_FALSE(s.ObserveDoorStall(gate, noKillMs, REARM_MS, TIMEOUT_MS));
+    s.ClearDoorStall();
+    EXPECT_EQ(s.doorStallGuid, ObjectGuid::Empty);
+    EXPECT_FALSE(s.ObserveDoorStall(gate, noKillMs + TIMEOUT_MS, REARM_MS, TIMEOUT_MS));
+}
+
 TEST(DcDoorStallWatchdog, ADifferentDoorStartsAFreshWindow)
 {
     DcApproachState s;

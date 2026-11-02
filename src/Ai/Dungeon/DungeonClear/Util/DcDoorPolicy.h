@@ -39,6 +39,10 @@
 // asks the human, which is the safe default.
 namespace DcDoorPolicy
 {
+    // Keep closed-door detection ahead of long dungeon approaches. The
+    // Gnomeregan Final Chamber gate is about 90yd up the Thermaplugg route.
+    constexpr float BLOCKING_DOOR_LOOK_AHEAD = 120.0f;
+
     // One decoded Lock.dbc case: LOCK_KEY_* discriminator, its Index (item
     // entry for ITEM, LockType for SKILL), and the required skill value.
     struct LockSlot
