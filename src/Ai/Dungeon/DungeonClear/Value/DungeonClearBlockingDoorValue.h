@@ -14,7 +14,7 @@ class PlayerbotAI;
 
 // Returns the GUID of a closed `GAMEOBJECT_TYPE_DOOR` whose geometry sits
 // within ~5yd of the next leg of the cached `dungeon clear long path`,
-// looking ~80yd ahead from the bot's current position. Empty GUID means
+// looking ~120yd ahead from the bot's current position. Empty GUID means
 // "no closed door blocking the corridor".
 //
 // Used by the door-blocked trigger to stall Advance with a specific reason

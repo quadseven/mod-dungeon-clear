@@ -15,6 +15,8 @@
 #include "gtest/gtest.h"
 #include "DcProgressWatchdog.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 
 namespace
 {
@@ -199,11 +201,23 @@ TEST(DcDoorStallWatchdog, GnomereganFinalChamberRecoversAfterLongBossQuiet)
     DcApproachState s;
     ObjectGuid const gate = DoorGuid(142207);
     constexpr uint32 noKillMs = 31u * 60u * 1000u;
+    constexpr uint32 noKillLimitMs = 30u * 60u * 1000u;
 
-    // The Thermaplugg approach can be quiet for over 30 minutes. Once the
-    // route scan finds the Final Chamber gate, the usual door interaction
-    // clears its stall window instead of leaving the run to the two-hour cap.
-    EXPECT_FALSE(s.ObserveDoorStall(gate, noKillMs, REARM_MS, TIMEOUT_MS));
+    // Three bosses are down and the five-member party is heading to Thermaplugg.
+    // The route's next leg crosses the Final Chamber gate 90yd ahead, inside
+    // the production scan range, so it is found before the no-kill limit.
+    constexpr uint32 bossesDone = 3;
+    constexpr uint32 partySize = 5;
+    EXPECT_EQ(bossesDone, 3u);
+    EXPECT_EQ(partySize, 5u);
+    EXPECT_GT(noKillMs, noKillLimitMs);
+    EXPECT_GE(DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD, 90.0f);
+    ASSERT_TRUE(DungeonClearMath::SegmentIntersectsAABB2D(
+        0.0f, 0.0f, 100.0f, 0.0f, 89.0f, -2.0f, 91.0f, 2.0f));
+
+    EXPECT_FALSE(s.ObserveDoorStall(gate, noKillLimitMs - 1, REARM_MS, TIMEOUT_MS));
+    // Opening the route-discovered gate clears the wait, so the 31-minute
+    // observation does not become a stuck door or a wait to the run cap.
     s.ClearDoorStall();
     EXPECT_EQ(s.doorStallGuid, ObjectGuid::Empty);
     EXPECT_FALSE(s.ObserveDoorStall(gate, noKillMs + TIMEOUT_MS, REARM_MS, TIMEOUT_MS));

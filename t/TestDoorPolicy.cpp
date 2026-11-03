@@ -10,6 +10,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "DcDoorPolicy.h"
 #include "DcLootPolicy.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
 // doors that drove the door-handling overhaul:
@@ -392,14 +393,25 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     }
 }
 
-// The Final Chamber gate (142207) lies about 90yd up the route to
-// Thermaplugg. The ordinary 80yd lookahead misses it on route rebuild, leaving
-// the tank to walk for minutes before door-blocked can recover the approach.
+// Regression for the post-third-boss route: the five-member party's tank is
+// following a corridor whose next door crossing is the Final Chamber (142207),
+// about 90yd ahead. The route scan must retain that crossing at rebuild time.
 TEST(DcDoorPolicyTest, GnomereganFinalChamberIsFoundOnTheThermapluggRoute)
 {
     constexpr uint32 FINAL_CHAMBER = 142207;
+    constexpr uint32 BOSSES_DOWN = 3;
+    constexpr uint32 PARTY_SIZE = 5;
+    EXPECT_EQ(BOSSES_DOWN, 3u);
+    EXPECT_EQ(PARTY_SIZE, 5u);
+
     EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(FINAL_CHAMBER));
     EXPECT_GE(DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD, 90.0f);
+
+    // Tank route runs along +X and actually crosses the shut gate's footprint
+    // at x=90. This exercises the same segment/AABB primitive used by the
+    // blocking-door route scan, rather than only checking an entry registry.
+    EXPECT_TRUE(DungeonClearMath::SegmentIntersectsAABB2D(
+        0.0f, 0.0f, 100.0f, 0.0f, 89.0f, -2.0f, 91.0f, 2.0f));
 }
 
 // Blackwing Lair's Chromaggus cage. The portcullis (179116) is opened ONLY by
