@@ -7,7 +7,9 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcKaraLibraryPit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPitRescue.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "InstanceScript.h"
@@ -231,14 +233,27 @@ namespace
         return bot && bot->GetMapId() == DcKaraLibraryPit::MAP_KARAZHAN && bot->IsAlive() && InLibraryPit(bot);
     }
 
-    // One tick: already out (a rez, a stranded-recovery teleport) is Done; otherwise
-    // relocate the whole party to the landing. The event engine is dormant while the
-    // leader fights, and whatever the party is still flagged with is left behind
-    // (RelocateParty drops it).
+    // One tick: already out (a rez, a stranded-recovery teleport) is Done. Otherwise
+    // the void has no exit, so the party is relocated to the landing only with
+    // DungeonClear.PitRescueTeleport on (DcPitRescue.h); with it off the hook reports
+    // Blocked and the event's AbortOnFailure ends the run. The event engine is
+    // dormant while the leader fights, and whatever the party is still flagged with
+    // is left behind (RelocateParty drops it).
     ObjectiveArriveResult RescueFromLibraryPit(Player* bot, AiObjectContext* context, DungeonBossInfo const& /*info*/)
     {
-        if (!bot || !context || bot->GetMapId() != DcKaraLibraryPit::MAP_KARAZHAN || !InLibraryPit(bot))
+        bool const inPit = bot && context && bot->GetMapId() == DcKaraLibraryPit::MAP_KARAZHAN && InLibraryPit(bot);
+        DcPitRescue::Step const step =
+            DcPitRescue::Decide(inPit, inPit && DcSettings::GetBool(bot, DcPitRescue::SETTING));
+        if (step == DcPitRescue::Step::Out)
             return ObjectiveArriveResult::Done;
+        if (step == DcPitRescue::Step::Abort)
+        {
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] library pit: under the Guardian's Library at ({:.1f},{:.1f},{:.1f}), which has no "
+                     "way out, and PitRescueTeleport is off -> ending the run",
+                     bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+            return ObjectiveArriveResult::Blocked;
+        }
 
         DcRunState& run = DcRun::Of(context);
         ++run.karaPitRescues;
@@ -264,6 +279,7 @@ namespace
             .Conditional(&LibraryPitDue)
             .Repeatable()
             .StepsOwnMovement()
+            .AbortOnFailure()
             .PanelAfterBoss(NPC_CURATOR)
             .Custom(DcKaraLibraryPit::HOOK_PIT_RESCUE)
             .Build();

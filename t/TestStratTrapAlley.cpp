@@ -9,6 +9,8 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPitRescue.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStratTrapAlley.h"
 
 // Stratholme's Scarlet gate-trap alley: the hole strip the critter despawn
@@ -89,6 +91,7 @@ TEST(DcStratTrapAlley, PitRescueIsARepeatableConditionalCustomHook)
     EXPECT_TRUE(ev->condition != nullptr);
     EXPECT_TRUE(ev->repeatable) << "a second fall must re-arm it";
     EXPECT_TRUE(ev->stepsOwnMovement) << "the hook teleports";
+    EXPECT_TRUE(ev->abortOnFailure) << "with PitRescueTeleport off the hook's Blocked must end the run";
     ASSERT_EQ(ev->steps.size(), 1u);
     EXPECT_EQ(ev->steps[0].kind, EventStepKind::Custom);
     EXPECT_EQ(ev->steps[0].hookId, HOOK_PIT_RESCUE);
@@ -96,4 +99,32 @@ TEST(DcStratTrapAlley, PitRescueIsARepeatableConditionalCustomHook)
     // PanelBeforeBoss on a Repeatable event is a permanent pull hold.
     EXPECT_EQ(ev->panelGatesBossEntry, 0u);
     EXPECT_EQ(ev->panelSortAfterBossEntry, NPC_THE_UNFORGIVEN);
+}
+
+// --- the teleport gate (#98) -------------------------------------------------
+
+// Neither pit rescue teleports unless DungeonClear.PitRescueTeleport is on; a
+// party in a pit with it off ends the run.
+TEST(DcPitRescue, InThePitWithTheGateOffEndsTheRun)
+{
+    EXPECT_EQ(DcPitRescue::Decide(/*inPit*/ true, /*teleportAllowed*/ false), DcPitRescue::Step::Abort);
+}
+
+TEST(DcPitRescue, InThePitWithTheGateOnTeleports)
+{
+    EXPECT_EQ(DcPitRescue::Decide(true, true), DcPitRescue::Step::Teleport);
+}
+
+TEST(DcPitRescue, OutOfThePitIsDoneWhateverTheGate)
+{
+    EXPECT_EQ(DcPitRescue::Decide(false, false), DcPitRescue::Step::Out);
+    EXPECT_EQ(DcPitRescue::Decide(false, true), DcPitRescue::Step::Out);
+}
+
+TEST(DcPitRescue, TheGateDefaultsOff)
+{
+    DcSettingDef const* d = FindDcSetting(DcPitRescue::SETTING);
+    ASSERT_NE(d, nullptr) << "no settings row for " << DcPitRescue::SETTING;
+    EXPECT_EQ(d->type, DcType::Bool);
+    EXPECT_EQ(d->defVal, 0.0) << "a teleport is not player play: the compiled-in default must be off";
 }

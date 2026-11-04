@@ -468,4 +468,5 @@ TEST(DcKarazhanTest, LibraryPitRescueEventShape)
     EXPECT_EQ(ev->steps[0].hookId, DcKaraLibraryPit::HOOK_PIT_RESCUE);
     EXPECT_EQ(ev->steps[0].kind, EventStepKind::Custom);
     EXPECT_TRUE(ObjectiveHookRegistry::Has(DcKaraLibraryPit::HOOK_PIT_RESCUE));
+    EXPECT_TRUE(ev->abortOnFailure) << "with PitRescueTeleport off the hook's Blocked must end the run";
 }
