@@ -292,3 +292,48 @@ TEST(DcNoGrant, TheQueueFillNeverRestoresABot)
         for (std::size_t at : CallOffsets(code, api))
             ADD_FAILURE() << "DcDungeonQueueFillJob.cpp:" << LineOf(code, at) << " calls " << api;
 }
+
+// #98: DungeonEventExecutor::RelocateParty teleports the whole party (its
+// NearTeleportTo is row A above), so every caller is a grant site the A row does
+// not name. Each caller outside the executor is listed here by the event that
+// calls it; each sits behind DungeonClear.PitRescueTeleport (DcPitRescue.h).
+TEST(DcGrantLedger, EveryPartyRelocationIsNamedByItsEvent)
+{
+    std::map<std::string, std::pair<std::size_t, char const*>> const kRelocators = {
+        {"Ai/Dungeon/DungeonClear/Data/Events/StratholmeEvents.cpp",
+         {1, "Stratholme trap-alley pit rescue (event 7), gated by PitRescueTeleport"}},
+        {"Ai/Dungeon/DungeonClear/Data/Events/KarazhanEvents.cpp",
+         {1, "Karazhan library pit rescue (event 4), gated by PitRescueTeleport"}},
+    };
+    std::string const executor = "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.cpp";
+
+    std::filesystem::path const src = ModuleSrc();
+    ASSERT_TRUE(std::filesystem::exists(src)) << "cannot find " << src;
+    std::map<std::string, std::size_t> seen;
+    for (auto const& e : std::filesystem::recursive_directory_iterator(src))
+    {
+        if (!e.is_regular_file() || !IsSource(e.path()))
+            continue;
+        std::string const rel = std::filesystem::relative(e.path(), src).generic_string();
+        if (rel == executor || rel.size() < 4 || rel.compare(rel.size() - 4, 4, ".cpp") != 0)
+            continue;
+        std::string const code = StripComments(ReadFile(e.path()));
+        std::size_t const n = CallOffsets(code, "RelocateParty").size();
+        if (n == 0)
+            continue;
+        seen[rel] = n;
+        auto const it = kRelocators.find(rel);
+        if (it == kRelocators.end())
+            ADD_FAILURE() << rel << " relocates the party " << n
+                          << " time(s): name the event and gate it like the pit rescues";
+        else
+        {
+            EXPECT_EQ(n, it->second.first) << rel << ": " << it->second.second;
+            EXPECT_NE(code.find("DcPitRescue::SETTING"), std::string::npos)
+                << rel << " relocates the party without reading the PitRescueTeleport gate";
+        }
+    }
+    for (auto const& [rel, row] : kRelocators)
+        EXPECT_TRUE(seen.count(rel)) << rel << " no longer relocates the party: drop its row (" << row.second
+                                     << ")";
+}

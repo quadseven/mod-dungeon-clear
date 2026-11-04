@@ -357,6 +357,21 @@ DungeonClear.StrandedRecovery = 0
 DungeonClear.StrandedRecoveryNoProgressSecs = 60
 
 #
+#    DungeonClear.PitRescueTeleport
+#        Two pits have no walk or swim exit: Stratholme's Scarlet trap-alley
+#        pit and the void under Karazhan's Guardian's Library. When this is
+#        on, a party in either is teleported back up to the landing.
+#        Off by default: a teleport is not something a human party can do, so
+#        a party in either pit ends the run with a reason instead.
+#            0 = off (the run ends)
+#            1 = on
+#
+#        Default: 0
+#
+
+DungeonClear.PitRescueTeleport = 0
+
+#
 #    DungeonClear.UnreachableCombatPurgeSecs
 #        The other half of "the run has frozen". Not a party member stranded out
 #        of range, but a MOB stranded out of REACH that has the party in combat

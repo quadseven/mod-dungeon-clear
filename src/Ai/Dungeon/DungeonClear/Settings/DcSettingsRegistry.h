@@ -193,6 +193,13 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "StrandedRecovery",              DcType::Bool,   0,   0,    1,  true  },
     { "StrandedRecoveryNoProgressSecs", DcType::UInt,  60,  60, 3600,  true  },
 
+    // Pit rescue teleport. Two pits have no walk or swim exit: Stratholme's
+    // Scarlet trap-alley pit and the void under Karazhan's Guardian's Library.
+    // With this on, a party in either is teleported back up to the landing;
+    // OFF (the default) ends the run with a reason instead, because a teleport
+    // is not something a player party can do. See Util/DcPitRescue.h.
+    { "PitRescueTeleport",             DcType::Bool,   0,   0,    1,  true  },
+
     // Unreachable-holder combat purge. The other half of "the run has frozen":
     // not a member stranded out of range, but a MOB stranded out of reach that
     // has the party in combat and can never be killed, never be reached, and

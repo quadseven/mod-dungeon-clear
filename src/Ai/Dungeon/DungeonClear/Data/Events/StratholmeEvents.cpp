@@ -17,6 +17,8 @@
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPitRescue.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStratTrapAlley.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -338,15 +340,30 @@ namespace
                StrInTrapAlleyPit(bot);
     }
 
-    // One tick: already out (a rez, a stranded-recovery teleport) is Done;
-    // otherwise relocate the whole party to the landing. Combat needs no gate:
-    // the event engine is dormant while the leader fights, and whatever the
-    // party is still flagged with is left in the pit (RelocateParty drops it).
+    // One tick: already out (a rez, a stranded-recovery teleport) is Done.
+    // Otherwise the pit has no exit, so the party is relocated to the landing
+    // only with DungeonClear.PitRescueTeleport on (DcPitRescue.h); with it off
+    // the hook reports Blocked and the event's AbortOnFailure ends the run.
+    // Combat needs no gate: the event engine is dormant while the leader
+    // fights, and whatever the party is still flagged with is left in the pit
+    // (RelocateParty drops it).
     ObjectiveArriveResult RescueFromTrapAlleyPit(Player* bot, AiObjectContext* context,
                                                  DungeonBossInfo const& /*info*/)
     {
-        if (!bot || !context || bot->GetMapId() != DcStratTrapAlley::MAP_STRATHOLME || !StrInTrapAlleyPit(bot))
+        bool const inPit = bot && context && bot->GetMapId() == DcStratTrapAlley::MAP_STRATHOLME &&
+                           StrInTrapAlleyPit(bot);
+        DcPitRescue::Step const step =
+            DcPitRescue::Decide(inPit, inPit && DcSettings::GetBool(bot, DcPitRescue::SETTING));
+        if (step == DcPitRescue::Step::Out)
             return ObjectiveArriveResult::Done;
+        if (step == DcPitRescue::Step::Abort)
+        {
+            LOG_WARN("playerbots.dungeonclear",
+                     "[DC:{}] trap-alley pit: in the pit at ({:.1f},{:.1f},{:.1f}), which has no way out, "
+                     "and PitRescueTeleport is off -> ending the run",
+                     bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+            return ObjectiveArriveResult::Blocked;
+        }
 
         DcRunState& run = DcRun::Of(context);
         ++run.stratPitRescues;
@@ -520,6 +537,7 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out)
                       .Conditional(&StrTrapAlleyPitDue)
                       .Repeatable()
                       .StepsOwnMovement()
+                      .AbortOnFailure()
                       .PanelAfterBoss(DcStratTrapAlley::NPC_THE_UNFORGIVEN)
                       .Custom(DcStratTrapAlley::HOOK_PIT_RESCUE)
                       .Build());
