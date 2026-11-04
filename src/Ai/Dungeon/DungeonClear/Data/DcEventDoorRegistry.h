@@ -845,7 +845,7 @@ namespace DcEventDoorRegistry
             //   177000 Hot Coal (guid 56287, display 2470) at
             //     (736.7,-1176.6,-119.8) — 23yd short of MajordomoSummonPos
             //     (759.5,-1173.4,-119.0), squarely on the approach into his
-            //     chamber and well inside the value's 80yd DOOR_LOOK_AHEAD.
+            //     chamber and well inside the value's 120yd DOOR_LOOK_AHEAD.
             //     Nothing in instance_molten_core or boss_majordomo_executus
             //     so much as names entry 177000: it is a decorative coal pile
             //     that is permanently READY and opened by nothing, ever.
