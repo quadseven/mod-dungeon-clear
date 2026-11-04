@@ -21,6 +21,12 @@ std::vector<DungeonBossInfo> const& BossSpawnIndex::Get(uint32 mapId, Difficulty
     EnsureBuilt();
     static std::vector<DungeonBossInfo> const empty;
     auto it = _store.find(MakeKey(mapId, difficulty));
+    // DungeonEncounter.dbc defines ICC and Ruby Sanctum encounters for 10N/25N
+    // only, so their 10H/25H buckets are never built. Fall back to the same
+    // raid size's normal bucket, as Map::UpdateEncounterState does. Dungeon
+    // difficulties stop at 1, so only a raid heroic takes this branch.
+    if (it == _store.end() && difficulty >= RAID_DIFFICULTY_10MAN_HEROIC)
+        it = _store.find(MakeKey(mapId, Difficulty(difficulty - 2)));
     if (it == _store.end())
         return empty;
     return it->second;

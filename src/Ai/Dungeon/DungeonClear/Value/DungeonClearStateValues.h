@@ -21,6 +21,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBreathDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -542,6 +543,22 @@ public:
 
 private:
     DcBreath::Model data;
+};
+
+// Per-bot progress through a PARTY-WIDE event chain (DcPartyWideChain). Every
+// bot — leader and followers — owns one; see DcChainState for who reads what.
+class DcChainStateValue : public ManualSetValue<DcChainState&>
+{
+public:
+    DcChainStateValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcChainState&>(botAI, data, DcKey::ChainState)
+    {
+    }
+
+    void Reset() override { data.Reset(); }
+
+private:
+    DcChainState data;
 };
 
 // Cursor into the cached long-path's flattened polyline plus the

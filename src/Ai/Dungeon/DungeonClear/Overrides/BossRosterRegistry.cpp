@@ -44,10 +44,10 @@ namespace
             RegisterBlackwingLairRoster(t);
             RegisterDeadminesRoster(t);
             RegisterWailingCavernsRoster(t);
+            RegisterBlackfathomDeepsRoster(t);
             RegisterStratholmeRoster(t);
             RegisterDireMaulRoster(t);
             RegisterUldamanRoster(t);
-            RegisterBlackfathomDeepsRoster(t);
             RegisterHellfireRampartsRoster(t);
             RegisterSlavePensRoster(t);
             RegisterUnderbogRoster(t);

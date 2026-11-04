@@ -132,6 +132,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestOculus.cpp"
             "${MOD_PATH}/t/TestGundrak.cpp"
             "${MOD_PATH}/t/TestBlackwingLair.cpp"
+            "${MOD_PATH}/t/TestStratTrapAlley.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestDefiasGunpowder.cpp"
             "${MOD_PATH}/t/TestGrantLedger.cpp"
