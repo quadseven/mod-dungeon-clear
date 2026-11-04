@@ -111,8 +111,8 @@ namespace DcBreathSource
     // do about a bot that has been under water for `uwMs`.
     //   * Not on an authored swim leg and not in combat, 20s under => it is
     //     stranded (a follower that missed a surface, a bot that sank after a
-    //     teleport): rescue it to the tank, who outside a leg stands on a
-    //     surface or dry island.
+    //     teleport): Rescue, which WatchdogTick logs; it moves no one, since
+    //     a teleport is not the player's own means.
     //   * 150s of the 180s breath timer, whatever it is doing: rescue if out of
     //     combat; in combat only log (surfacing mid-boss is worse) and keep
     //     fighting.

@@ -27,9 +27,9 @@ class Player;
 //
 //   * WatchdogTick — the per-tick backstop, run by the LEADER from the
 //     stranded-recovery trigger site: stamps "under water since" per member on
-//     the run state, applies DcBreathSource::DecideUnderwater, teleports a
-//     rescued bot to the tank (the stranded-recovery fan), logs a LogOnly.
-//     Humans are stamped (for the diag's uwSec) but never teleported.
+//     the run state, applies DcBreathSource::DecideUnderwater and logs a
+//     drowning member. It moves no one: a teleport is not the player's own
+//     means, so a member surfaces by its own swim. Humans are stamped too.
 namespace DcBreathProvision
 {
     // The only tunable, a constant per the no-new-configs rule for dungeon events.

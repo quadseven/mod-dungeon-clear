@@ -739,7 +739,7 @@ bool DungeonClearRecoverStrandedTrigger::IsActive()
         return false;
 
     // The breath watchdog rides the same per-tick, leader-only site: it stamps
-    // every member's "under water since" on the run state and rescues a bot
+    // every member's "under water since" on the run state and logs a bot
     // that is drowning with no swim leg driving it (DcBreathProvision). A no-op
     // on followers and off/paused runs, like Evaluate below.
     DcBreathProvision::WatchdogTick(bot);

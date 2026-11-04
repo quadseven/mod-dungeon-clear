@@ -140,10 +140,9 @@ namespace
         {"BgQueueFill/DcBgQueueFillJob.cpp",                       "RemoveAurasDueToSpell", 1, "U"},
         {"BgQueueFill/DcBgQueueFillJob.cpp",                       "ResurrectPlayer",       1, "U"},
         {"BgQueueFill/DcBgQueueFillManager.cpp",                   "RemoveAurasDueToSpell", 1, "U"},
-        // ...and the 2026-10-31 merge: the breath watchdog's rescue of a drowning
-        // follower, which is live, and a party-wide chain's fall reset, which no
-        // event here reaches.
-        {"Ai/Dungeon/DungeonClear/Util/DcBreathProvision.cpp",     "NearTeleportTo",        1, "U"},
+        // ...and the 2026-10-31 merge: a party-wide chain's fall reset, which no
+        // event here reaches. The breath watchdog's teleport of a drowning
+        // follower was taken out instead: a teleport is not the player's own means.
         {"Ai/Dungeon/DungeonClear/Util/DcPartyWideChain.cpp",      "NearTeleportTo",        1, "U"},
     };
     // clang-format on

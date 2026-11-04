@@ -222,7 +222,6 @@ void DcBreathProvision::WatchdogTick(Player* bot)
         return;
 
     uint32 const now = getMSTime();
-    uint32 moved = 0;
     for (Player* m : PartyOnMap(bot))
     {
         uint64 const key = m->GetGUID().GetRawValue();
@@ -251,24 +250,15 @@ void DcBreathProvision::WatchdogTick(Player* bot)
                              bot->GetName(), m->GetName(), uwMs / 1000);
                 break;
             case DcBreathSource::Verdict::Rescue:
-            {
-                if (m->GetVehicle())
-                    break;
-                float const angle = bot->GetOrientation() + static_cast<float>(moved) * 0.7f;
-                float const off = 1.5f + 0.5f * static_cast<float>(moved);
-                float const tx = bot->GetPositionX() + std::cos(angle) * off;
-                float const ty = bot->GetPositionY() + std::sin(angle) * off;
-                m->GetMotionMaster()->Clear();
-                m->NearTeleportTo(tx, ty, bot->GetPositionZ(), m->GetOrientation(),
-                                  /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
-                ++moved;
-                run.underwaterSinceMs.erase(key);
-                LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] breath watchdog: {} under water {}s with no swim leg driving it -> "
-                         "teleported to the tank",
-                         bot->GetName(), m->GetName(), uwMs / 1000);
+                // No teleport: moving a member is not the player's own means.
+                // The member surfaces by its own swim (the surface-for-breath
+                // action); this only names the drowning member in the log.
+                if ((uwMs / 1000) % 10 == 0 && (uwMs % 1000) < 300)
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] breath watchdog: {} under water {}s with no swim leg driving it; "
+                             "not moved",
+                             bot->GetName(), m->GetName(), uwMs / 1000);
                 break;
-            }
         }
     }
 }
