@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #include "DungeonClearMath.h"
 #include "DcProgressWatchdog.h"
+#include "DcDoorPolicy.h"
 
 #include <limits>
 
@@ -3693,4 +3694,36 @@ TEST(DungeonClearLeaderAssistTest, GroupmateFallbackHasHysteresis)
     EXPECT_TRUE(DungeonClearMath::LeaderAssistFallbackYields(15.0f, true, in, out));
     // A real round-the-corner distance walks again.
     EXPECT_FALSE(DungeonClearMath::LeaderAssistFallbackYields(15.1f, true, in, out));
+}
+
+// Gnomeregan (#96): after the third boss the route to Mekgineer Thermaplugg
+// rebuilds about 90yd short of the Final Chamber gate (GO 142207), and the run
+// log shows the gate flagged only once the tank was close. The door scan's
+// look-ahead corridor must reach a gate that far up the route, and must still
+// stop once it passes the look-ahead.
+TEST(DungeonClearLookAheadTest, ThermapluggCorridorReachesTheFinalChamberGate)
+{
+    std::vector<G3D::Vector3> route;
+    for (int i = 1; i <= 20; ++i)
+        route.emplace_back(10.0f * i, 0.0f, -300.0f);  // 10yd steps out to 200yd
+
+    // A 1yd-thick, 10yd-wide gate panel 92yd up the corridor.
+    auto const crossesGate = [](std::vector<DungeonClearMath::LookAheadLeg> const& legs)
+    {
+        for (auto const& leg : legs)
+            if (DungeonClearMath::SegmentIntersectsAABB2D(leg.ax, leg.ay, leg.bx, leg.by,
+                                                          91.5f, -5.0f, 92.5f, 5.0f))
+                return true;
+        return false;
+    };
+
+    auto const legs = DungeonClearMath::LookAheadLegs(route, 0, 0.0f, 0.0f, -300.0f,
+                                                      DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
+    EXPECT_TRUE(crossesGate(legs));
+    ASSERT_FALSE(legs.empty());
+    EXPECT_FLOAT_EQ(legs.front().ax, 0.0f);   // joining leg starts at the bot
+    EXPECT_FLOAT_EQ(legs.back().bx, 130.0f);  // first vertex past 120yd ends the scan
+
+    // The 80yd reach the scan had before this fix stops short of the gate.
+    EXPECT_FALSE(crossesGate(DungeonClearMath::LookAheadLegs(route, 0, 0.0f, 0.0f, -300.0f, 80.0f)));
 }

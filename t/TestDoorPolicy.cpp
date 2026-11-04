@@ -392,17 +392,13 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     }
 }
 
-// Regression for the post-third-boss route: the five-member party's tank is
-// following a corridor whose next door crossing is the Final Chamber (142207),
-// about 90yd ahead. The route scan must retain that crossing at rebuild time.
-TEST(DcDoorPolicyTest, GnomereganFinalChamberIsFoundOnTheThermapluggRoute)
+// The Final Chamber gate (142207) on the Thermaplugg route is a real blocker:
+// it must stay visible to the blocking-door scan, not navigation-ignored. The
+// scan's reach to it is pinned in TestDungeonClearMath.cpp
+// (DungeonClearLookAheadTest).
+TEST(DcDoorPolicyTest, GnomereganFinalChamberIsNotNavigationIgnored)
 {
-    constexpr uint32 FINAL_CHAMBER = 142207;
-    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(FINAL_CHAMBER));
-    // The actual production route-scan cutoff must include the gate observed
-    // about 90yd ahead in the Thermaplugg log, but stop scanning beyond range.
-    EXPECT_TRUE(DcDoorPolicy::IsWithinBlockingDoorLookAhead(90.0f));
-    EXPECT_FALSE(DcDoorPolicy::IsWithinBlockingDoorLookAhead(121.0f));
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(142207));
 }
 
 // Blackwing Lair's Chromaggus cage. The portcullis (179116) is opened ONLY by

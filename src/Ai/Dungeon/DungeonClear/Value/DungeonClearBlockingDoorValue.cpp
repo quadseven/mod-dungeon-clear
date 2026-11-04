@@ -289,26 +289,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         return dropFlag();
     }
 
-    float prevX = botX;
-    float prevY = botY;
-    float prevZ = botZ;
-    float accumulated = 0.0f;
-
-    struct Seg { float ax, ay, az, bx, by, bz; };
-    std::vector<Seg> segments;
-
-    for (size_t i = cursor; i < pts.size(); ++i)
-    {
-        float const dx = pts[i].x - prevX;
-        float const dy = pts[i].y - prevY;
-        segments.push_back(Seg{prevX, prevY, prevZ, pts[i].x, pts[i].y, pts[i].z});
-        accumulated += std::sqrt(dx * dx + dy * dy);
-        prevX = pts[i].x;
-        prevY = pts[i].y;
-        prevZ = pts[i].z;
-        if (!DcDoorPolicy::IsWithinBlockingDoorLookAhead(accumulated))
-            break;
-    }
+    std::vector<DungeonClearMath::LookAheadLeg> const segments = DungeonClearMath::LookAheadLegs(
+        pts, cursor, botX, botY, botZ, DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
     if (segments.empty())
         return ObjectGuid::Empty;
 
