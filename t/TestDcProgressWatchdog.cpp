@@ -194,22 +194,26 @@ TEST(DcDoorStallWatchdog, ArmsOnFirstObservationAndTimesOutAtTheBudget)
     EXPECT_TRUE(s.ObserveDoorStall(gate, 1000u + TIMEOUT_MS, REARM_MS, TIMEOUT_MS));
 }
 
-TEST(DcDoorStallWatchdog, GnomereganFinalChamberRecoversAfterLongBossQuiet)
+TEST(DcDoorStallWatchdog, GnomereganFinalChamberTimeoutsDuringLongBossQuiet)
 {
     DcApproachState s;
     ObjectGuid const gate = DoorGuid(142207);
-    uint32 now = 0;
+    constexpr uint32 lastKillMs = 0;
+    constexpr uint32 thirtyMinutesMs = 30u * 60u * 1000u;
+    constexpr uint32 twoHourCapMs = 2u * 60u * 60u * 1000u;
 
-    // With three bosses down, the quiet trip to Thermaplugg reaches the Final
-    // Chamber at 29 minutes. Door arrival starts its real blocked-state clock.
-    now = 29u * 60u * 1000u;
-    EXPECT_FALSE(s.ObserveDoorStall(gate, now, REARM_MS, TIMEOUT_MS));
+    // With three bosses down and no kill since the run began, the tank reaches
+    // the closed Final Chamber on the quiet trip to Thermaplugg at 30 minutes.
+    constexpr uint32 doorArrivalMs = thirtyMinutesMs;
+    EXPECT_FALSE(s.ObserveDoorStall(gate, doorArrivalMs, REARM_MS, TIMEOUT_MS));
 
-    // The route interaction opens the door before the 30-minute no-kill point.
-    s.ClearDoorStall();
-    EXPECT_EQ(s.doorStallGuid, ObjectGuid::Empty);
-    now += 2u * 60u * 1000u;
-    EXPECT_FALSE(s.ObserveDoorStall(gate, now, REARM_MS, TIMEOUT_MS));
+    // The route is still blocked on its next check. It takes the door-timeout
+    // exit, rather than silently holding the party until the two-hour run cap.
+    constexpr uint32 timeoutMs = doorArrivalMs + TIMEOUT_MS;
+    EXPECT_TRUE(s.ObserveDoorStall(gate, timeoutMs, REARM_MS, TIMEOUT_MS));
+    EXPECT_GT(timeoutMs - lastKillMs, thirtyMinutesMs);
+    EXPECT_LT(timeoutMs, twoHourCapMs);
+
 }
 
 TEST(DcDoorStallWatchdog, ADifferentDoorStartsAFreshWindow)
