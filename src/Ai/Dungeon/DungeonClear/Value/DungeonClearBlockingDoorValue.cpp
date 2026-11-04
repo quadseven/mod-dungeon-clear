@@ -306,7 +306,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         prevX = pts[i].x;
         prevY = pts[i].y;
         prevZ = pts[i].z;
-        if (accumulated >= DOOR_LOOK_AHEAD)
+        if (!DcDoorPolicy::IsWithinBlockingDoorLookAhead(accumulated))
             break;
     }
     if (segments.empty())

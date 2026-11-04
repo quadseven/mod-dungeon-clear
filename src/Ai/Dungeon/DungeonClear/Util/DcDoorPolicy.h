@@ -43,6 +43,13 @@ namespace DcDoorPolicy
     // Gnomeregan Final Chamber gate is about 90yd up the Thermaplugg route.
     constexpr float BLOCKING_DOOR_LOOK_AHEAD = 120.0f;
 
+    // A shut door this far along the route is eligible for the blocking-door
+    // scan. Keep this predicate shared with the route walker and its tests.
+    inline bool IsWithinBlockingDoorLookAhead(float routeDistance)
+    {
+        return routeDistance <= BLOCKING_DOOR_LOOK_AHEAD;
+    }
+
     // One decoded Lock.dbc case: LOCK_KEY_* discriminator, its Index (item
     // entry for ITEM, LockType for SKILL), and the required skill value.
     struct LockSlot
