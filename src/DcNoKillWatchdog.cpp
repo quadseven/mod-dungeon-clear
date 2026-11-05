@@ -81,7 +81,12 @@ namespace DcNoKillWatchdog
             // is the human's, a raid encounter is the playerbots strategy's fight,
             // and Karazhan's chess game is ten quiet minutes by design.
             in.held = run.paused || DcBossStandDown::IsActive(leader) || DcKarazhan::ChessIsOn(leader);
-            if (next.has_value() && next->mapId == leader->GetMapId())
+            // Any boss still on the roster counts, on whatever map the tank stands:
+            // a tank that has left the instance (a corpse run that never came
+            // back) is a stalled run too. No next boss with a roster means the
+            // dungeon is cleared, and DungeonClearAllClearedTrigger owns that
+            // ending (it reads the same value), so the kernel leaves it alone.
+            if (next.has_value())
                 in.nextBoss = next->name;
 
             DcNoKillDecision::Result const verdict =
