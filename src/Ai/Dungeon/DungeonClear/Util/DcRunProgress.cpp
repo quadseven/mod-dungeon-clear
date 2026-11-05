@@ -28,6 +28,37 @@ namespace
 
 namespace DcRunProgress
 {
+    bool DetectKill(Player* leader, PlayerbotAI* leaderAI, Mark& mark)
+    {
+        if (!leader || !leaderAI)
+            return false;
+
+        AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+        if (!ctx)
+            return false;
+
+        bool killed = false;
+
+        uint32 encounterMask = mark.mask;
+        if (InstanceScript* inst = DcTargeting::GetInstanceScript(leader))
+            encounterMask = inst->GetCompletedEncounterMask();
+        if (encounterMask != mark.mask)
+        {
+            mark.mask = encounterMask;
+            killed = true;
+        }
+
+        std::size_t const anchors =
+            ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().size();
+        if (static_cast<uint32>(anchors) != mark.anchors)
+        {
+            mark.anchors = static_cast<uint32>(anchors);
+            killed = true;
+        }
+
+        return killed;
+    }
+
     bool Detect(Player* leader, PlayerbotAI* leaderAI, Mark& mark)
     {
         if (!leader || !leaderAI)
@@ -37,24 +68,9 @@ namespace DcRunProgress
         if (!ctx)
             return false;
 
-        bool progressed = false;
-
-        uint32 encounterMask = mark.mask;
-        if (InstanceScript* inst = DcTargeting::GetInstanceScript(leader))
-            encounterMask = inst->GetCompletedEncounterMask();
-        if (encounterMask != mark.mask)
-        {
-            mark.mask = encounterMask;
-            progressed = true;
-        }
-
-        std::size_t const anchors =
-            ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().size();
-        if (static_cast<uint32>(anchors) != mark.anchors)
-        {
-            mark.anchors = static_cast<uint32>(anchors);
-            progressed = true;
-        }
+        // Signals 1 and 2, shared with the no-kill watchdog so the two can never
+        // disagree about what a kill is.
+        bool progressed = DetectKill(leader, leaderAI, mark);
 
         std::optional<DungeonBossInfo> const next =
             ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();

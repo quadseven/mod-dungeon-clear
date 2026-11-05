@@ -77,7 +77,16 @@ namespace DcNoKillDecision
             killStampMs = in.nowMs ? in.nowMs : 1u;  // never 0, which means unarmed
             return r;
         }
-        // Red: the ending is not written yet.
+        if (in.limitMs == 0 || in.nextBoss.empty())
+            return r;
+
+        // Wrap-safe on the same monotonic getMSTime() clock.
+        std::uint32_t const quietMs = in.nowMs - killStampMs;
+        if (quietMs <= in.limitMs)
+            return r;
+
+        r.end = true;
+        r.reason = StopReason(quietMs, in.nextBoss);
         return r;
     }
 }

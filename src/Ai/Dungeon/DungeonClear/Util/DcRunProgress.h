@@ -53,6 +53,12 @@ namespace DcRunProgress
     // elected leader.
     bool Detect(Player* leader, PlayerbotAI* leaderAI, Mark& mark);
 
+    // Signals 1 and 2 only: did a boss or objective complete this tick? Detect
+    // calls this for its first two signals. The no-kill watchdog
+    // (DcNoKillDecision) calls it alone, because for that clock a tank closing
+    // on the next anchor is not a kill: re-pathing forever is the stall it ends.
+    bool DetectKill(Player* leader, PlayerbotAI* leaderAI, Mark& mark);
+
     // Re-arm `mark`'s clock to `nowMs` (never to 0, which means "unarmed").
     void Stamp(Mark& mark, std::uint32_t nowMs);
 

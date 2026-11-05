@@ -93,6 +93,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/BlackrockDepthsLyceum.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
+#include "DcNoKillWatchdog.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStratTrapAlley.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFirstContact.h"
@@ -588,6 +589,13 @@ public:
         // get one. Internally throttled and gated on the map having a row, so it
         // is a handful of integer compares on every other map.
         DcCombatPurge::Tick(diff);
+
+        // Run-level no-kill watchdog: the backstop behind every failsafe above.
+        // A run that completes no boss or objective for NoKillTimeoutSecs with a
+        // boss still ahead ends with "no kill for N min before <boss>" instead
+        // of holding the party until an outside cap. Global tick for the purge's
+        // reason, and throttled to a sweep every few seconds.
+        DcNoKillWatchdog::Tick(diff);
 
         // `.dc test` harness state machine (spawn -> gear -> group -> teleport
         // -> dc on -> watchdogs -> record). Cheap no-op while no test run is
