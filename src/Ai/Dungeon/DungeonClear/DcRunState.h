@@ -216,8 +216,8 @@ struct DcRunState
     bool   musterRestOverride = false;
 
     // === the run's no-progress clocks (leader-owned) ==============================
-    // Two failsafes ask "has this run stopped moving?" and both read the same
-    // three signals (DcRunProgress: an encounter completed, an anchor cleared,
+    // Three failsafes ask "has this run stopped moving?" and read the same
+    // signals (DcRunProgress: an encounter completed, an anchor cleared,
     // the tank closing on the next anchor). They get SEPARATE marks because the
     // detector reports an edge and consumes it — one shared mark and whichever
     // clock ticked first would eat the other's evidence.
@@ -235,8 +235,16 @@ struct DcRunState
     // (a mob stranded off the navmesh holding the party flagged forever), so a
     // clock that engagement re-armed could never fire in the one state it exists
     // for. See Util/DcCombatPurge.h.
+    //
+    // `killProgress` is the run-level no-kill watchdog's, ticked on the global
+    // playerbot tick by DcNoKillWatchdog. It reads only the KILL half of the
+    // detector (DcRunProgress::DetectKill: an encounter completed, an anchor
+    // cleared), so a tank re-pathing toward the next boss does not keep it
+    // fresh. Past NoKillTimeoutSecs with a boss still ahead the run ends with
+    // "no kill for N min before <boss>". See Util/DcNoKillDecision.h.
     DcRunProgress::Mark progress;
     DcRunProgress::Mark purgeProgress;
+    DcRunProgress::Mark killProgress;
 
     // === Blackwing Lair — Razorgore's orb and egg run (leader-owned) =============
     // The one encounter DC orchestrates from INSIDE a raid fight (see

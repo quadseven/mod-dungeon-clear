@@ -392,6 +392,15 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     }
 }
 
+// The Final Chamber gate (142207) on the Thermaplugg route is a real blocker:
+// it must stay visible to the blocking-door scan, not navigation-ignored. The
+// scan's reach to it is pinned in TestDungeonClearMath.cpp
+// (DungeonClearLookAheadTest).
+TEST(DcDoorPolicyTest, GnomereganFinalChamberIsNotNavigationIgnored)
+{
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(142207));
+}
+
 // Blackwing Lair's Chromaggus cage. The portcullis (179116) is opened ONLY by
 // the Lever (179148) 65yd away on the raid's side of it: go_chromaggus_lever's
 // GossipHello clears his IMMUNE_TO_PC, walks him out and calls HandleGameObject

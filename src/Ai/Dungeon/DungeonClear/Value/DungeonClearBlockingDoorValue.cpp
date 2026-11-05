@@ -24,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorIndex.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -36,7 +37,7 @@ namespace
     // How far ahead along the corridor to look for closed doors. Beyond
     // this distance we don't care — the chunked pathfinder will rebuild
     // by the time the bot gets there and the value will re-evaluate.
-    constexpr float DOOR_LOOK_AHEAD = 80.0f;
+    constexpr float DOOR_LOOK_AHEAD = DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD;
     // Lateral slack added around the door's real model footprint before testing
     // whether a path leg passes through it. Covers the bot's body radius plus
     // the gap between the smoothed route centerline and the line the bot
@@ -288,26 +289,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         return dropFlag();
     }
 
-    float prevX = botX;
-    float prevY = botY;
-    float prevZ = botZ;
-    float accumulated = 0.0f;
-
-    struct Seg { float ax, ay, az, bx, by, bz; };
-    std::vector<Seg> segments;
-
-    for (size_t i = cursor; i < pts.size(); ++i)
-    {
-        float const dx = pts[i].x - prevX;
-        float const dy = pts[i].y - prevY;
-        segments.push_back(Seg{prevX, prevY, prevZ, pts[i].x, pts[i].y, pts[i].z});
-        accumulated += std::sqrt(dx * dx + dy * dy);
-        prevX = pts[i].x;
-        prevY = pts[i].y;
-        prevZ = pts[i].z;
-        if (accumulated >= DOOR_LOOK_AHEAD)
-            break;
-    }
+    std::vector<DungeonClearMath::LookAheadLeg> const segments = DungeonClearMath::LookAheadLegs(
+        pts, cursor, botX, botY, botZ, DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
     if (segments.empty())
         return ObjectGuid::Empty;
 

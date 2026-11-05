@@ -1126,6 +1126,40 @@ namespace DungeonClearMath
                                  float minX, float minY,
                                  float maxX, float maxY);
 
+    // One leg of the corridor the blocking-door scan tests for a shut door.
+    struct LookAheadLeg
+    {
+        float ax, ay, az, bx, by, bz;
+    };
+
+    // The corridor DungeonClearBlockingDoorValue scans for a shut door: the
+    // joining leg from the bot to route vertex `cursor`, then each route leg in
+    // order, stopping after the first leg whose summed 2D length passes
+    // `lookAhead` yards. Pure, so the reach of the scan is testable offline.
+    inline std::vector<LookAheadLeg> LookAheadLegs(std::vector<G3D::Vector3> const& pts,
+                                                   size_t cursor, float botX, float botY,
+                                                   float botZ, float lookAhead)
+    {
+        std::vector<LookAheadLeg> legs;
+        float prevX = botX;
+        float prevY = botY;
+        float prevZ = botZ;
+        float accumulated = 0.0f;
+        for (size_t i = cursor; i < pts.size(); ++i)
+        {
+            float const dx = pts[i].x - prevX;
+            float const dy = pts[i].y - prevY;
+            legs.push_back(LookAheadLeg{prevX, prevY, prevZ, pts[i].x, pts[i].y, pts[i].z});
+            accumulated += std::sqrt(dx * dx + dy * dy);
+            prevX = pts[i].x;
+            prevY = pts[i].y;
+            prevZ = pts[i].z;
+            if (accumulated > lookAhead)
+                break;
+        }
+        return legs;
+    }
+
     // Index of the route-polyline vertex the bot has walked up to — its PROGRESS
     // CURSOR along that route. Measured in 3D on purpose.
     //

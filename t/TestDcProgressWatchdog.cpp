@@ -15,6 +15,9 @@
 #include "gtest/gtest.h"
 #include "DcProgressWatchdog.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoKillDecision.h"
+
+#include <string>
 
 namespace
 {
@@ -194,6 +197,28 @@ TEST(DcDoorStallWatchdog, ArmsOnFirstObservationAndTimesOutAtTheBudget)
     EXPECT_TRUE(s.ObserveDoorStall(gate, 1000u + TIMEOUT_MS, REARM_MS, TIMEOUT_MS));
 }
 
+TEST(DcDoorStallWatchdog, GnomereganFinalChamberTimeoutsDuringLongBossQuiet)
+{
+    DcApproachState s;
+    ObjectGuid const gate = DoorGuid(142207);
+    constexpr uint32 lastKillMs = 0;
+    constexpr uint32 thirtyMinutesMs = 30u * 60u * 1000u;
+    constexpr uint32 twoHourCapMs = 2u * 60u * 60u * 1000u;
+
+    // With three bosses down and no kill since the run began, the tank reaches
+    // the closed Final Chamber on the quiet trip to Thermaplugg at 30 minutes.
+    constexpr uint32 doorArrivalMs = thirtyMinutesMs;
+    EXPECT_FALSE(s.ObserveDoorStall(gate, doorArrivalMs, REARM_MS, TIMEOUT_MS));
+
+    // The route is still blocked on its next check. It takes the door-timeout
+    // exit, rather than silently holding the party until the two-hour run cap.
+    constexpr uint32 timeoutMs = doorArrivalMs + TIMEOUT_MS;
+    EXPECT_TRUE(s.ObserveDoorStall(gate, timeoutMs, REARM_MS, TIMEOUT_MS));
+    EXPECT_GT(timeoutMs - lastKillMs, thirtyMinutesMs);
+    EXPECT_LT(timeoutMs, twoHourCapMs);
+
+}
+
 TEST(DcDoorStallWatchdog, ADifferentDoorStartsAFreshWindow)
 {
     DcApproachState s;
@@ -358,4 +383,118 @@ TEST(DcApproachStateYieldTest, EnteringEngageRangeDoesNotClearIt)
     st.NoteYield(1000);
     st.OnEnteredEngageRange();
     EXPECT_EQ(st.NoteYield(1500), 2u);
+}
+
+// ---- Run-level no-kill watchdog (DcNoKillDecision) -------------------------
+//
+// mod-dungeon-clear#96: Gnomeregan runs with three bosses down sat about 90
+// minutes past their last kill on the way to Mekgineer Thermaplugg until the
+// two-hour cap ended them. The watchdog ends a run with no kill for longer than
+// NoKillTimeoutSecs (default 1800) while a boss is still ahead. Each test drives
+// the kernel the way DcNoKillWatchdog::Tick does: one call per sweep, with the
+// kill edge the glue reads from DcRunProgress::DetectKill.
+
+namespace
+{
+    constexpr uint32 MIN_MS        = 60u * 1000u;
+    constexpr uint32 NO_KILL_LIMIT = 30u * MIN_MS;     // NoKillTimeoutSecs default
+    constexpr uint32 SWEEP_MS      = 5000u;            // DC_NO_KILL_SWEEP_MS
+    char const* const THERMAPLUGG  = "Mekgineer Thermaplugg";
+
+    DcNoKillDecision::Inputs Quiet(uint32 nowMs)
+    {
+        DcNoKillDecision::Inputs in;
+        in.nowMs = nowMs;
+        in.limitMs = NO_KILL_LIMIT;
+        in.nextBoss = THERMAPLUGG;
+        return in;
+    }
+
+    // Sweep the kernel from `fromMs` to `toMs` with no kill. Returns the first
+    // ending verdict, or a non-ending result if the run survived the window.
+    DcNoKillDecision::Result SweepQuiet(uint32& stamp, uint32 fromMs, uint32 toMs)
+    {
+        for (uint32 t = fromMs; t <= toMs; t += SWEEP_MS)
+        {
+            DcNoKillDecision::Result r = DcNoKillDecision::Tick(stamp, Quiet(t));
+            if (r.end)
+                return r;
+        }
+        return {};
+    }
+}
+
+TEST(DcNoKillWatchdog, ThirtyOneMinutesWithoutAKillEndsTheRunBeforeThermaplugg)
+{
+    // Third boss down at t=1000: that kill stamps the clock.
+    uint32 stamp = 0;
+    DcNoKillDecision::Inputs kill = Quiet(1000u);
+    kill.killed = true;
+    ASSERT_FALSE(DcNoKillDecision::Tick(stamp, kill).end);
+    ASSERT_EQ(stamp, 1000u);
+
+    // Quiet on the way to Thermaplugg. The run must still be going at 30
+    // minutes and must end at 31, with the reason naming the wait and the boss,
+    // instead of holding the party until the two-hour cap.
+    EXPECT_FALSE(SweepQuiet(stamp, 1000u + SWEEP_MS, 1000u + NO_KILL_LIMIT).end);
+    DcNoKillDecision::Result const r = DcNoKillDecision::Tick(stamp, Quiet(1000u + 31u * MIN_MS));
+    ASSERT_TRUE(r.end);
+    EXPECT_EQ(r.reason, "Dungeon clear stopped: no kill for 31 min before Mekgineer Thermaplugg.");
+}
+
+TEST(DcNoKillWatchdog, TwentyNineMinutesWithoutAKillKeepsTheRunGoing)
+{
+    uint32 stamp = 0;
+    ASSERT_FALSE(DcNoKillDecision::Tick(stamp, Quiet(1000u)).end);  // arms
+    ASSERT_EQ(stamp, 1000u);
+    DcNoKillDecision::Result const r = SweepQuiet(stamp, 1000u + SWEEP_MS, 1000u + 29u * MIN_MS);
+    EXPECT_FALSE(r.end);
+    EXPECT_TRUE(r.reason.empty());
+    EXPECT_EQ(stamp, 1000u);  // quiet ticks never move the clock
+}
+
+TEST(DcNoKillWatchdog, AKillResetsTheClock)
+{
+    uint32 stamp = 0;
+    DcNoKillDecision::Tick(stamp, Quiet(1000u));  // arms at 1000
+
+    // Quiet for 20 minutes, then a boss dies.
+    EXPECT_FALSE(SweepQuiet(stamp, 1000u + SWEEP_MS, 1000u + 20u * MIN_MS).end);
+    uint32 const killAt = 1000u + 20u * MIN_MS + SWEEP_MS;
+    DcNoKillDecision::Inputs kill = Quiet(killAt);
+    kill.killed = true;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, kill).end);
+    EXPECT_EQ(stamp, killAt);
+
+    // 31 minutes after the run armed is only 11 after the kill: still going.
+    EXPECT_FALSE(SweepQuiet(stamp, killAt + SWEEP_MS, 1000u + 31u * MIN_MS).end);
+    // 31 minutes after the KILL ends it, measured from the kill.
+    DcNoKillDecision::Result const r = DcNoKillDecision::Tick(stamp, Quiet(killAt + 31u * MIN_MS));
+    ASSERT_TRUE(r.end);
+    EXPECT_EQ(r.reason, "Dungeon clear stopped: no kill for 31 min before Mekgineer Thermaplugg.");
+}
+
+TEST(DcNoKillWatchdog, AnIntentionalHoldKeepsTheClockFresh)
+{
+    // A pause (Wait at Boss, a door auto-pause awaiting the human) is not a
+    // stall: the clock re-stamps while held, like the other no-progress clocks.
+    uint32 stamp = 0;
+    DcNoKillDecision::Tick(stamp, Quiet(1000u));
+    DcNoKillDecision::Inputs held = Quiet(1000u + 45u * MIN_MS);
+    held.held = true;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, held).end);
+    EXPECT_EQ(stamp, 1000u + 45u * MIN_MS);
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, Quiet(1000u + 46u * MIN_MS)).end);
+}
+
+TEST(DcNoKillWatchdog, NoBossAheadOrALimitOfZeroNeverEnds)
+{
+    uint32 stamp = 0;
+    DcNoKillDecision::Tick(stamp, Quiet(1000u));
+    DcNoKillDecision::Inputs none = Quiet(1000u + 60u * MIN_MS);
+    none.nextBoss.clear();  // all cleared: the all-cleared ending owns this
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, none).end);
+    DcNoKillDecision::Inputs off = Quiet(1000u + 60u * MIN_MS);
+    off.limitMs = 0;        // NoKillTimeoutSecs = 0
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, off).end);
 }

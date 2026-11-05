@@ -234,6 +234,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     // See Util/DcPartyWaitDecision.h.
     { "PartyWaitTimeoutSecs",          DcType::UInt, 180,   0, 3600,  true  },
 
+    // Run-level no-kill watchdog, the backstop behind every failsafe above. A
+    // run that completes no boss or objective for this many seconds while a boss
+    // is still ahead ends with "no kill for N min before <boss>". A tank closing
+    // on the next anchor does NOT reset it (re-pathing forever is the stall), a
+    // pause, a raid boss stand-down or Karazhan's chess game holds it. Live
+    // (mod-dungeon-clear#96): six Gnomeregan runs sat about 90 minutes past
+    // their last kill before Mekgineer Thermaplugg until an outside two-hour cap
+    // ended them. 0 disables it. See Util/DcNoKillDecision.h.
+    { "NoKillTimeoutSecs",             DcType::UInt, 1800,  0, 14400, true  },
+
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
     // or `dc pause`), so the party can prepare instead of the tank rushing in

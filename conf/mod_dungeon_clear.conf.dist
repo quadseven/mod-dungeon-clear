@@ -426,6 +426,25 @@ DungeonClear.UnreachableCombatPurgeSecs = 60
 DungeonClear.PartyWaitTimeoutSecs = 180
 
 #
+#    DungeonClear.NoKillTimeoutSecs
+#        Run-level no-kill watchdog, in seconds. When a run completes no boss or
+#        objective for longer than this while a boss is still ahead, it stops
+#        with the reason "no kill for N min before <boss>" instead of holding
+#        the party until something outside the module ends it.
+#
+#        It is the backstop behind every failsafe above: each of them gets the
+#        whole window to answer its own kind of stall first. A tank that keeps
+#        re-pathing toward the next boss does not reset it, because that is the
+#        stall it exists for. A pause, a raid boss fight and Karazhan's chess
+#        game hold the clock.
+#            0 = off (a run with no kill holds until you intervene)
+#
+#        Default: 1800 (30 minutes)
+#
+
+DungeonClear.NoKillTimeoutSecs = 1800
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

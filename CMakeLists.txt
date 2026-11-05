@@ -1067,3 +1067,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    RawPath / Jump steps every bot runs itself, with a fall volume — and water
 #    breathing for the Serra'kis dive: the shaman / warlock / elixir planner,
 #    the EnsureWaterBreathing step and the breath watchdog.)
+
+# New files added: DcNoKillWatchdog.{h,cpp}, Util/DcNoKillDecision.h
+#   (Run-level no-kill watchdog, mod-dungeon-clear#96: a run with no boss or
+#    objective completed for NoKillTimeoutSecs before its last boss ends with
+#    "no kill for N min before <boss>" instead of waiting for an outside cap.)
