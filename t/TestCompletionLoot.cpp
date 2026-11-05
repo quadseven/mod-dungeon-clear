@@ -70,6 +70,17 @@ TEST(DcCompletionLoot, UsesTheOrdinaryLootKeyCatalogue)
     EXPECT_EQ(DcCompletionLoot::KeyForChest(12345), 0u);
 }
 
+// The corpse loot filter keeps a door key worth a stop whatever the quality
+// floor: both chest keys and the Crescent Key from Pusillin's corpse.
+TEST(DcCompletionLoot, DoorKeyCatalogueCoversTheCrescentKey)
+{
+    EXPECT_TRUE(DcCompletionLoot::IsDoorKey(18249));  // Crescent Key
+    EXPECT_TRUE(DcCompletionLoot::IsDoorKey(DcCompletionLoot::KeyForChest(103821)));
+    EXPECT_TRUE(DcCompletionLoot::IsDoorKey(DcCompletionLoot::KeyForChest(179516)));
+    EXPECT_FALSE(DcCompletionLoot::IsDoorKey(0));
+    EXPECT_FALSE(DcCompletionLoot::IsDoorKey(12345));
+}
+
 // AI-REVIEW 2026-10-31 [poolside/laguna-s-2.1] L1 (PR #92):
 // An already-owned key must finish before any approach, not only after looting.
 TEST(DcCompletionLoot, AlreadyOwnedKeyNeverStartsAnApproach)

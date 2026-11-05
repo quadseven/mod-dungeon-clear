@@ -73,6 +73,11 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
 void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out);
 void RegisterScholomanceEvents(std::vector<DungeonEvent>& out);
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out);
+// Dire Maul East (map 429): Pusillin, the scripted target who carries the
+// Crescent Key. One row expands into his five gossip stops (events 18-22,
+// objectives 15-19); shared with the gtests. See DireMaulEvents.cpp.
+struct DcScriptedTarget;
+DcScriptedTarget const& DireMaulPusillin();
 // Blackfathom Deeps (map 48) — the Forgotten Pool exit, shared with the gtests
 // (t/TestBlackfathomDeeps). The reasoning is in BlackfathomDeepsEvents.cpp.
 namespace DcBlackfathomDeeps

@@ -11,6 +11,14 @@ namespace DcCompletionLoot
         return chest == 103821 ? 7146 : chest == 179516 ? 18266 : 0;
     }
 
+    // Every door key the run earns by looting: the two chest keys above and the
+    // Crescent Key (18249) from Pusillin's corpse in Dire Maul East. A key the
+    // bot lacks is worth a corpse stop whatever DungeonClear.LootMinQuality says.
+    constexpr bool IsDoorKey(std::uint32_t item)
+    {
+        return item == 7146 || item == 18266 || item == 18249;
+    }
+
     constexpr float MAX_APPROACH_YARDS = 40.0f;
     constexpr std::uint32_t BUDGET_MS = 15000;
 

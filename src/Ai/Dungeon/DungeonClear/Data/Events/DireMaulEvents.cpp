@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DcScriptedTarget.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 
@@ -16,6 +17,8 @@
 
 #include <atomic>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 // --- Dire Maul East (map 429) — Ironbark / Conservatory Door -------------
 // Alzzin the Wildshaper's grove is sealed behind the Conservatory Door (GO
@@ -53,6 +56,51 @@ namespace
     bool GordokInnerDoor(Player* bot, AiObjectContext* context);
     bool CrescentDoorLower(Player* bot, AiObjectContext* context);
     bool CrescentDoorUpper(Player* bot, AiObjectContext* context);
+}
+
+// --- Dire Maul East (map 429) - Pusillin and the Crescent Key -------------
+// The Crescent Key (item 18249) opens Dire Maul West's two lock-1562 doors and
+// the North wing's outer door. It drops from Pusillin (14354) every time, and
+// every party member loots one (multi-drop). He is no DungeonEncounter boss, so
+// nothing sent a run to him. He stands friendly (faction 35) at the East
+// entrance and runs ahead through the wing in five stages. His SmartAI (world
+// DB smart_scripts 14354 and action lists 1435400-1435404):
+//   * each gossip option 0 (menus 6877, 6878, 6879, 6880, 6881 in event phases
+//     0, 1, 2, 4, 8) closes the gossip, clears his npcflag, says a line, steps
+//     the phase and starts his next waypoint path (14354, 143540, 287080,
+//     430620). He runs, so he arrives before the tank;
+//   * on each path's end he takes his gossip npcflag back and wanders 5yd;
+//   * the fifth gossip sets faction 168, summons five Wildspawn Imps and
+//     attacks whoever stands within 40yd.
+// The stops below are his spawn and the last point of each path. A gossip
+// before he has reached a stop finds an empty menu, and the step keeps
+// retrying until his npcflag returns. His death is the kill gate; the ordinary
+// corpse loot then hands each member a key (DcLootPolicy keeps a door key
+// worth a stop whatever the quality floor).
+DcScriptedTarget const& DireMaulPusillin()
+{
+    static DcScriptedTarget const row = []
+    {
+        DcScriptedTarget t;
+        t.mapId = 429;
+        t.creatureEntry = 14354;
+        t.name = "Pusillin";
+        t.gossipOption = 0;
+        t.stops = {
+            {  86.19f, -197.89f,  -4.06f },  // spawn
+            {-154.51f, -276.20f,  -4.15f },  // end of path 14354
+            { 113.54f, -372.37f,  -4.09f },  // end of path 143540
+            {  49.33f, -636.43f, -25.13f },  // end of path 287080
+            {  16.29f, -701.42f, -12.64f },  // end of path 430620; he fights here
+        };
+        t.firstEventId = 18;
+        t.firstObjectiveSeq = 15;
+        t.firstEncounterIndex = 54;
+        // Before Zevrim (10): the chase starts at the East entrance.
+        t.firstOrder = 1;
+        return t;
+    }();
+    return row;
 }
 
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
@@ -288,6 +336,10 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .PanelAfterBoss(/*Magister Kalendris*/ 11487)
                       .Optional()
                       .Build());
+
+    // --- Dire Maul East (map 429) - Pusillin's five gossips (events 18-22) --
+    for (DungeonEvent& ev : DcScripted::Events(DireMaulPusillin()))
+        out.push_back(std::move(ev));
 }
 
 namespace
@@ -544,6 +596,9 @@ void RegisterDireMaulRoster(std::vector<BossRosterPatch>& t)
                           -155.43f, 734.17f, -24.62f,
                           45.0f, 0, 0, /*eventId*/ 8, /*orderOverride*/ 42),
         };
+        // East - Pusillin's five stops (OBJ(15)..OBJ(19), events 18-22).
+        for (DungeonBossInfo& o : DcScripted::Objectives(DireMaulPusillin()))
+            p.add.push_back(std::move(o));
         t.push_back(std::move(p));
     }
 }
@@ -557,17 +612,22 @@ void RegisterDireMaulWings(std::unordered_map<uint32, DungeonWingLayout>& store)
     // coords (East sits at y < -100, West at x < 150 / y > 400, North
     // at x > 300), which is also why nearest-boss wing detection is
     // unambiguous. isolated == true: filter to the bot's wing.
+    std::vector<uint32> east = {
+        11490,  // Zevrim Thornhoof
+        13280,  // Hydrospawn
+        14327,  // Lethtendris
+        11492,  // Alzzin the Wildshaper
+        // Ironbark / Conservatory Door travel objective (a synthetic
+        // entry, not a creature) — keep it in-wing so wing-filtering
+        // doesn't drop it. See BossRosterRegistry map-429 patch.
+        BossRosterRegistry::ObjectiveEntry(1),
+    };
+    // Pusillin's five stop objectives (OBJ(15)..OBJ(19)).
+    for (uint32 entry : DcScripted::WingEntries(DireMaulPusillin()))
+        east.push_back(entry);
+
     store[429] = {true, {
-        {"Dire Maul (East)", {
-            11490,  // Zevrim Thornhoof
-            13280,  // Hydrospawn
-            14327,  // Lethtendris
-            11492,  // Alzzin the Wildshaper
-            // Ironbark / Conservatory Door travel objective (a synthetic
-            // entry, not a creature) — keep it in-wing so wing-filtering
-            // doesn't drop it. See BossRosterRegistry map-429 patch.
-            BossRosterRegistry::ObjectiveEntry(1),
-        }, "dm-east"},
+        {"Dire Maul (East)", std::move(east), "dm-east"},
         {"Dire Maul (West)", {
             11489,  // Tendris Warpwood
             11488,  // Illyanna Ravenoak
