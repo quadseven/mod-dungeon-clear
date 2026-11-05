@@ -353,8 +353,14 @@ bool DcLootPolicy::CorpseHasTakeableLoot(Player* bot, Creature* creature, uint32
             continue;
 
         // Quest / quest-starter items always qualify, regardless of the floor.
+        // So does a door key (the Crescent Key on Pusillin's corpse): it is the
+        // run's way through a keyed door. One already owned cannot be looted
+        // again, so it earns no stop.
+        bool const doorKey = DcCompletionLoot::IsDoorKey(item.itemid);
+        if (doorKey && bot->HasItemCount(item.itemid, 1, true))
+            continue;
         bool const questItem = item.needs_quest || proto->StartQuest != 0;
-        if (!questItem && proto->Quality < minQuality)
+        if (!questItem && !doorKey && proto->Quality < minQuality)
             continue;
 
         if (bagsFull)

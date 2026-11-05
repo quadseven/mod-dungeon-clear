@@ -11,6 +11,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 
 namespace
 {
@@ -685,6 +686,45 @@ TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
     EXPECT_EQ(BossOrderKey(out[ironbarkIdx]), 40u);
     EXPECT_EQ(BossOrderKey(*Find(out, 11492)), 50u);
     EXPECT_EQ(Find(out, 11492)->encounterIndex, 3u) << "Alzzin DBC kill-bit intact";
+}
+
+// Dire Maul East: Pusillin's five stops (OBJ(15)..OBJ(19), events 18-22) lead
+// the East clear. Keys 1..5 sort them before Zevrim (10), in chase order, and
+// the East wing lists each one so wing filtering keeps them.
+TEST(BossRosterRegistryTest, DireMaulEastPusillinStopsLeadTheEastWing)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(11490, 0, "Zevrim Thornhoof", 429),
+        Boss(13280, 1, "Hydrospawn", 429),
+        Boss(14327, 2, "Lethtendris", 429),
+        Boss(11492, 3, "Alzzin the Wildshaper", 429),
+    };
+    std::vector<DungeonBossInfo> out =
+        BossRosterRegistry::Apply(429, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
+
+    DungeonWingLayout const* dm = DungeonWingRegistry::Get(429);
+    ASSERT_NE(dm, nullptr);
+    std::vector<uint32> const* east = nullptr;
+    for (DungeonWing const& w : dm->wings)
+        if (w.token == "dm-east")
+            east = &w.bossEntries;
+    ASSERT_NE(east, nullptr);
+
+    uint32 lastKey = 0;
+    for (uint32 n = 0; n < 5; ++n)
+    {
+        uint32 const entry = BossRosterRegistry::ObjectiveEntry(15 + n);
+        DungeonBossInfo const* o = Find(out, entry);
+        ASSERT_NE(o, nullptr) << "Pusillin stop OBJ" << (15 + n) << " missing";
+        EXPECT_EQ(o->kind, DungeonAnchorKind::Objective);
+        EXPECT_EQ(o->eventId, 18u + n);
+        EXPECT_LT(o->y, -100.0f) << "East wing region";
+        EXPECT_GT(BossOrderKey(*o), lastKey) << "stops sort in chase order";
+        lastKey = BossOrderKey(*o);
+        EXPECT_NE(std::find(east->begin(), east->end(), entry), east->end())
+            << "OBJ" << (15 + n) << " missing from the East wing list";
+    }
+    EXPECT_LT(lastKey, BossOrderKey(*Find(out, 11490))) << "the chase precedes Zevrim";
 }
 
 // Dire Maul West: the kill order is fixed (Immol'thar before the friendly-until-

@@ -11,6 +11,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DcScriptedTarget.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDefiasGunpowder.h"
@@ -2111,6 +2112,106 @@ TEST(DungeonEventRoomAggro, PredicateAndHasRoomAggroEvent)
     // a room-aggro pre-clear — the activation guard matters.
     DungeonEvent anchored = EventBuilder(1, 1, "x").Anchored(0).KillCreature(0).Build();
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(anchored));
+}
+
+// --- Scripted targets (DcScriptedTarget) ----------------------------------
+
+// One scripted-target row expands into one travel objective and one anchored
+// event per stop: every stop gossips the NPC, and the last stop also kills it.
+// Ids, encounter slots and order keys count up from the row's firsts.
+TEST(DungeonEventAnchored, ScriptedTargetExpandsIntoGossipStopsThenAKill)
+{
+    DcScriptedTarget t;
+    t.mapId = 1;
+    t.creatureEntry = 777;
+    t.name = "Runner";
+    t.gossipOption = 0;
+    t.stops = { {1.0f, 2.0f, 3.0f}, {10.0f, 20.0f, 30.0f}, {100.0f, 200.0f, 300.0f} };
+    t.firstEventId = 40;
+    t.firstObjectiveSeq = 7;
+    t.firstEncounterIndex = 60;
+    t.firstOrder = 3;
+
+    std::vector<DungeonEvent> const events = DcScripted::Events(t);
+    ASSERT_EQ(events.size(), 3u);
+    for (size_t i = 0; i < events.size(); ++i)
+    {
+        DungeonEvent const& e = events[i];
+        EXPECT_EQ(e.mapId, 1u);
+        EXPECT_EQ(e.id, 40u + i);
+        EXPECT_EQ(e.activation, EventActivation::Anchored);
+        EXPECT_TRUE(e.persistent);
+        EXPECT_FALSE(e.required);  // Optional
+        ASSERT_FALSE(e.steps.empty());
+        EXPECT_EQ(e.steps[0].kind, EventStepKind::Gossip);
+        EXPECT_EQ(e.steps[0].creatureEntry, 777u);
+        EXPECT_EQ(e.steps[0].gossipOption, 0);
+        EXPECT_TRUE(e.steps[0].skipIfMissing) << "a dead target must not hold the run";
+        EXPECT_GE(e.steps[0].timeoutMs, 60000u) << "covers the NPC's run to the stop";
+        bool const last = i + 1 == events.size();
+        ASSERT_EQ(e.steps.size(), last ? 2u : 1u);
+        if (last)
+        {
+            EXPECT_EQ(e.steps[1].kind, EventStepKind::KillCreature);
+            EXPECT_TRUE(e.steps[1].engage);
+            EXPECT_EQ(e.steps[1].creatureEntry, 777u);
+        }
+    }
+    EXPECT_EQ(events[0].name, "Runner: gossip 1 of 3");
+    EXPECT_EQ(events[2].name, "Runner: gossip 3 of 3, then kill");
+
+    std::vector<DungeonBossInfo> const objectives = DcScripted::Objectives(t);
+    std::vector<uint32> const wing = DcScripted::WingEntries(t);
+    ASSERT_EQ(objectives.size(), 3u);
+    ASSERT_EQ(wing.size(), 3u);
+    for (size_t i = 0; i < objectives.size(); ++i)
+    {
+        DungeonBossInfo const& o = objectives[i];
+        uint32 const n = static_cast<uint32>(i);
+        EXPECT_EQ(o.kind, DungeonAnchorKind::Objective);
+        EXPECT_EQ(o.entry, BossRosterRegistry::ObjectiveEntry(7 + n));
+        EXPECT_EQ(wing[i], o.entry);
+        EXPECT_EQ(o.eventId, 40u + n);
+        EXPECT_EQ(o.encounterIndex, 60u + n);
+        EXPECT_EQ(o.orderOverride, 3 + static_cast<int32>(n));
+        EXPECT_EQ(o.mapId, 1u);
+        EXPECT_FLOAT_EQ(o.x, t.stops[i].x);
+        EXPECT_FLOAT_EQ(o.y, t.stops[i].y);
+        EXPECT_FLOAT_EQ(o.z, t.stops[i].z);
+        EXPECT_EQ(o.name, events[i].name);
+    }
+}
+
+// Dire Maul East: Pusillin (14354) carries the Crescent Key. His row is five
+// gossips (his spawn plus the end of each of his four waypoint paths), wired as
+// map-429 events 18-22, and the fifth also kills him once he turns hostile.
+TEST(DungeonEventAnchored, DireMaulPusillinIsFiveGossipsThenAKill)
+{
+    DcScriptedTarget const& row = DireMaulPusillin();
+    EXPECT_EQ(row.mapId, 429u);
+    EXPECT_EQ(row.creatureEntry, 14354u);
+    ASSERT_EQ(row.stops.size(), 5u);
+    EXPECT_NEAR(row.stops.front().x, 86.19f, 0.01f);   // spawn
+    EXPECT_NEAR(row.stops.back().y, -701.42f, 0.01f);  // where he fights
+
+    for (uint32 id = 18; id <= 22; ++id)
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(429, id);
+        ASSERT_NE(e, nullptr) << "missing Pusillin event " << id;
+        EXPECT_EQ(e->activation, EventActivation::Anchored);
+        EXPECT_TRUE(e->persistent);
+        ASSERT_FALSE(e->steps.empty());
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::Gossip);
+        EXPECT_EQ(e->steps[0].creatureEntry, 14354u);
+        EXPECT_EQ(e->steps[0].gossipOption, 0);
+    }
+    DungeonEvent const* last = DungeonEventRegistry::Find(429, 22);
+    ASSERT_NE(last, nullptr);
+    ASSERT_EQ(last->steps.size(), 2u);
+    EXPECT_EQ(last->steps[1].kind, EventStepKind::KillCreature);
+    EXPECT_TRUE(last->steps[1].engage);
+    EXPECT_EQ(last->steps[1].creatureEntry, 14354u);
+    EXPECT_EQ(DungeonEventRegistry::Find(429, 23), nullptr);
 }
 
 // --- Dire Maul West (map 429) --------------------------------------------

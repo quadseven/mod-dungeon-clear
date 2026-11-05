@@ -912,7 +912,17 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // actually fights. `count` is approximated as "any alive blocks".
             float const search = step.radius > 0.0f ? step.radius : DC_EVENT_CREATURE_SCAN;
             Creature* c = bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true);
-            return c ? StepResult::Running : StepResult::Done;
+            if (c)
+                return StepResult::Running;
+            // A named kill the party sought out is a milestone worth an INFO
+            // line (Pusillin's death ends the Crescent Key chase). Logged once:
+            // Done advances the event past this step.
+            if (step.engage && step.creatureEntry)
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] event-step KillCreature: no live creature {} within {:.0f}yd "
+                         "-> killed",
+                         bot->GetName(), step.creatureEntry, search);
+            return StepResult::Done;
         }
 
         case EventStepKind::ClearRadius:
@@ -1068,15 +1078,18 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[dungeon-clear] {} event-step Gossip {} '{}' option {}",
-                      bot->GetName(), npc->GetGUID().ToString(), npc->GetName(),
-                      step.gossipOption);
-
             // Drive the open-menu + select opcodes (shared with the escort step's
             // self-heal start). Running while the menu/option isn't populated yet.
-            return SelectGossip(bot, npc, step.gossipOption) ? StepResult::Done
-                                                             : StepResult::Running;
+            if (!SelectGossip(bot, npc, step.gossipOption))
+                return StepResult::Running;
+
+            // One INFO line per gossip that landed, so a scripted chain (each of
+            // Pusillin's five stops) reads straight off the log.
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] event-step Gossip: selected option {} on '{}' ({}) {}",
+                     bot->GetName(), step.gossipOption, npc->GetName(), npc->GetEntry(),
+                     npc->GetGUID().ToString());
+            return StepResult::Done;
         }
 
         case EventStepKind::EscortCreature:
