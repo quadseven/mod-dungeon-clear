@@ -37,6 +37,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBoss.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPauseDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
@@ -827,11 +828,18 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
         return false;
 
     // Resume once the blocker is gone: the door now reads OPEN (a player opened
-    // it), or it despawned / its grid unloaded (GetGameObject returns null). In
-    // either case the corridor is no longer held — IsDoorClosed treats a null GO
-    // as not-closed, so the single test covers both.
+    // it), or it despawned / its grid unloaded (GetGameObject returns null), or
+    // the pause timed out working the door so the run re-plans around it.
     GameObject* door = botAI->GetGameObject(doorGuid);
-    return !DcEngageGeometry::IsDoorClosed(door);
+    bool const doorOpen = !DcEngageGeometry::IsDoorClosed(door);
+
+    DcDoorPauseDecision::Inputs in;
+    in.doorOpen = doorOpen;
+    in.pausedSinceMs = DcRun::Of(context).pausedDoorSinceMs;
+    in.nowMs = getMSTime();
+    in.timeoutMs = DcDoorPauseDecision::DEFAULT_TIMEOUT_MS;
+
+    return DcDoorPauseDecision::Decide(in).shouldResume;
 }
 
 bool DungeonClearFollowTankTrigger::IsActive()

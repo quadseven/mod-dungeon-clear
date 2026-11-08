@@ -8,6 +8,7 @@
 #include <initializer_list>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPauseDecision.h"
 #include "DcDoorPolicy.h"
 #include "DcLootPolicy.h"
 
@@ -635,4 +636,57 @@ TEST(DcDoorPolicyTest, BlackrockBarDoorIsScriptOnly)
     // The Lyceum door stays a keyed traversal gate the walker opens.
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558));
     EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));
+}
+
+// Door-blocked auto-pause bounded exit (#105): when a closed door cannot be
+// opened (e.g. requires a party key the bots lack, like the Shadowforge Key
+// at the BRD entrance), the clear auto-pauses. The pause must not wait
+// indefinitely: if the door stays shut past DEFAULT_TIMEOUT_MS, the pause
+// must resume with timedOut = true so the door is excluded and the clear
+// re-plans. If the door opens before the bound, it resumes immediately.
+TEST(DcDoorPolicyTest, DoorBlockedAutoPauseResumesWithinBound)
+{
+    DcDoorPauseDecision::Inputs in;
+    in.doorOpen = false;
+    in.pausedSinceMs = 10000;
+    in.timeoutMs = DcDoorPauseDecision::DEFAULT_TIMEOUT_MS;
+
+    // Within the bound (15s after pause): stays paused
+    in.nowMs = 25000;
+    DcDoorPauseDecision::Result res = DcDoorPauseDecision::Decide(in);
+    EXPECT_FALSE(res.shouldResume);
+    EXPECT_FALSE(res.timedOut);
+
+    // One millisecond before the bound (29.999s elapsed): stays paused
+    in.nowMs = 39999;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_FALSE(res.shouldResume);
+    EXPECT_FALSE(res.timedOut);
+
+    // Exactly at the bound (30s elapsed): resumes with timeout
+    in.nowMs = 40000;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_TRUE(res.shouldResume);
+    EXPECT_TRUE(res.timedOut);
+
+    // Past the bound: resumes with timeout
+    in.nowMs = 50000;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_TRUE(res.shouldResume);
+    EXPECT_TRUE(res.timedOut);
+
+    // Door opens before the bound (after 10s): resumes without timeout
+    in.nowMs = 20000;
+    in.doorOpen = true;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_TRUE(res.shouldResume);
+    EXPECT_FALSE(res.timedOut);
+
+    // Unarmed pause (pausedSinceMs = 0): door closed -> stays paused
+    in.doorOpen = false;
+    in.pausedSinceMs = 0;
+    in.nowMs = 100000;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_FALSE(res.shouldResume);
+    EXPECT_FALSE(res.timedOut);
 }

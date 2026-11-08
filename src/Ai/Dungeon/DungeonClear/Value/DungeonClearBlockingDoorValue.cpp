@@ -109,12 +109,11 @@ namespace
         ToDoorLocal(go, ax, ay, lax, lay);
         ToDoorLocal(go, bx, by, lbx, lby);
 
-        float const minX = info->minX * scale - DOOR_PATH_PAD;
-        float const maxX = info->maxX * scale + DOOR_PATH_PAD;
-        float const minY = info->minY * scale - DOOR_PATH_PAD;
-        float const maxY = info->maxY * scale + DOOR_PATH_PAD;
-        return DungeonClearMath::SegmentIntersectsAABB2D(lax, lay, lbx, lby,
-                                                         minX, minY, maxX, maxY);
+        return DungeonClearMath::SegmentCrossesDoor2D(
+            lax, lay, lbx, lby,
+            info->minX * scale, info->minY * scale,
+            info->maxX * scale, info->maxY * scale,
+            DOOR_PATH_PAD);
     }
 
 
@@ -306,6 +305,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     // the shut-state check below is still read fresh per door.
     for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
+        if (DcRun::Of(context).IsDoorExcluded(guid))
+            continue;
         GameObject* go = map->GetGameObject(guid);
         // Blocking door currently shut (the "block the corridor" state). The
         // helper folds the type / ignoredByPathing / startOpen-inverted GOState

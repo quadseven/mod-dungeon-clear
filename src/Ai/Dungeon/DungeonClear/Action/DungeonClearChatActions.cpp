@@ -29,6 +29,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTanklessLead.h"
@@ -584,6 +585,9 @@ bool DcSkipAction::Execute(Event event)
     context->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
     context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
+
+    // If the run was paused for a door, dc skip clears the pause so the run advances to the new target.
+    DcRun::Of(context).OnResume();
 
     // Force the cached next-boss value to recompute on next call.
     context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
@@ -1380,12 +1384,32 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
     if (AnyPartyMemberDead(bot) && !DcRezRecovery::CanRecover(bot))
         return false;
 
+    ObjectGuid const doorGuid = DcRun::Of(context).pausedDoor;
+    GameObject* door = !doorGuid.IsEmpty() ? botAI->GetGameObject(doorGuid) : nullptr;
+    bool const timedOut = (door && DcEngageGeometry::IsDoorClosed(door));
+
+    if (timedOut && !doorGuid.IsEmpty())
+    {
+        DcRun::Of(context).ExcludeDoor(doorGuid);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] door-blocked: pause timed out working door {} -> excluding door and resuming",
+                 bot->GetName(), doorGuid.ToString());
+    }
+
     ResetForResume(context);
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     std::string const target = next.has_value() ? next->name : "the next boss";
-    DcStatusPublisher::SendAddonMessage(
-        botAI, "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
+    if (timedOut)
+    {
+        DcStatusPublisher::SendAddonMessage(
+            botAI, "CHAT\tDoor-blocked pause timed out -- resuming with door excluded. Heading to " + target + ".");
+    }
+    else
+    {
+        DcStatusPublisher::SendAddonMessage(
+            botAI, "CHAT\tDoor opened -- resuming. Heading to " + target + ".");
+    }
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

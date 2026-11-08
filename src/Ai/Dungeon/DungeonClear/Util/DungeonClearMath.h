@@ -1126,6 +1126,18 @@ namespace DungeonClearMath
                                  float minX, float minY,
                                  float maxX, float maxY);
 
+    // True if the 2D segment (lax,lay)-(lbx,lby) in the door's local frame
+    // transits through the doorway opening across the threshold plane midT.
+    //
+    // Unlike SegmentIntersectsAABB2D, which tests 2D box volume intersection and
+    // therefore returns true for any segment starting inside the box (or
+    // clipping its lateral padding) even when moving away from or past the door,
+    // this tests whether the segment actually crosses the door's threshold plane
+    // from one side to the other, and does so within the doorway opening.
+    bool SegmentCrossesDoor2D(float lax, float lay, float lbx, float lby,
+                              float minX, float minY, float maxX, float maxY,
+                              float pad = 2.0f);
+
     // One leg of the corridor the blocking-door scan tests for a shut door.
     struct LookAheadLeg
     {

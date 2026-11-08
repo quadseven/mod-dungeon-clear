@@ -106,6 +106,24 @@ struct DcRunState
     // unrelated door can never auto-resume a hand-held pause.
     ObjectGuid  pausedDoor;
 
+    // getMSTime() at which the door-blocked auto-pause began (0 = not paused for a door).
+    // Cleared by OnResume().
+    uint32      pausedDoorSinceMs = 0;
+
+    // Doors excluded from corridor blocking checks for the remainder of this run
+    // (e.g. doors whose auto-pause timed out). Cleared by Reset().
+    std::unordered_set<ObjectGuid> excludedDoors;
+
+    bool IsDoorExcluded(ObjectGuid const& guid) const
+    {
+        return excludedDoors.find(guid) != excludedDoors.end();
+    }
+
+    void ExcludeDoor(ObjectGuid const& guid)
+    {
+        excludedDoors.insert(guid);
+    }
+
     // Boss entry of a manual boss override (0 = no override; normal auto progression).
     // Set by DcGoAction, cleared by dc on / dc off / dc skip.
     uint32      selectedBossEntry = 0;
@@ -891,6 +909,7 @@ struct DcRunState
         paused = false;
         pauseReason.clear();
         pausedDoor.Clear();
+        pausedDoorSinceMs = 0;
     }
 };
 

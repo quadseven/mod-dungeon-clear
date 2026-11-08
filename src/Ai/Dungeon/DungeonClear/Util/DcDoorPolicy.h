@@ -43,6 +43,9 @@ namespace DcDoorPolicy
     // Gnomeregan Final Chamber gate is about 90yd up the Thermaplugg route.
     constexpr float BLOCKING_DOOR_LOOK_AHEAD = 120.0f;
 
+    // Bound for door-blocked auto-pause wait before re-planning with the door excluded.
+    constexpr uint32 DEFAULT_DOOR_PAUSE_TIMEOUT_MS = 30000;
+
     // One decoded Lock.dbc case: LOCK_KEY_* discriminator, its Index (item
     // entry for ITEM, LockType for SKILL), and the required skill value.
     struct LockSlot

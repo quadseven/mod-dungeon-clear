@@ -66,8 +66,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    gate that is down is logged by name, a real door is required for the door
 #    veto, and a bounded valve engages a boss the tank has held at with the
 #    party ready. The kernel half is engine-free and gtested.)
-# New files added: Util/DcDefiasGunpowder.h (header-only: the Deadmines cannon
-#   step's engine-free decision kernel; loot the gunpowder, never grant it)
+# New files added: Util/DcDoorPauseDecision.h
+#   (pure decision kernel for door-blocked auto-pause bounded exit: auto-resumes
+#    the run when the door opens or when the pause bound elapses.)
 # New files added: Action/DcLyceumCloseUpAction.cpp, Util/DcLyceumCloseUpDecision.h
 #   (BRD Lyceum: in a fight inside the room every member stands within 15yd of
 #    the tank — the combat-engine rung that walks a member back, plus the

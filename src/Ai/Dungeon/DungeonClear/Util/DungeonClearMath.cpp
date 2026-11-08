@@ -736,6 +736,62 @@ bool DungeonClearMath::SegmentIntersectsAABB2D(float ax, float ay,
     return t0 <= t1;
 }
 
+bool DungeonClearMath::SegmentCrossesDoor2D(float lax, float lay,
+                                            float lbx, float lby,
+                                            float minX, float minY,
+                                            float maxX, float maxY,
+                                            float pad)
+{
+    float const loX = std::min(minX, maxX);
+    float const hiX = std::max(minX, maxX);
+    float const loY = std::min(minY, maxY);
+    float const hiY = std::max(minY, maxY);
+
+    float const extentX = hiX - loX;
+    float const extentY = hiY - loY;
+
+    float ta, tb, wa, wb;
+    float minW, maxW, midT;
+
+    if (extentX <= extentY)
+    {
+        // Thickness axis is X, Width axis is Y
+        ta = lax;
+        tb = lbx;
+        wa = lay;
+        wb = lby;
+        minW = loY;
+        maxW = hiY;
+        midT = 0.5f * (loX + hiX);
+    }
+    else
+    {
+        // Thickness axis is Y, Width axis is X
+        ta = lay;
+        tb = lby;
+        wa = lax;
+        wb = lbx;
+        minW = loX;
+        maxW = hiX;
+        midT = 0.5f * (loY + hiY);
+    }
+
+    // A segment parallel to the door plane does not transit through the doorway
+    if (ta == tb)
+        return false;
+
+    // The segment must cross the portal threshold plane midT
+    if (!((ta <= midT && tb >= midT) || (ta >= midT && tb <= midT)))
+        return false;
+
+    float const t = (midT - ta) / (tb - ta);
+    if (t < 0.0f || t > 1.0f)
+        return false;
+
+    float const w = wa + t * (wb - wa);
+    return (w >= minW - pad && w <= maxW + pad);
+}
+
 std::size_t DungeonClearMath::SelectHealTarget(std::vector<HealCandidate> const& members,
                                                float hpFloor, float tankBias)
 {
