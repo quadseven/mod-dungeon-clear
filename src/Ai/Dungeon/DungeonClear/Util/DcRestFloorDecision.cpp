@@ -82,6 +82,13 @@ namespace DcRestFloorDecision
             else if (m.role == Role::Tank)
                 out.mp = std::min(out.mp, kNoDrinkTankCap);
         }
+
+        // A damage dealer's mana only shortens a fight. Once the wait has
+        // already held a whole ceiling for it, the run goes on without it
+        // rather than ending (live: 26 of 48 guild run stalls in 72 hours were
+        // a no-drink hunter, paladin or shaman at low mana, issue 102).
+        if (m.usesMana && m.manaWaived && m.role == Role::Damage)
+            out.mp = 0.0f;
         return out;
     }
 

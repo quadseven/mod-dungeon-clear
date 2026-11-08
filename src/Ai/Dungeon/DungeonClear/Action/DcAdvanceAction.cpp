@@ -52,6 +52,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSocialQuarantine.h"
@@ -943,6 +944,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     //     next pack, and
     //   * the ceiling, which catches every other shape of unsatisfiable wait.
     //
+    // One exception at the ceiling: a wait held only by damage dealers' mana GOES
+    // ON instead of ending (issue 102), with their mana floor waived for a while.
+    //
     // Note what is NOT here: a party that merely SHRANK keeps going. Members are
     // already excluded from the readiness gate the moment they leave this Map
     // (DcSameInstance), so four members simply finish the dungeon, which is the
@@ -973,6 +977,18 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     uint32 const bossEntry = st.next ? st.next->entry : 0;
     waitIn.rescueAlreadyFired =
         DcPartyWaitDecision::RescueFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
+    // Would the party be ready with damage dealers' mana floors waived? Asked only
+    // at the ceiling (the only place the kernel reads it), only for the scaled
+    // gate (an operator's RestManaPct is an order), and never over a pending
+    // resurrection, which holds the gate on its own clock.
+    if (waitIn.timeoutMs && waitIn.waitedMs >= waitIn.timeoutMs && rest.scaled &&
+        !rest.waiveDamageMana && !DcRezRecovery::IsPending(bot))
+    {
+        DcPartyState::RestGate waived = rest;
+        waived.waiveDamageMana = true;
+        waitIn.onlyDamageManaShort =
+            DcPartyState::IsPartyReady(bot, waived, gate.maxSpread, gate.anchor, gate.maxTankGap);
+    }
 
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
 
@@ -988,6 +1004,26 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                  "[DC:{}] between-pulls wait rescuing {} stranded out-of-range "
                  "member(s) after {}ms (once this wait)",
                  bot->GetName(), waitIn.strandedOutOfRange, waitIn.waitedMs);
+        return Step::ReturnFalse;
+    }
+
+    // GO ON without the damage dealers' mana: it only makes the next fight slower,
+    // and ending the run threw away every other member's progress (issue 102:
+    // 26 of 48 guild run stalls in 72 hours, every one a no-drink damage dealer).
+    // The waiver lets this gate and the pull triggers pass for a while; the wait
+    // clock starts over, so a later wait still gives them time to regenerate.
+    if (verdict.outcome == DcPartyWaitDecision::Outcome::GoOn)
+    {
+        DcPartyState::WaiveDamageMana(DcRun::Of(context), nowMs);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] between-pulls wait going on after {} ticks / {}ms without "
+                 "damage dealers' mana ({}); their mana floor is waived for {}s",
+                 bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
+                 DC_DAMAGE_MANA_WAIVER_MS / 1000);
+        appr.partyNotReadyTicks = 0;
+        appr.partyNotReadySinceMs = 0;
+        appr.lastYieldLogMs = 0;
+        appr.lastYieldLogged.clear();
         return Step::ReturnFalse;
     }
 

@@ -164,6 +164,12 @@ struct DcRunState
     uint32 smartRestSinceMs   = 0;      // getMSTime() when latched (timeout clock)
     uint32 smartRestRearmAtMs = 0;      // after a timeout release: no re-latch before this
 
+    // === damage-mana waiver (leader-owned, issue 102) ===============================
+    // Set by the between-pulls wait when its ceiling is reached on damage dealers'
+    // mana alone (DcPartyWaitDecision::Outcome::GoOn): until this getMSTime() the
+    // scaled rest gate gives damage dealers no mana floor. 0 = no waiver.
+    uint32 damageManaWaivedUntilMs = 0;
+
     // === post-combat rez recovery (leader-owned, written cross-bot) ===============
     // Maintained by DcRezRecovery::Evaluate — called from the (alive) leader's
     // relaxed party-died trigger and from every bot's rez-party trigger, so the
