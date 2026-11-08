@@ -53,6 +53,7 @@ namespace DcPartyWaitDecision
     enum class Outcome
     {
         Wait,    // keep holding the tank - the wait is still legitimate
+        Regroup, // order the lagging members to follow the tank again and keep waiting (once per wait)
         Rescue,  // teleport the stranded out-of-range members to the tank and keep waiting (once per wait)
         EndRun,  // stop the clear and report `reason`
     };
@@ -105,7 +106,23 @@ namespace DcPartyWaitDecision
         // A second rescue is never tried in the same wait, so a rescue that did not
         // bring the members in leaves the ceiling to end the run.
         bool rescueAlreadyFired = false;
+
+        // The REGROUP rung: a non-teleport answer for a member that is lagging but
+        // plainly able to come back (alive, on this map, within kRegroupMaxYards of
+        // the tank). StrandedRecovery is off by default and its clock is the run's
+        // no-progress clock, so before this rung a healer standing 30yd back had no
+        // remedy at all and the ceiling ended the run (mod-dungeon-clear#107).
+        std::uint32_t regroupAfterMs = 0;     // DungeonClear.PartyWaitRegroupSecs * 1000; 0 = off
+        // How many of the out-of-range bots are within kRegroupMaxYards of the tank.
+        // The rung fires only when ALL of them are (a member far beyond that is
+        // stuck, not lagging, and is the teleport rescue's problem).
+        std::uint32_t regroupableStrays = 0;
+        bool regroupAlreadyFired = false;     // RegroupFiredThisWait
     };
+
+    // A lagging member farther than this from the tank is stuck rather than slow:
+    // the regroup order is not enough and is not tried. Sight range at a camp.
+    inline constexpr float kRegroupMaxYards = 60.0f;
 
     struct Result
     {
@@ -127,7 +144,26 @@ namespace DcPartyWaitDecision
         // start (DcApproachState::partyNotReadySinceMs, never 0 while armed).
         std::uint32_t rescueBossEntry = 0;
         std::uint32_t rescueWaitStartMs = 0;  // 0 = no rescue remembered
+
+        // The wait that last spent its regroup order, same shape as the rescue's.
+        std::uint32_t regroupBossEntry = 0;
+        std::uint32_t regroupWaitStartMs = 0;  // 0 = no regroup remembered
     };
+
+    // True when the wait that started at waitStartMs, at this boss, has already
+    // had its regroup order. A new wait gets one of its own.
+    inline bool RegroupFiredThisWait(TimeoutMemory const& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        return mem.regroupWaitStartMs != 0 && mem.regroupWaitStartMs == waitStartMs &&
+               mem.regroupBossEntry == bossEntry;
+    }
+
+    // Remember that this wait spent its regroup. The only writer of the regroup fields.
+    inline void RecordRegroup(TimeoutMemory& mem, std::uint32_t bossEntry, std::uint32_t waitStartMs)
+    {
+        mem.regroupBossEntry = bossEntry;
+        mem.regroupWaitStartMs = waitStartMs;
+    }
 
     // True when the wait that started at waitStartMs, at this boss, has already
     // had its rescue. A new wait (the party became ready, or the run was stopped
@@ -201,7 +237,15 @@ namespace DcPartyWaitDecision
                 return verdict(Outcome::EndRun, Reason::LostHealer);
         }
 
-        // 2. Rescue once the stranded clock has elapsed. Do this before the
+        // 2a. Regroup first: the cheap, human-like answer (tell the laggard to
+        //     follow again) before any teleport. Once per wait, clock untouched,
+        //     so a regroup that does not help still reaches the rescue and the
+        //     ceiling below.
+        if (!in.regroupAlreadyFired && in.regroupAfterMs > 0 && in.waitedMs >= in.regroupAfterMs &&
+            in.regroupableStrays > 0 && in.regroupableStrays == in.strandedOutOfRange)
+            return verdict(Outcome::Regroup, Reason::StillWaiting);
+
+        // 2b. Rescue once the stranded clock has elapsed. Do this before the
         //    longer party-wait ceiling so a rescuable wait gets a chance to make
         //    progress instead of stopping at the ceiling. Once per wait only, and
         //    the clock is not reset by it, so the ceiling below still bounds a

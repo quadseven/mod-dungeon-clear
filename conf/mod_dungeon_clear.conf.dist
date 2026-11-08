@@ -426,6 +426,22 @@ DungeonClear.UnreachableCombatPurgeSecs = 60
 DungeonClear.PartyWaitTimeoutSecs = 180
 
 #
+#    DungeonClear.PartyWaitRegroupSecs
+#        Regroup rung of the between-pulls wait, in seconds. When one wait has run
+#        this long and is held only by bot members who are out of range but able
+#        to come back (alive, on this map, within 60 yards of the tank), they are
+#        ordered to follow the tank again, once per wait: a held "stay" pin is
+#        cleared and the follow order is re-issued. Nobody is teleported, so this
+#        works with StrandedRecovery off. If it does not bring them in, the wait
+#        goes on to the rescue (when on) and to PartyWaitTimeoutSecs as before.
+#            0 = off
+#
+#        Default: 20
+#
+
+DungeonClear.PartyWaitRegroupSecs = 20
+
+#
 #    DungeonClear.NoKillTimeoutSecs
 #        Run-level no-kill watchdog, in seconds. When a run completes no boss or
 #        objective for longer than this while a boss is still ahead, it stops

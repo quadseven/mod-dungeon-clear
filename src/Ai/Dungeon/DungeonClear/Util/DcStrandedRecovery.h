@@ -6,7 +6,10 @@
 #ifndef _PLAYERBOT_DCSTRANDEDRECOVERY_H
 #define _PLAYERBOT_DCSTRANDEDRECOVERY_H
 
+#include <cstdint>
+
 class Player;
+struct Position;
 
 // Engine glue for the stranded-member recovery failsafe (see DcStrandedDecision.h
 // for the kernel). This is the only place the feature touches game objects: it
@@ -62,6 +65,18 @@ namespace DcStrandedRecovery
     // driver is NOT exempt from the teleport when the anchor is a corpse — the
     // sole survivor is routinely both the driver and the stray.
     void Recover(Player* bot);
+
+    // The regroup order of the between-pulls wait (DcPartyWaitDecision::Regroup),
+    // for a member that lags but can come back. No teleport and no run-state
+    // change: for every bot member out of the wait gate's range and within
+    // kRegroupMaxYards of the tank, clear a held DC pin (the healer's "stay", a
+    // passive) and forget the tank it followed, so follow-tank re-issues a fresh
+    // follow on its next tick instead of no-opping on a stale one. `tank` is the
+    // bot running the wait; the other arguments are the wait gate's own, so the
+    // members ordered are the ones the gate is holding on. Returns how many were
+    // ordered (mod-dungeon-clear#107).
+    std::uint32_t RegroupLaggards(Player* tank, float maxSpread, Position const* spreadAnchor,
+                                  float maxTankGap);
 }
 
 #endif  // _PLAYERBOT_DCSTRANDEDRECOVERY_H
