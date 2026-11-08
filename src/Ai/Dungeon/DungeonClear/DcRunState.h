@@ -106,6 +106,23 @@ struct DcRunState
     // unrelated door can never auto-resume a hand-held pause.
     ObjectGuid  pausedDoor;
 
+    // getMSTime() when the door auto-pause stamped `paused` (0 = not stamped).
+    // Feeds DcDoorPolicy::DecideDoorPauseExit so a door pause has a bounded exit.
+    uint32      pausedAtMs = 0;
+
+    // Doors the blocking-door scan skips for the rest of this run: a door whose
+    // pause hit DungeonClear.DoorPauseExitSeconds with the door still shut. Run
+    // scope, so only Reset() (dc on / dc off) clears it, never OnResume().
+    std::vector<ObjectGuid> excludedDoors;
+
+    bool IsDoorExcluded(ObjectGuid const& g) const
+    {
+        for (ObjectGuid const& e : excludedDoors)
+            if (e == g)
+                return true;
+        return false;
+    }
+
     // Boss entry of a manual boss override (0 = no override; normal auto progression).
     // Set by DcGoAction, cleared by dc on / dc off / dc skip.
     uint32      selectedBossEntry = 0;
@@ -891,6 +908,7 @@ struct DcRunState
         paused = false;
         pauseReason.clear();
         pausedDoor.Clear();
+        pausedAtMs = 0;
     }
 };
 

@@ -328,6 +328,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         // of tp-20260907-214408-1 at 3/6 bosses.
         if (!go->InSamePhase(bot))
             continue;
+        // A door whose pause timed out is excluded for the run (issue 105): the
+        // party re-plans past it rather than parking at it again.
+        if (DcRun::Of(context).IsDoorExcluded(go->GetGUID()))
+            continue;
         // Interact-THROUGH gates (Old Hillsbrad's prison door): the objective is
         // completed from the players' side of the shut door and the event opens
         // it itself — never flag one as blocking, never pause on it.
@@ -440,9 +444,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         if (bestGo)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] blocking-door: flagged {} '{}' (entry {}) "
-                     "{:.1f}yd from bot as corridor-blocking",
+                     "{:.1f}yd from bot as corridor-blocking (bot at {:.1f},{:.1f},{:.1f})",
                      bot->GetName(), best.ToString(), bestGo->GetName(),
-                     bestGo->GetEntry(), std::sqrt(bestDistFromBotSq));
+                     bestGo->GetEntry(), std::sqrt(bestDistFromBotSq),
+                     botX, botY, botZ);
         else
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] blocking-door: corridor clear (no blocking door)",

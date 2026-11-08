@@ -137,6 +137,41 @@ namespace DcDoorPolicy
         return false;
     }
 
+    // WHAT A DOOR PAUSE DOES NEXT. A pause the door-blocked action stamps for a
+    // door nobody can open used to have no exit but a player opening that door:
+    // `dc skip` never touched it and nothing re-evaluated the route while paused
+    // (issue 105: a Blackrock Depths run stood at the Shadowforge Gate for 18+
+    // minutes). Hold while inside the bound; once the door reads open, resume as
+    // before; once the bound passes with the door still shut, resume with that
+    // door excluded from the blocking-door scan so the run re-plans and walks on.
+    enum class DoorPauseExit
+    {
+        Hold,                  // not a door pause, or still inside the bound
+        ResumeDoorOpen,        // the door reads open (or is gone)
+        ResumeExcludingDoor,   // bound passed, door still shut: re-plan without it
+    };
+
+    // pausedForDoor: the pause was stamped by the door auto-pause (pausedDoor set).
+    // boundMs 0 disables the timed exit (the door-open exit still applies).
+    inline DoorPauseExit DecideDoorPauseExit(bool pausedForDoor, bool doorClosed,
+                                             uint32 pausedForMs, uint32 boundMs)
+    {
+        if (!pausedForDoor)
+            return DoorPauseExit::Hold;
+        if (!doorClosed)
+            return DoorPauseExit::ResumeDoorOpen;
+        if (boundMs > 0 && pausedForMs >= boundMs)
+            return DoorPauseExit::ResumeExcludingDoor;
+        return DoorPauseExit::Hold;
+    }
+
+    // `dc skip` clears a door pause (it already resets the route and target); a
+    // manual or wait-at-boss pause is the player's own hold and stays.
+    inline bool SkipClearsPause(bool paused, bool pausedForDoor)
+    {
+        return paused && pausedForDoor;
+    }
+
     // One party member as the opener choice reads it.
     struct OpenerCandidate
     {

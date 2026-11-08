@@ -204,6 +204,20 @@ DungeonClear.IgnoreChests = 1
 DungeonClear.DoorBlockedTimeout = 5
 
 #
+#    DungeonClear.DoorPauseExitSeconds
+#        Seconds a door auto-pause (a closed door nobody in the party can open)
+#        holds before the run gives up waiting: it resumes with that door
+#        excluded from the blocking-door scan and re-plans its route. `dc skip`
+#        also clears a door pause at once. Without this exit a locked gate that
+#        no one carries the key for held the run until the overseer's stall exit.
+#        0 = never exit on a timer (pause until the door opens or `dc skip`).
+#
+#        Default: 30
+#
+
+DungeonClear.DoorPauseExitSeconds = 30
+
+#
 #    DungeonClear.RestHealthPct
 #        Health % the party tops up to between pulls while clearing, overriding
 #        mod-playerbots' Playerbots.AlmostFullHealth for the run. Bots eat up to

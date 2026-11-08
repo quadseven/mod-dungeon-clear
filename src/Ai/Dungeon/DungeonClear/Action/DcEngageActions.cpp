@@ -3186,6 +3186,8 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             // fallback path below leaves this empty, so it simply stays manual.
             DcRun::Of(context).pausedDoor =
                 door ? door->GetGUID() : ObjectGuid::Empty;
+            // Start the bounded-exit clock (0 means "unstamped", so never store 0).
+            DcRun::Of(context).pausedAtMs = std::max<uint32>(getMSTime(), 1u);
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
             bot->StopMovingOnCurrentPos();

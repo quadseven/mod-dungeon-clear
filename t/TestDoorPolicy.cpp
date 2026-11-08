@@ -636,3 +636,43 @@ TEST(DcDoorPolicyTest, BlackrockBarDoorIsScriptOnly)
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558));
     EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));
 }
+
+// Issue 105: a door auto-pause on a keyed door nobody can open (the Shadowforge
+// Gate, entry 170559) had no exit; the run stood 18+ minutes. The pause now has a
+// bounded exit that resumes with the door excluded, and dc skip clears it.
+TEST(DcDoorPolicyTest, DoorPauseHoldsInsideTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 0, 30000));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 29999, 30000));
+}
+
+TEST(DcDoorPolicyTest, DoorPauseExitsExcludingTheDoorAtTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::ResumeExcludingDoor, DcDoorPolicy::DecideDoorPauseExit(true, true, 30000, 30000));
+    EXPECT_EQ(E::ResumeExcludingDoor,
+              DcDoorPolicy::DecideDoorPauseExit(true, true, 18 * 60 * 1000, 30000));
+}
+
+TEST(DcDoorPolicyTest, DoorPauseResumesWhenTheDoorOpensInsideTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::ResumeDoorOpen, DcDoorPolicy::DecideDoorPauseExit(true, false, 100, 30000));
+}
+
+TEST(DcDoorPolicyTest, ZeroBoundDisablesTheTimerAndManualPausesNeverExit)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 99999999, 0));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, true, 99999999, 30000));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, false, 99999999, 30000));
+}
+
+TEST(DcDoorPolicyTest, SkipClearsOnlyADoorPause)
+{
+    EXPECT_TRUE(DcDoorPolicy::SkipClearsPause(true, true));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(true, false));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, true));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, false));
+}
