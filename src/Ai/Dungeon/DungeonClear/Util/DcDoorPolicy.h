@@ -6,10 +6,13 @@
 #ifndef _PLAYERBOT_DCDOORPOLICY_H
 #define _PLAYERBOT_DCDOORPOLICY_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
 #include "SharedDefines.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 
 // Pure, testable kernel answering "could a human player at this bot's keyboard
 // open this lock?" for door gameobjects. Mirrors the core's lock adjudication
@@ -134,6 +137,89 @@ namespace DcDoorPolicy
         for (std::size_t i = 0; i < count; ++i)
             if (slots[i].keyType == LOCK_KEY_ITEM && slots[i].index)
                 return true;
+        return false;
+    }
+
+    // ---- SHOULD THIS SHUT DOOR BE FLAGGED AS CORRIDOR-BLOCKING --------------
+    // The decision DungeonClearBlockingDoorValue::Calculate makes per shut door,
+    // lifted out so it is testable offline. Flag ONLY a door the look-ahead route
+    // transits: a door the corridor runs past (off the planned segment) is left
+    // alone. Distance to the bot is never a criterion.
+
+    // Lateral slack around the door model footprint (bot body radius + the gap
+    // between the smoothed centerline and the walked line).
+    constexpr float DOOR_PATH_PAD = 2.0f;
+    // Vertical tolerance over the door model Z extent (mirrors DC_DOOR_Z_BAND).
+    constexpr float DOOR_Z_BAND = 6.0f;
+    // 2D proximity gate for the GameObject-LOS detector, in yards.
+    constexpr float DOOR_LOS_NEAR = 12.0f;
+
+    // The door as the decision reads it: the GO origin and orientation, and the
+    // model box already scaled by the GO scale, in the door local frame.
+    struct DoorFootprint
+    {
+        float gx = 0, gy = 0, gz = 0;
+        float orientation = 0;
+        float minX = 0, maxX = 0, minY = 0, maxY = 0, minZ = 0, maxZ = 0;
+    };
+
+    // True when a leg shares the door floor: a leg whose height span misses the
+    // door padded Z span runs over or under it.
+    inline bool LegSharesDoorFloor(DoorFootprint const& d, float az, float bz)
+    {
+        float const loZ = d.gz + d.minZ - DOOR_Z_BAND;
+        float const hiZ = d.gz + d.maxZ + DOOR_Z_BAND;
+        return std::max(az, bz) >= loZ && std::min(az, bz) <= hiZ;
+    }
+
+    // True when a leg passes THROUGH the door footprint (oriented box + pad).
+    inline bool LegCrossesDoor(DoorFootprint const& d,
+                               DungeonClearMath::LookAheadLeg const& leg)
+    {
+        if (!LegSharesDoorFloor(d, leg.az, leg.bz))
+            return false;
+        float const sinA = std::sin(d.orientation);
+        float const cosA = std::cos(d.orientation);
+        auto const toLocal = [&](float wx, float wy, float& lx, float& ly)
+        {
+            float const ddx = wx - d.gx;
+            float const ddy = wy - d.gy;
+            lx = sinA * ddx + cosA * ddy;
+            ly = cosA * ddx - sinA * ddy;
+        };
+        float lax, lay, lbx, lby;
+        toLocal(leg.ax, leg.ay, lax, lay);
+        toLocal(leg.bx, leg.by, lbx, lby);
+        return DungeonClearMath::SegmentIntersectsAABB2D(
+            lax, lay, lbx, lby, d.minX - DOOR_PATH_PAD, d.minY - DOOR_PATH_PAD,
+            d.maxX + DOOR_PATH_PAD, d.maxY + DOOR_PATH_PAD);
+    }
+
+    // excluded: the door is on the run exclusion list (a door pause timed out on
+    // it). losBlocked(leg): the GameObject-only line of sight along that leg is
+    // blocked; called only for a leg on the door floor within DOOR_LOS_NEAR yards
+    // of the door origin, so the costly map query stays lazy.
+    template <class LosBlockedFn>
+    bool ShouldFlagDoor(bool excluded, DoorFootprint const& door,
+                        std::vector<DungeonClearMath::LookAheadLeg> const& legs,
+                        LosBlockedFn losBlocked)
+    {
+        if (excluded)
+            return false;
+        for (auto const& leg : legs)
+            if (LegCrossesDoor(door, leg))
+                return true;
+        constexpr float NEAR_SQ = DOOR_LOS_NEAR * DOOR_LOS_NEAR;
+        for (auto const& leg : legs)
+        {
+            if (!LegSharesDoorFloor(door, leg.az, leg.bz))
+                continue;
+            if (DungeonClearMath::DistSqToSegment2D(door.gx, door.gy, leg.ax, leg.ay,
+                                                    leg.bx, leg.by) > NEAR_SQ)
+                continue;
+            if (losBlocked(leg))
+                return true;
+        }
         return false;
     }
 

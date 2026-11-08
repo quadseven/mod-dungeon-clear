@@ -8,8 +8,10 @@
 #include <initializer_list>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
+#include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "DcDoorPolicy.h"
 #include "DcLootPolicy.h"
+#include "DungeonClearMath.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
 // doors that drove the door-handling overhaul:
@@ -667,6 +669,119 @@ TEST(DcDoorPolicyTest, ZeroBoundDisablesTheTimerAndManualPausesNeverExit)
     EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 99999999, 0));
     EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, true, 99999999, 30000));
     EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, false, 99999999, 30000));
+}
+
+namespace
+{
+    // A gate like the Shadowforge Gate: a 6 x 1 yd box at the origin, facing
+    // orientation 0 (local x = world y, local y = world x).
+    DcDoorPolicy::DoorFootprint Gate()
+    {
+        DcDoorPolicy::DoorFootprint d;
+        d.gx = 0.0f;
+        d.gy = 0.0f;
+        d.gz = 0.0f;
+        d.orientation = 0.0f;
+        d.minX = -3.0f;
+        d.maxX = 3.0f;
+        d.minY = -0.5f;
+        d.maxY = 0.5f;
+        d.minZ = 0.0f;
+        d.maxZ = 5.0f;
+        return d;
+    }
+
+    using Leg = DungeonClearMath::LookAheadLeg;
+
+    bool LosNeverBlocked(Leg const&) { return false; }
+    bool LosAlwaysBlocked(Leg const&) { return true; }
+}
+
+// Criterion 1: a shut door the route runs past is not flagged, however near.
+TEST(DcDoorFlagTest, ClosedDoorOffTheRouteIsNotFlagged)
+{
+    // A leg running along x = 5.8 (5.8 yd from the gate), clear of the 1 yd
+    // half-width plus the 2 yd pad.
+    std::vector<Leg> legs = {{5.8f, -30.0f, 0.0f, 5.8f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+}
+
+TEST(DcDoorFlagTest, DoorOnALegIsFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+    EXPECT_TRUE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+}
+
+TEST(DcDoorFlagTest, DoorOnAnotherFloorIsNotFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 40.0f, 0.0f, 30.0f, 40.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosAlwaysBlocked));
+}
+
+// The GameObject-LOS detector flags a leg within 12 yd that the shut door blocks,
+// and only consults the (costly) query for legs inside that proximity band.
+TEST(DcDoorFlagTest, LosBlockedLegWithinTwelveYardsIsFlagged)
+{
+    std::vector<Leg> legs = {{9.0f, -30.0f, 0.0f, 9.0f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+    EXPECT_TRUE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosAlwaysBlocked));
+}
+
+TEST(DcDoorFlagTest, LosBlockedLegBeyondTwelveYardsIsNotFlagged)
+{
+    std::vector<Leg> legs = {{13.0f, -30.0f, 0.0f, 13.0f, 30.0f, 0.0f}};
+    int calls = 0;
+    bool const flagged = DcDoorPolicy::ShouldFlagDoor(
+        false, Gate(), legs, [&](Leg const&) { ++calls; return true; });
+    EXPECT_FALSE(flagged);
+    EXPECT_EQ(0, calls);
+}
+
+TEST(DcDoorFlagTest, ExcludedDoorIsNeverFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(true, Gate(), legs, LosAlwaysBlocked));
+}
+
+// Criterion 2 end to end over the pure pieces: a door pause is stamped on the run
+// state, holds before the bound, exits excluding the door after it, and the very
+// next scan no longer flags that door.
+TEST(DcDoorFlagTest, DoorPauseEscapesAtTheBoundAndTheNextScanDoesNotFlagTheDoor)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    constexpr uint32 BOUND_MS = 30000;
+    ObjectGuid const gate(HighGuid::GameObject, 170559, 15617);
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+
+    DcRunState run;
+    // Scan 1: the route crosses the gate, so it is flagged and the run pauses.
+    ASSERT_TRUE(DcDoorPolicy::ShouldFlagDoor(run.IsDoorExcluded(gate), Gate(), legs, LosNeverBlocked));
+    run.paused = true;
+    run.pausedDoor = gate;
+    run.pausedAtMs = 1000;
+
+    auto const exitAt = [&](uint32 nowMs)
+    {
+        return DcDoorPolicy::DecideDoorPauseExit(!run.pausedDoor.IsEmpty(), /*doorClosed*/ true,
+                                                 nowMs - run.pausedAtMs, BOUND_MS);
+    };
+    EXPECT_EQ(E::Hold, exitAt(1000 + BOUND_MS - 1));
+    ASSERT_EQ(E::ResumeExcludingDoor, exitAt(1000 + BOUND_MS));
+
+    // The resume action: exclude the door, then clear the pause cluster.
+    run.excludedDoors.push_back(run.pausedDoor);
+    run.OnResume();
+    EXPECT_FALSE(run.paused);
+    EXPECT_TRUE(run.pausedDoor.IsEmpty());
+    EXPECT_EQ(0u, run.pausedAtMs);
+    EXPECT_TRUE(run.IsDoorExcluded(gate));
+
+    // Scan 2: same route, same shut gate, no longer flagged.
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(run.IsDoorExcluded(gate), Gate(), legs, LosNeverBlocked));
+
+    // dc on / dc off wipes the exclusion with the rest of the run.
+    run.Reset();
+    EXPECT_FALSE(run.IsDoorExcluded(gate));
 }
 
 TEST(DcDoorPolicyTest, SkipClearsOnlyADoorPause)
