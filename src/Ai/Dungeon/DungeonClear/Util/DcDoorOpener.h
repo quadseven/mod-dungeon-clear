@@ -33,9 +33,14 @@ namespace DcDoorOpener
     // would, standing within `reach` of `bot`; nullptr when nobody can.
     // `lockEnforced` is the object's GO_FLAG_LOCKED (bare-hands slots then do
     // not count).
+    //
+    // `holdForOpener`, when given, is set true when nobody is within reach but
+    // an alive party member carries the key or the lockpicking
+    // (DcDoorPolicy::HoldForOpener): the caller holds for that member to arrive
+    // instead of treating the door as one this party cannot open.
     Player* PartyOpener(Player* bot, GameObject* go,
                         DcDoorPolicy::LockSlot const (&slots)[DcDoorPolicy::LOCK_SLOT_COUNT],
-                        bool lockEnforced, float reach);
+                        bool lockEnforced, float reach, bool* holdForOpener = nullptr);
 }
 
 #endif
