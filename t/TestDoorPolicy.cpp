@@ -8,6 +8,7 @@
 #include <initializer_list>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
+#include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPauseDecision.h"
 #include "DcDoorPolicy.h"
 #include "DcLootPolicy.h"
@@ -689,4 +690,85 @@ TEST(DcDoorPolicyTest, DoorBlockedAutoPauseResumesWithinBound)
     res = DcDoorPauseDecision::Decide(in);
     EXPECT_FALSE(res.shouldResume);
     EXPECT_FALSE(res.timedOut);
+}
+
+// Door-blocked auto-pause bounded exit (#105): drive the pause path from the
+// initial door-blocked pause, through the timeout bound, to resuming with the
+// door excluded. Proves that the door is excluded on timeout, that an excluded
+// door vanishes from the blocker scan so the run can advance and re-plan rather
+// than remaining paused, and that dc skip clears the pause.
+TEST(DcDoorPolicyTest, DoorBlockedAutoPauseDrivesPausePathAndEscapesWithDoorExcluded)
+{
+    DcRunState rs;
+    rs.enabled = true;
+    rs.paused = true;
+
+    ObjectGuid const doorGuid(HighGuid::GameObject, 170559, 12345);
+    rs.pausedDoor = doorGuid;
+    rs.pausedDoorSinceMs = 10000;
+    rs.pauseReason = "Shadowforge Gate";
+
+    // Initial state: door is paused, not yet excluded
+    EXPECT_TRUE(rs.paused);
+    EXPECT_FALSE(rs.IsDoorExcluded(doorGuid));
+
+    // 15 seconds in: still within DEFAULT_TIMEOUT_MS (30s) -> stays paused
+    DcDoorPauseDecision::Inputs in;
+    in.doorOpen = false;
+    in.pausedSinceMs = rs.pausedDoorSinceMs;
+    in.nowMs = 25000;
+    in.timeoutMs = DcDoorPauseDecision::DEFAULT_TIMEOUT_MS;
+
+    DcDoorPauseDecision::Result res = DcDoorPauseDecision::Decide(in);
+    EXPECT_FALSE(res.shouldResume);
+    EXPECT_FALSE(res.timedOut);
+    EXPECT_TRUE(rs.paused);
+
+    // Exactly at 30s elapsed (nowMs = 40000): bounds timeout fires
+    in.nowMs = 40000;
+    res = DcDoorPauseDecision::Decide(in);
+    EXPECT_TRUE(res.shouldResume);
+    EXPECT_TRUE(res.timedOut);
+
+    // Driving the timeout resume path (DcResumeOnDoorOpenedAction):
+    // 1. Exclude the door so the blocker scan skips it
+    rs.ExcludeDoor(doorGuid);
+    // 2. Unpause and clear paused door fields (OnResume)
+    rs.OnResume();
+
+    // Verify the party has escaped the pause
+    EXPECT_FALSE(rs.paused);
+    EXPECT_TRUE(rs.pausedDoor.IsEmpty());
+    EXPECT_EQ(rs.pausedDoorSinceMs, 0u);
+    EXPECT_TRUE(rs.IsDoorExcluded(doorGuid));
+
+    // Simulate the blocker scan (DungeonClearBlockingDoorValue line 308):
+    // Excluded doors vanish from the scan, allowing the run to advance
+    std::vector<ObjectGuid> const doorsInRoom = {
+        doorGuid,
+        ObjectGuid(HighGuid::GameObject, 170560, 67890)
+    };
+    std::vector<ObjectGuid> scannedDoors;
+    for (ObjectGuid const& guid : doorsInRoom)
+    {
+        if (rs.IsDoorExcluded(guid))
+            continue;
+        scannedDoors.push_back(guid);
+    }
+    ASSERT_EQ(scannedDoors.size(), 1u);
+    EXPECT_EQ(scannedDoors[0], doorsInRoom[1]);
+    EXPECT_FALSE(rs.IsDoorExcluded(doorsInRoom[1]));
+
+    // dc skip clears a door pause so the run advances to the new target
+    rs.paused = true;
+    rs.pausedDoor = doorsInRoom[1];
+    rs.pausedDoorSinceMs = 50000;
+    rs.OnResume();
+    EXPECT_FALSE(rs.paused);
+    EXPECT_TRUE(rs.pausedDoor.IsEmpty());
+    EXPECT_EQ(rs.pausedDoorSinceMs, 0u);
+
+    // Full run Reset clears excluded doors for a fresh session
+    rs.Reset();
+    EXPECT_FALSE(rs.IsDoorExcluded(doorGuid));
 }

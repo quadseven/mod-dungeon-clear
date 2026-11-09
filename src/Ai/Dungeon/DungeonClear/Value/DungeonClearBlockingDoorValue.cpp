@@ -59,12 +59,8 @@ namespace
     inline void ToDoorLocal(GameObject const* go, float wx, float wy,
                             float& lx, float& ly)
     {
-        float const sinA = std::sin(go->GetOrientation());
-        float const cosA = std::cos(go->GetOrientation());
-        float const ddx = wx - go->GetPositionX();
-        float const ddy = wy - go->GetPositionY();
-        lx = sinA * ddx + cosA * ddy;
-        ly = cosA * ddx - sinA * ddy;
+        DungeonClearMath::WorldToDoorLocal2D(wx, wy, go->GetPositionX(), go->GetPositionY(),
+                                            go->GetOrientation(), lx, ly);
     }
 
     // The door's vertical extent in world Z: its model box scaled onto the GO's
@@ -305,6 +301,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     // the shut-state check below is still read fresh per door.
     for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
+        // Excluded doors (e.g. doors whose auto-pause timed out) vanish from
+        // the scan so the clear does not re-pause and instead re-plans around them.
         if (DcRun::Of(context).IsDoorExcluded(guid))
             continue;
         GameObject* go = map->GetGameObject(guid);

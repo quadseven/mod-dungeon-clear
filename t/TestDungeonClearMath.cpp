@@ -3775,3 +3775,109 @@ TEST(DungeonClearMathTest, AClosedDoorWithinAFewYardsOfTheBotOffThePathIsNotFlag
     EXPECT_FALSE(DungeonClearMath::SegmentCrossesDoor2D(-3.0f, 12.0f, 3.0f, 12.0f,
                                                         minX, minY, maxX, maxY, pad));
 }
+
+// Blackrock Depths (#105): at the entrance the bot stands at (493.0, 21.0, -70.0),
+// about 5.8yd from the closed Shadowforge Gate (GO 170559 at 496.4, 16.0, -70.3).
+// The corridor look-ahead walks toward High Interrogator Gerstahn (at 311, -146, -70)
+// via the Anvilrage packs at (470, -23, -70).
+//
+// Testing the look-ahead legs against the door:
+// - Without the fix (SegmentIntersectsAABB2D), the joining leg from the bot to the
+//   first route vertex starts inside the padded door bounding box and is falsely
+//   flagged as corridor-blocking (the test fails without the fix).
+// - With the fix (LegCrossesDoor2D / SegmentCrossesDoor2D), the route walking away
+//   from the gate does not cross the doorway threshold plane and is NOT flagged.
+// - A route actually walking through the doorway IS flagged.
+TEST(DungeonClearLookAheadTest, ClosedDoorNearBotOffRouteIsNotFlagged)
+{
+    float const botX = 493.0f, botY = 21.0f, botZ = -70.0f;
+    float const gateX = 496.4f, gateY = 16.0f;
+    float const gateOri = 1.25f; // aligns door local thickness near world X and width near world Y
+    float const minX = -0.5f, maxX = 0.5f;
+    float const minY = -6.0f, maxY = 6.0f;
+    float const pad = 2.0f;
+
+    // Route heading away to High Interrogator Gerstahn
+    std::vector<G3D::Vector3> const routeToGerstahn = {
+        { 485.0f, 5.0f, -70.0f },
+        { 470.0f, -23.0f, -70.0f },
+        { 400.0f, -80.0f, -70.0f },
+        { 311.0f, -146.0f, -70.0f }
+    };
+
+    auto const legs = DungeonClearMath::LookAheadLegs(routeToGerstahn, 0, botX, botY, botZ,
+                                                      DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
+    ASSERT_FALSE(legs.empty());
+
+    // Legacy test: SegmentIntersectsAABB2D on each look-ahead leg
+    auto const legacyFlagsGate = [&]()
+    {
+        for (auto const& leg : legs)
+        {
+            float lax, lay, lbx, lby;
+            DungeonClearMath::WorldToDoorLocal2D(leg.ax, leg.ay, gateX, gateY, gateOri, lax, lay);
+            DungeonClearMath::WorldToDoorLocal2D(leg.bx, leg.by, gateX, gateY, gateOri, lbx, lby);
+            if (DungeonClearMath::SegmentIntersectsAABB2D(lax, lay, lbx, lby,
+                                                         minX - pad, minY - pad, maxX + pad, maxY + pad))
+                return true;
+        }
+        return false;
+    };
+
+    // The legacy test flags the gate because the bot starts near it inside the padded footprint
+    EXPECT_TRUE(legacyFlagsGate());
+
+    // Fixed test: LegCrossesDoor2D on each look-ahead leg
+    auto const fixedFlagsGate = [&]()
+    {
+        for (auto const& leg : legs)
+        {
+            if (DungeonClearMath::LegCrossesDoor2D(leg.ax, leg.ay, leg.bx, leg.by,
+                                                  gateX, gateY, gateOri,
+                                                  minX, minY, maxX, maxY, pad))
+                return true;
+        }
+        return false;
+    };
+
+    // With the fix, the off-path gate is NOT flagged
+    EXPECT_FALSE(fixedFlagsGate());
+
+    // A route that actually transits the gate into Shadowforge City
+    std::vector<G3D::Vector3> const routeThroughGate = {
+        { 515.0f, 16.0f, -70.0f }
+    };
+    auto const legsThrough = DungeonClearMath::LookAheadLegs(routeThroughGate, 0, botX, botY, botZ,
+                                                            DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
+    bool throughFlagged = false;
+    for (auto const& leg : legsThrough)
+    {
+        if (DungeonClearMath::LegCrossesDoor2D(leg.ax, leg.ay, leg.bx, leg.by,
+                                              gateX, gateY, gateOri,
+                                              minX, minY, maxX, maxY, pad))
+        {
+            throughFlagged = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(throughFlagged);
+
+    // A route that crosses the door plane but misses the door laterally (outside doorway width)
+    std::vector<G3D::Vector3> const routeMissesDoor = {
+        { 515.0f, 40.0f, -70.0f }
+    };
+    auto const legsMisses = DungeonClearMath::LookAheadLegs(routeMissesDoor, 0, 480.0f, 40.0f, -70.0f,
+                                                           DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD);
+    bool missesFlagged = false;
+    for (auto const& leg : legsMisses)
+    {
+        if (DungeonClearMath::LegCrossesDoor2D(leg.ax, leg.ay, leg.bx, leg.by,
+                                              gateX, gateY, gateOri,
+                                              minX, minY, maxX, maxY, pad))
+        {
+            missesFlagged = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(missesFlagged);
+}

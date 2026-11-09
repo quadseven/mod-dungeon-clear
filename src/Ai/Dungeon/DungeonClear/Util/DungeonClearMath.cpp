@@ -792,6 +792,18 @@ bool DungeonClearMath::SegmentCrossesDoor2D(float lax, float lay,
     return (w >= minW - pad && w <= maxW + pad);
 }
 
+void DungeonClearMath::WorldToDoorLocal2D(float wx, float wy,
+                                          float goX, float goY, float goOrientation,
+                                          float& lx, float& ly)
+{
+    float const sinA = std::sin(goOrientation);
+    float const cosA = std::cos(goOrientation);
+    float const ddx = wx - goX;
+    float const ddy = wy - goY;
+    lx = sinA * ddx + cosA * ddy;
+    ly = cosA * ddx - sinA * ddy;
+}
+
 std::size_t DungeonClearMath::SelectHealTarget(std::vector<HealCandidate> const& members,
                                                float hpFloor, float tankBias)
 {

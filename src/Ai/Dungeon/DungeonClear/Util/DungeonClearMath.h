@@ -1138,6 +1138,26 @@ namespace DungeonClearMath
                               float minX, float minY, float maxX, float maxY,
                               float pad = 2.0f);
 
+    // Transform a world point (wx, wy) into a door's local (orientation-aligned)
+    // frame, matching GameObject::IsInRange2d / ToDoorLocal.
+    void WorldToDoorLocal2D(float wx, float wy,
+                            float goX, float goY, float goOrientation,
+                            float& lx, float& ly);
+
+    // True when a 2D world segment (ax,ay) -> (bx,by) transits through the doorway
+    // of a door located at (goX,goY) with orientation `goOrientation` and model bounds
+    // (minX,minY)..(maxX,maxY).
+    inline bool LegCrossesDoor2D(float ax, float ay, float bx, float by,
+                                 float goX, float goY, float goOrientation,
+                                 float minX, float minY, float maxX, float maxY,
+                                 float pad = 2.0f)
+    {
+        float lax, lay, lbx, lby;
+        WorldToDoorLocal2D(ax, ay, goX, goY, goOrientation, lax, lay);
+        WorldToDoorLocal2D(bx, by, goX, goY, goOrientation, lbx, lby);
+        return SegmentCrossesDoor2D(lax, lay, lbx, lby, minX, minY, maxX, maxY, pad);
+    }
+
     // One leg of the corridor the blocking-door scan tests for a shut door.
     struct LookAheadLeg
     {
