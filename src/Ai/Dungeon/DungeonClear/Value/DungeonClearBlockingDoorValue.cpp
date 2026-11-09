@@ -101,12 +101,9 @@ namespace
         if (!LegSharesDoorFloor(doorLoZ, doorHiZ, az, bz))
             return false;
 
-        float lax, lay, lbx, lby;
-        ToDoorLocal(go, ax, ay, lax, lay);
-        ToDoorLocal(go, bx, by, lbx, lby);
-
-        return DungeonClearMath::SegmentCrossesDoor2D(
-            lax, lay, lbx, lby,
+        return DungeonClearMath::LegCrossesDoor2D(
+            ax, ay, bx, by,
+            go->GetPositionX(), go->GetPositionY(), go->GetOrientation(),
             info->minX * scale, info->minY * scale,
             info->maxX * scale, info->maxY * scale,
             DOOR_PATH_PAD);
@@ -302,7 +299,8 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     for (ObjectGuid const guid : DcDoorIndex::Get(map))
     {
         // Excluded doors (e.g. doors whose auto-pause timed out) vanish from
-        // the scan so the clear does not re-pause and instead re-plans around them.
+        // the scan so the clear does not re-pause and instead re-plans around them
+        // (#105 criterion 2). Tested by DcDoorPolicyTest.DoorBlockedAutoPauseDrivesPausePathAndEscapesWithDoorExcluded.
         if (DcRun::Of(context).IsDoorExcluded(guid))
             continue;
         GameObject* go = map->GetGameObject(guid);

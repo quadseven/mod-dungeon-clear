@@ -736,6 +736,10 @@ bool DungeonClearMath::SegmentIntersectsAABB2D(float ax, float ay,
     return t0 <= t1;
 }
 
+// Tests whether a segment transits through the doorway opening across the
+// door threshold plane in door-local space (#105 criterion 1). Unlike 2D AABB
+// intersection, moving away from or beside a door does not flag as blocking.
+// Tested end-to-end with LookAheadLegs in DungeonClearLookAheadTest.ClosedDoorNearBotOffRouteIsNotFlagged.
 bool DungeonClearMath::SegmentCrossesDoor2D(float lax, float lay,
                                             float lbx, float lby,
                                             float minX, float minY,

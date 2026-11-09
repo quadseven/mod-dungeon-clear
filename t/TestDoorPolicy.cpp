@@ -639,12 +639,14 @@ TEST(DcDoorPolicyTest, BlackrockBarDoorIsScriptOnly)
     EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));
 }
 
-// Door-blocked auto-pause bounded exit (#105): when a closed door cannot be
-// opened (e.g. requires a party key the bots lack, like the Shadowforge Key
-// at the BRD entrance), the clear auto-pauses. The pause must not wait
-// indefinitely: if the door stays shut past DEFAULT_TIMEOUT_MS, the pause
-// must resume with timedOut = true so the door is excluded and the clear
-// re-plans. If the door opens before the bound, it resumes immediately.
+// Door-blocked auto-pause bounded exit (#105 criterion 2): pure decision kernel test.
+// When a closed door cannot be opened (e.g. requires a party key the bots lack, like
+// the Shadowforge Key at the BRD entrance), the clear auto-pauses. The pause must not
+// wait indefinitely: if the door stays shut past DEFAULT_TIMEOUT_MS, the pause must
+// resume with timedOut = true so the door is excluded and the clear re-plans. If the door
+// opens before the bound, it resumes immediately.
+// Tested end-to-end with the pause lifecycle and door exclusion in
+// DoorBlockedAutoPauseDrivesPausePathAndEscapesWithDoorExcluded below.
 TEST(DcDoorPolicyTest, DoorBlockedAutoPauseResumesWithinBound)
 {
     DcDoorPauseDecision::Inputs in;

@@ -3728,7 +3728,7 @@ TEST(DungeonClearLookAheadTest, ThermapluggCorridorReachesTheFinalChamberGate)
     EXPECT_FALSE(crossesGate(DungeonClearMath::LookAheadLegs(route, 0, 0.0f, 0.0f, -300.0f, 80.0f)));
 }
 
-// Blackrock Depths (#105): at the entrance the party stands near the closed
+// Blackrock Depths (#105 criterion 1): at the entrance the party stands near the closed
 // Shadowforge Gate (GO 170559, west gate at x 496.4), about 5.8yd away. The
 // path to High Interrogator Gerstahn (at x 311, y -146) heads away from the
 // gate toward the Anvilrage packs at (470, -23).
@@ -3737,9 +3737,10 @@ TEST(DungeonClearLookAheadTest, ThermapluggCorridorReachesTheFinalChamberGate)
 // testing 2D AABB intersection caused any path segment starting at or near the
 // bot to intersect the box even when moving in the opposite direction.
 //
-// A closed door off the path must not be flagged as corridor-blocking; only a
-// leg that transits through the doorway opening across the door plane is
-// flagged.
+// Geometric primitive test for criterion 1: verifies SegmentCrossesDoor2D and
+// LegCrossesDoor2D avoid false positives when starting inside the door bounding box
+// but heading away. Proves that legacy SegmentIntersectsAABB2D fails without the fix.
+// See ClosedDoorNearBotOffRouteIsNotFlagged below for the full LookAheadLegs route test.
 TEST(DungeonClearMathTest, AClosedDoorWithinAFewYardsOfTheBotOffThePathIsNotFlagged)
 {
     // Gate model bounds in local frame: 1yd thick (X: -0.5 to 0.5), 12yd wide (Y: -6.0 to 6.0).
@@ -3767,13 +3768,24 @@ TEST(DungeonClearMathTest, AClosedDoorWithinAFewYardsOfTheBotOffThePathIsNotFlag
     EXPECT_FALSE(DungeonClearMath::SegmentCrossesDoor2D(botLx, botLy, gerstahnLx, gerstahnLy,
                                                         minX, minY, maxX, maxY, pad));
 
+    // Also verify LegCrossesDoor2D directly in door-aligned coordinates:
+    EXPECT_FALSE(DungeonClearMath::LegCrossesDoor2D(botLx, botLy, gerstahnLx, gerstahnLy,
+                                                   0.0f, 0.0f, 0.0f,
+                                                   minX, minY, maxX, maxY, pad));
+
     // A leg that actually transits the gate (from lax = -3.0 to lax = 3.0 through the doorway):
     EXPECT_TRUE(DungeonClearMath::SegmentCrossesDoor2D(-3.0f, 1.0f, 3.0f, 1.0f,
                                                        minX, minY, maxX, maxY, pad));
+    EXPECT_TRUE(DungeonClearMath::LegCrossesDoor2D(-3.0f, 1.0f, 3.0f, 1.0f,
+                                                  0.0f, 0.0f, 0.0f,
+                                                  minX, minY, maxX, maxY, pad));
 
     // A leg that crosses the plane but misses the doorway opening (lateral offset lay = 12.0yd):
     EXPECT_FALSE(DungeonClearMath::SegmentCrossesDoor2D(-3.0f, 12.0f, 3.0f, 12.0f,
                                                         minX, minY, maxX, maxY, pad));
+    EXPECT_FALSE(DungeonClearMath::LegCrossesDoor2D(-3.0f, 12.0f, 3.0f, 12.0f,
+                                                   0.0f, 0.0f, 0.0f,
+                                                   minX, minY, maxX, maxY, pad));
 }
 
 // Blackrock Depths (#105): at the entrance the bot stands at (493.0, 21.0, -70.0),
