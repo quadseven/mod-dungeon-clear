@@ -189,8 +189,14 @@ namespace
     // has no business opening: GameObject::Use's door branch toggles the GO
     // state with NO lock and NO script/event check, so it must only ever be
     // called on a door this names an opener for, by that opener.
-    Player* DoorOpenerFor(Player* bot, GameObject* go)
+    //
+    // `holdForOpener` (when given) comes back true for a keyed door nobody at the
+    // bot's side can open yet but a party member who carries the key can: the
+    // caller holds for that member and never pauses the run for it.
+    Player* DoorOpenerFor(Player* bot, GameObject* go, bool* holdForOpener = nullptr)
     {
+        if (holdForOpener)
+            *holdForOpener = false;
         if (!bot || !go)
             return nullptr;
         GameObjectTemplate const* info = go->GetGOInfo();
@@ -226,7 +232,7 @@ namespace
             return bot;
 
         return DcDoorOpener::PartyOpener(bot, go, slots, go->HasGameObjectFlag(GO_FLAG_LOCKED),
-                                         DC_DOOR_USE_RANGE);
+                                         DC_DOOR_USE_RANGE, holdForOpener);
     }
 
     // Returns the stored sticky engage-trash target if it's still a valid pull
@@ -3069,11 +3075,28 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // The member who opens it: the bot, or the party member who carries
         // the key (DoorOpenerFor). None means the door stays shut for this
         // party, whatever its lock asks.
+        bool holdForOpener = false;
         Player* const opener = DC_ATTEMPT_DOOR_OPEN && door &&
                                        !DcEventDoorRegistry::IsScriptOnly(door->GetEntry())
-                                   ? DoorOpenerFor(bot, door)
+                                   ? DoorOpenerFor(bot, door, &holdForOpener)
                                    : nullptr;
         bool const canOpen = opener != nullptr;
+
+        // A party member who carries the key (or picks the lock) exists but is
+        // not at the bot's side yet: the door is NOT one this party cannot open,
+        // so do not pause the run for it. Blackrock Depths, 2026-11-09: Zug
+        // paused at the Upper City's Shadowforge Gate with Oz, who held the key,
+        // 50yd behind, and nothing ever resumed it. Hold; the next tick asks
+        // again, and the opener clicks once it has caught up.
+        if (!canOpen && holdForOpener && door)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] door-blocked: {} '{}' needs a key holder who is not at my "
+                     "side yet -> holding for it, not pausing",
+                     bot->GetName(), door->GetGUID().ToString(), door->GetName());
+            StallDungeonClearForDoor(botAI, openingReason);
+            return true;
+        }
         bool timedOut = false;
 
         if (canOpen)

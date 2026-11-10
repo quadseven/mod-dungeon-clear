@@ -287,6 +287,23 @@ namespace DcDoorPolicy
         }
         return other;
     }
+
+    // A KEY HOLDER WHO HAS NOT ARRIVED. PickOpener says nobody when the member
+    // who carries the key is alive but not yet at the bot's side, and the
+    // door-blocked action read that as "this party cannot open it" and paused
+    // the run for good (Blackrock Depths, Shadowforge Gate 170560, the key
+    // holder 50yd behind the tank). True when PickOpener names nobody but a
+    // member who is alive and could open it, were it at the door, exists: the
+    // right answer is to hold until that member catches up, never to pause.
+    inline bool HoldForOpener(std::vector<OpenerCandidate> const& party)
+    {
+        if (PickOpener(party) >= 0)
+            return false;
+        for (OpenerCandidate const& c : party)
+            if (c.alive && c.canOpen)
+                return true;
+        return false;
+    }
 }
 
 #endif

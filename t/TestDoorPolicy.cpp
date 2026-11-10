@@ -526,6 +526,28 @@ TEST(DcDoorPolicyTest, TheKeyHolderInReachOpensIt)
     EXPECT_EQ(PickOpener({}), -1);
 }
 
+// Blackrock Depths, 2026-11-09: the Upper City's Shadowforge Gate (170560,
+// lock 680) was flagged 120yd ahead of the tank while the key holder walked
+// 50yd behind it. PickOpener said nobody (out of reach), the door-blocked
+// action read that as "this party cannot open it" and paused the run for good.
+// A key holder who is alive but not here yet is a reason to HOLD.
+TEST(DcDoorPolicyTest, ALateKeyHolderIsHeldForNotPausedOn)
+{
+    using DcDoorPolicy::HoldForOpener;
+    EXPECT_TRUE(HoldForOpener({Member(true, true, true, false), Member(false, true, false, true)}))
+        << "the key holder is alive but trails the tank: hold for it";
+    EXPECT_FALSE(HoldForOpener({Member(true, true, true, false), Member(false, true, true, true)}))
+        << "a key holder in reach opens it: nothing to hold for";
+    EXPECT_FALSE(HoldForOpener({Member(true, true, true, true), Member(false, true, false, true)}))
+        << "the tank with the key opens it itself";
+    EXPECT_FALSE(HoldForOpener({Member(true, true, true, false), Member(false, true, false, false),
+                                Member(false, true, false, false)}))
+        << "a party with no key holder anywhere is still one that cannot open it";
+    EXPECT_FALSE(HoldForOpener({Member(true, true, true, false), Member(false, false, false, true)}))
+        << "a dead key holder is not waited for";
+    EXPECT_FALSE(HoldForOpener({}));
+}
+
 // The keyed objects a dungeon event clicks only for a key holder: every party
 // key door (the Shadowforge Lock lever, the Gordok and Crescent doors are
 // clicked by events) and the Shadowforge Braziers.
