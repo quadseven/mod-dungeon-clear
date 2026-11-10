@@ -129,6 +129,10 @@ inline constexpr DcSettingDef kDcSettings[] =
     // The pause stashes the door, so the run still auto-resumes the moment the
     // door really opens (event completes, or a player opens it).
     { "DoorBlockedTimeout",    DcType::UInt,   5,   3, 120,  true  },
+    // Seconds a door auto-pause may hold with the door still shut before the run
+    // resumes with that door excluded from the blocking-door scan and re-plans.
+    // 0 keeps the old pause-until-the-door-opens behavior. `dc skip` also clears it.
+    { "DoorPauseExitSeconds",  DcType::UInt,   30,  0, 600,  true  },
     { "RestHealthPct",         DcType::UInt,   0,   0, 100,  true  },
     { "RestManaPct",           DcType::UInt,   0,   0, 100,  true  },
 

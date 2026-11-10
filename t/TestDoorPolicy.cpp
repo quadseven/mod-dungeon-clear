@@ -8,8 +8,10 @@
 #include <initializer_list>
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
+#include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "DcDoorPolicy.h"
 #include "DcLootPolicy.h"
+#include "DungeonClearMath.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
 // doors that drove the door-handling overhaul:
@@ -657,4 +659,189 @@ TEST(DcDoorPolicyTest, BlackrockBarDoorIsScriptOnly)
     // The Lyceum door stays a keyed traversal gate the walker opens.
     EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(170558));
     EXPECT_TRUE(DcEventDoorRegistry::IsPartyKeyDoor(170558));
+}
+
+// Issue 105: a door auto-pause on a keyed door nobody can open (the Shadowforge
+// Gate, entry 170559) had no exit; the run stood 18+ minutes. The pause now has a
+// bounded exit that resumes with the door excluded, and dc skip clears it.
+TEST(DcDoorPolicyTest, DoorPauseHoldsInsideTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 0, 30000));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 29999, 30000));
+}
+
+TEST(DcDoorPolicyTest, DoorPauseExitsExcludingTheDoorAtTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::ResumeExcludingDoor, DcDoorPolicy::DecideDoorPauseExit(true, true, 30000, 30000));
+    EXPECT_EQ(E::ResumeExcludingDoor,
+              DcDoorPolicy::DecideDoorPauseExit(true, true, 18 * 60 * 1000, 30000));
+}
+
+TEST(DcDoorPolicyTest, DoorPauseResumesWhenTheDoorOpensInsideTheBound)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::ResumeDoorOpen, DcDoorPolicy::DecideDoorPauseExit(true, false, 100, 30000));
+}
+
+TEST(DcDoorPolicyTest, ZeroBoundDisablesTheTimerAndManualPausesNeverExit)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(true, true, 99999999, 0));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, true, 99999999, 30000));
+    EXPECT_EQ(E::Hold, DcDoorPolicy::DecideDoorPauseExit(false, false, 99999999, 30000));
+}
+
+namespace
+{
+    // A gate like the Shadowforge Gate: a 6 x 1 yd box at the origin, facing
+    // orientation 0 (local x = world y, local y = world x).
+    DcDoorPolicy::DoorFootprint Gate()
+    {
+        DcDoorPolicy::DoorFootprint d;
+        d.gx = 0.0f;
+        d.gy = 0.0f;
+        d.gz = 0.0f;
+        d.orientation = 0.0f;
+        d.minX = -3.0f;
+        d.maxX = 3.0f;
+        d.minY = -0.5f;
+        d.maxY = 0.5f;
+        d.minZ = 0.0f;
+        d.maxZ = 5.0f;
+        return d;
+    }
+
+    using Leg = DungeonClearMath::LookAheadLeg;
+
+    bool LosNeverBlocked(Leg const&) { return false; }
+    bool LosAlwaysBlocked(Leg const&) { return true; }
+}
+
+// Criterion 1: a shut door the route runs past is not flagged, however near.
+TEST(DcDoorFlagTest, ClosedDoorOffTheRouteIsNotFlagged)
+{
+    // A leg running along x = 5.8 (5.8 yd from the gate), clear of the 1 yd
+    // half-width plus the 2 yd pad.
+    std::vector<Leg> legs = {{5.8f, -30.0f, 0.0f, 5.8f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+}
+
+TEST(DcDoorFlagTest, DoorOnALegIsFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+    EXPECT_TRUE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+}
+
+TEST(DcDoorFlagTest, DoorOnAnotherFloorIsNotFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 40.0f, 0.0f, 30.0f, 40.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosAlwaysBlocked));
+}
+
+// The GameObject-LOS detector flags a leg within 12 yd that the shut door blocks,
+// and only consults the (costly) query for legs inside that proximity band.
+TEST(DcDoorFlagTest, LosBlockedLegWithinTwelveYardsIsFlagged)
+{
+    std::vector<Leg> legs = {{9.0f, -30.0f, 0.0f, 9.0f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosNeverBlocked));
+    EXPECT_TRUE(DcDoorPolicy::ShouldFlagDoor(false, Gate(), legs, LosAlwaysBlocked));
+}
+
+TEST(DcDoorFlagTest, LosBlockedLegBeyondTwelveYardsIsNotFlagged)
+{
+    std::vector<Leg> legs = {{13.0f, -30.0f, 0.0f, 13.0f, 30.0f, 0.0f}};
+    int calls = 0;
+    bool const flagged = DcDoorPolicy::ShouldFlagDoor(
+        false, Gate(), legs, [&](Leg const&) { ++calls; return true; });
+    EXPECT_FALSE(flagged);
+    EXPECT_EQ(0, calls);
+}
+
+TEST(DcDoorFlagTest, ExcludedDoorIsNeverFlagged)
+{
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(true, Gate(), legs, LosAlwaysBlocked));
+}
+
+// Criterion 2 end to end over the pure pieces: a door pause is stamped on the run
+// state, holds before the bound, exits excluding the door after it, and the very
+// next scan no longer flags that door.
+TEST(DcDoorFlagTest, DoorPauseEscapesAtTheBoundAndTheNextScanDoesNotFlagTheDoor)
+{
+    using E = DcDoorPolicy::DoorPauseExit;
+    constexpr uint32 BOUND_MS = 30000;
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
+    std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
+
+    DcRunState run;
+    // Scan 1: the route crosses the gate, so it is flagged and the run pauses.
+    ASSERT_TRUE(DcDoorPolicy::ShouldFlagDoor(run.IsDoorExcluded(gate), Gate(), legs, LosNeverBlocked));
+    // The same transition the door-blocked action runs.
+    run.PauseForDoor(gate, 1000);
+    ASSERT_TRUE(run.paused);
+    ASSERT_EQ(gate, run.pausedDoor);
+    EXPECT_FALSE(run.pauseReason.empty());
+
+    // The same elapsed read the door-reopened trigger makes.
+    auto const exitAt = [&](uint32 nowMs)
+    {
+        return DcDoorPolicy::DecideDoorPauseExit(!run.pausedDoor.IsEmpty(), /*doorClosed*/ true,
+                                                 run.DoorPauseElapsedMs(nowMs), BOUND_MS);
+    };
+    EXPECT_EQ(E::Hold, exitAt(1000 + BOUND_MS - 1));
+    ASSERT_EQ(E::ResumeExcludingDoor, exitAt(1000 + BOUND_MS));
+
+    // The same two calls the door-resume action makes on a timed exit: exclude
+    // the door, then clear the pause cluster.
+    run.ExcludePausedDoor();
+    run.OnResume();
+    EXPECT_FALSE(run.paused);
+    EXPECT_TRUE(run.pausedDoor.IsEmpty());
+    EXPECT_EQ(0u, run.pausedAtMs);
+    EXPECT_TRUE(run.IsDoorExcluded(gate));
+
+    // Scan 2: same route, same shut gate, no longer flagged.
+    EXPECT_FALSE(DcDoorPolicy::ShouldFlagDoor(run.IsDoorExcluded(gate), Gate(), legs, LosNeverBlocked));
+
+    // dc on / dc off wipes the exclusion with the rest of the run.
+    run.Reset();
+    EXPECT_FALSE(run.IsDoorExcluded(gate));
+}
+
+TEST(DcDoorFlagTest, DoorPauseClockNeverStoresTheUnstampedValue)
+{
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
+    DcRunState run;
+    // No pause yet: the clock is unstamped and reads as no time held.
+    EXPECT_EQ(0u, run.DoorPauseElapsedMs(50000));
+
+    // A pause at server-clock 0 still starts the clock (0 means unstamped).
+    run.PauseForDoor(gate, 0);
+    EXPECT_EQ(1u, run.pausedAtMs);
+    EXPECT_EQ(29999u, run.DoorPauseElapsedMs(30000));
+}
+
+TEST(DcDoorFlagTest, ExcludingThePausedDoorAddsItOnceAndNeverAnEmptyGuid)
+{
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
+    DcRunState run;
+    // No door recorded (a manual pause, or the null-door fallback): nothing to exclude.
+    run.ExcludePausedDoor();
+    EXPECT_TRUE(run.excludedDoors.empty());
+
+    run.PauseForDoor(gate, 1000);
+    run.ExcludePausedDoor();
+    run.ExcludePausedDoor();
+    ASSERT_EQ(1u, run.excludedDoors.size());
+    EXPECT_EQ(gate, run.excludedDoors.front());
+}
+
+TEST(DcDoorPolicyTest, SkipClearsOnlyADoorPause)
+{
+    EXPECT_TRUE(DcDoorPolicy::SkipClearsPause(true, true));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(true, false));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, true));
+    EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, false));
 }

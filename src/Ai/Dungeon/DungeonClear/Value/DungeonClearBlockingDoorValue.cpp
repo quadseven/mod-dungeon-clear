@@ -38,85 +38,6 @@ namespace
     // this distance we don't care — the chunked pathfinder will rebuild
     // by the time the bot gets there and the value will re-evaluate.
     constexpr float DOOR_LOOK_AHEAD = DcDoorPolicy::BLOCKING_DOOR_LOOK_AHEAD;
-    // Lateral slack added around the door's real model footprint before testing
-    // whether a path leg passes through it. Covers the bot's body radius plus
-    // the gap between the smoothed route centerline and the line the bot
-    // actually walks / navmesh snapping. Small on purpose: the footprint box
-    // already spans the true doorway (wide gate or narrow door alike), so this
-    // is only tolerance, not a "is the door roughly near the path" band.
-    constexpr float DOOR_PATH_PAD = 2.0f;
-    // Vertical tolerance on top of the door model's own Z extent. A door whose
-    // footprint doesn't overlap the leg's height (plus this) sits on another
-    // floor (a stacked deck, a ramp over/under us) and is not blocking, even
-    // when its 2D footprint lands under the path. Mirrors DC_DOOR_Z_BAND.
-    constexpr float DOOR_Z_BAND = 6.0f;
-
-    // Transform a world point into the door's local (orientation-aligned) frame,
-    // matching GameObject::IsInRange2d. The door's model bounding box
-    // (GameObjectDisplayInfo min/max, scaled) is axis-aligned in THIS frame, so
-    // once both leg endpoints are transformed we can do a plain segment-vs-AABB
-    // test against the real, oriented doorway footprint.
-    inline void ToDoorLocal(GameObject const* go, float wx, float wy,
-                            float& lx, float& ly)
-    {
-        float const sinA = std::sin(go->GetOrientation());
-        float const cosA = std::cos(go->GetOrientation());
-        float const ddx = wx - go->GetPositionX();
-        float const ddy = wy - go->GetPositionY();
-        lx = sinA * ddx + cosA * ddy;
-        ly = cosA * ddx - sinA * ddy;
-    }
-
-    // The door's vertical extent in world Z: its model box scaled onto the GO's
-    // position, padded by DOOR_Z_BAND.
-    void DoorZSpan(GameObject const* go, GameObjectDisplayInfoEntry const* info,
-                   float& loZ, float& hiZ)
-    {
-        float const scale = go->GetObjectScale();
-        float const gz = go->GetPositionZ();
-        loZ = gz + info->minZ * scale - DOOR_Z_BAND;
-        hiZ = gz + info->maxZ * scale + DOOR_Z_BAND;
-    }
-
-    // True when a path leg shares the door's floor. A leg whose height span
-    // misses the door's entirely runs over or under it (a stacked deck, a ramp,
-    // the storey below a tower staircase) and cannot be transiting it, however
-    // close the two look from above.
-    inline bool LegSharesDoorFloor(float loZ, float hiZ, float az, float bz)
-    {
-        return std::max(az, bz) >= loZ && std::min(az, bz) <= hiZ;
-    }
-
-    // True when a path leg actually passes THROUGH this door's footprint, rather
-    // than merely running near its origin. This is the whole point of the value:
-    // doors a route runs PAST (e.g. Shadowfang Keep's first courtyard gate, which
-    // you skirt to reach the prison event that unlocks it) must NOT be flagged —
-    // only doors the corridor transits.
-    bool PathLegCrossesDoor(GameObject const* go,
-                            GameObjectDisplayInfoEntry const* info,
-                            float ax, float ay, float az,
-                            float bx, float by, float bz)
-    {
-        float const scale = go->GetObjectScale();
-        // Floor / height gate first (cheap): the leg's Z span must overlap the
-        // door's vertical extent, padded.
-        float doorLoZ, doorHiZ;
-        DoorZSpan(go, info, doorLoZ, doorHiZ);
-        if (!LegSharesDoorFloor(doorLoZ, doorHiZ, az, bz))
-            return false;
-
-        float lax, lay, lbx, lby;
-        ToDoorLocal(go, ax, ay, lax, lay);
-        ToDoorLocal(go, bx, by, lbx, lby);
-
-        float const minX = info->minX * scale - DOOR_PATH_PAD;
-        float const maxX = info->maxX * scale + DOOR_PATH_PAD;
-        float const minY = info->minY * scale - DOOR_PATH_PAD;
-        float const maxY = info->maxY * scale + DOOR_PATH_PAD;
-        return DungeonClearMath::SegmentIntersectsAABB2D(lax, lay, lbx, lby,
-                                                         minX, minY, maxX, maxY);
-    }
-
 
     // No blocker on the corridor: a stall reason the door-blocked action wrote
     // is false now, and nothing downstream would clear it — release it here.
@@ -328,6 +249,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         // of tp-20260907-214408-1 at 3/6 bosses.
         if (!go->InSamePhase(bot))
             continue;
+        // A door whose pause timed out is excluded for the run (issue 105): the
+        // party re-plans past it rather than parking at it again.
+        if (DcRun::Of(context).IsDoorExcluded(go->GetGUID()))
+            continue;
         // Interact-THROUGH gates (Old Hillsbrad's prison door): the objective is
         // completed from the players' side of the shut door and the event opens
         // it itself — never flag one as blocking, never pause on it.
@@ -375,39 +300,30 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         // storey below a door (10yd of Z in Shadowfang's tower, well inside the
         // 12yd 2D band) that any unrelated solid GO happened to block got the
         // block attributed to a door it ran nowhere near.
-        bool crosses = false;
-        for (auto const& seg : segments)
+        DcDoorPolicy::DoorFootprint fp;
         {
-            if (PathLegCrossesDoor(go, disp, seg.ax, seg.ay, seg.az,
-                                   seg.bx, seg.by, seg.bz))
-            {
-                crosses = true;
-                break;
-            }
+            float const scale = go->GetObjectScale();
+            fp.gx = gx;
+            fp.gy = gy;
+            fp.gz = go->GetPositionZ();
+            fp.orientation = go->GetOrientation();
+            fp.minX = disp->minX * scale;
+            fp.maxX = disp->maxX * scale;
+            fp.minY = disp->minY * scale;
+            fp.maxY = disp->maxY * scale;
+            fp.minZ = disp->minZ * scale;
+            fp.maxZ = disp->maxZ * scale;
         }
-        if (!crosses)
-        {
-            constexpr float NEAR_SQ = 12.0f * 12.0f;
-            float doorLoZ, doorHiZ;
-            DoorZSpan(go, disp, doorLoZ, doorHiZ);
-            for (auto const& seg : segments)
+        bool const crosses = DcDoorPolicy::ShouldFlagDoor(
+            DcRun::Of(context).IsDoorExcluded(go->GetGUID()), fp, segments,
+            [&](DungeonClearMath::LookAheadLeg const& seg)
             {
-                if (!LegSharesDoorFloor(doorLoZ, doorHiZ, seg.az, seg.bz))
-                    continue;
-                if (DungeonClearMath::DistSqToSegment2D(gx, gy, seg.ax, seg.ay,
-                                                        seg.bx, seg.by) > NEAR_SQ)
-                    continue;
-                if (!map->isInLineOfSight(seg.ax, seg.ay, seg.az + 1.5f,
-                                          seg.bx, seg.by, seg.bz + 1.5f,
-                                          bot->GetPhaseMask(),
-                                          LINEOFSIGHT_CHECK_GOBJECT_ALL,
-                                          VMAP::ModelIgnoreFlags::Nothing))
-                {
-                    crosses = true;
-                    break;
-                }
-            }
-        }
+                return !map->isInLineOfSight(seg.ax, seg.ay, seg.az + 1.5f,
+                                             seg.bx, seg.by, seg.bz + 1.5f,
+                                             bot->GetPhaseMask(),
+                                             LINEOFSIGHT_CHECK_GOBJECT_ALL,
+                                             VMAP::ModelIgnoreFlags::Nothing);
+            });
         if (!crosses)
             continue;
 
@@ -440,9 +356,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         if (bestGo)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] blocking-door: flagged {} '{}' (entry {}) "
-                     "{:.1f}yd from bot as corridor-blocking",
+                     "{:.1f}yd from bot as corridor-blocking (bot at {:.1f},{:.1f},{:.1f})",
                      bot->GetName(), best.ToString(), bestGo->GetName(),
-                     bestGo->GetEntry(), std::sqrt(bestDistFromBotSq));
+                     bestGo->GetEntry(), std::sqrt(bestDistFromBotSq),
+                     botX, botY, botZ);
         else
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] blocking-door: corridor clear (no blocking door)",

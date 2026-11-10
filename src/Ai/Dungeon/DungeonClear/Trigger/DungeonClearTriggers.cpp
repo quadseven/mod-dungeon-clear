@@ -37,6 +37,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAtBoss.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
@@ -831,7 +832,13 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
     // either case the corridor is no longer held — IsDoorClosed treats a null GO
     // as not-closed, so the single test covers both.
     GameObject* door = botAI->GetGameObject(doorGuid);
-    return !DcEngageGeometry::IsDoorClosed(door);
+    // Door open: resume. Door still shut past DoorPauseExitSeconds: resume too, with
+    // the door excluded (the action does that), so the pause always has an exit.
+    uint32 const pausedForMs = DcRun::Of(context).DoorPauseElapsedMs(getMSTime());
+    return DcDoorPolicy::DecideDoorPauseExit(
+               true, DcEngageGeometry::IsDoorClosed(door), pausedForMs,
+               DcSettings::GetUInt(bot, "DoorPauseExitSeconds") * 1000u) !=
+           DcDoorPolicy::DoorPauseExit::Hold;
 }
 
 bool DungeonClearFollowTankTrigger::IsActive()

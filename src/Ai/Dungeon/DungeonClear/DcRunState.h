@@ -106,6 +106,50 @@ struct DcRunState
     // unrelated door can never auto-resume a hand-held pause.
     ObjectGuid  pausedDoor;
 
+    // getMSTime() when the door auto-pause stamped `paused` (0 = not stamped).
+    // Feeds DcDoorPolicy::DecideDoorPauseExit so a door pause has a bounded exit.
+    uint32      pausedAtMs = 0;
+
+    // Doors the blocking-door scan skips for the rest of this run: a door whose
+    // pause hit DungeonClear.DoorPauseExitSeconds with the door still shut. Run
+    // scope, so only Reset() (dc on / dc off) clears it, never OnResume().
+    std::vector<ObjectGuid> excludedDoors;
+
+    bool IsDoorExcluded(ObjectGuid const& g) const
+    {
+        for (ObjectGuid const& e : excludedDoors)
+            if (e == g)
+                return true;
+        return false;
+    }
+
+    // The door auto-pause as one transition: the flag, the reason the status
+    // panel shows, the door DungeonClearDoorReopenedTrigger polls, and the
+    // bounded-exit clock (0 means "unstamped", so never store 0). A null door
+    // passes ObjectGuid::Empty: the clock still runs but nothing auto-resumes.
+    void PauseForDoor(ObjectGuid const& door, uint32 nowMs)
+    {
+        paused = true;
+        pauseReason = "a closed door is blocking the path";
+        pausedDoor = door;
+        pausedAtMs = nowMs ? nowMs : 1u;
+    }
+
+    // How long the door pause has held (0 while unstamped). Feeds
+    // DcDoorPolicy::DecideDoorPauseExit.
+    uint32 DoorPauseElapsedMs(uint32 nowMs) const
+    {
+        return pausedAtMs ? getMSTimeDiff(pausedAtMs, nowMs) : 0u;
+    }
+
+    // The timed exit: the paused door joins the run's exclusions, so the scan
+    // after the resume no longer flags it. The caller resumes afterward.
+    void ExcludePausedDoor()
+    {
+        if (!pausedDoor.IsEmpty() && !IsDoorExcluded(pausedDoor))
+            excludedDoors.push_back(pausedDoor);
+    }
+
     // Boss entry of a manual boss override (0 = no override; normal auto progression).
     // Set by DcGoAction, cleared by dc on / dc off / dc skip.
     uint32      selectedBossEntry = 0;
@@ -897,6 +941,7 @@ struct DcRunState
         paused = false;
         pauseReason.clear();
         pausedDoor.Clear();
+        pausedAtMs = 0;
     }
 };
 

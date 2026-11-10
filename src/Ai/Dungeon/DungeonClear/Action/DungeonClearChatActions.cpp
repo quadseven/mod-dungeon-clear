@@ -29,6 +29,8 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTanklessLead.h"
@@ -530,6 +532,18 @@ bool DcSkipAction::Execute(Event event)
     {
         DcRefuse(botAI, bot, "Dungeon clear is not enabled.");
         return false;
+    }
+
+    // A door auto-pause has no other exit for a player: `dc skip` clears it. The
+    // skip below already resets the route and target, so only the pause cluster
+    // needs dropping here.
+    if (DcDoorPolicy::SkipClearsPause(DcRun::Of(context).paused,
+                                      !DcRun::Of(context).pausedDoor.IsEmpty()))
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] dc skip: clearing the door pause on {}",
+                 bot->GetName(), DcRun::Of(context).pausedDoor.ToString());
+        DcRun::Of(context).OnResume();
     }
 
     // A due off-path CONDITIONAL event preempts the boss pull (trigger rel 31),
@@ -1380,12 +1394,28 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
     if (AnyPartyMemberDead(bot) && !DcRezRecovery::CanRecover(bot))
         return false;
 
+    // Still shut here means the trigger fired on the DoorPauseExitSeconds bound:
+    // exclude the door for the run, then re-plan like any resume.
+    ObjectGuid const pausedDoor = DcRun::Of(context).pausedDoor;
+    bool const timedExit = DcEngageGeometry::IsDoorClosed(botAI->GetGameObject(pausedDoor));
+    if (timedExit)
+    {
+        DcRun::Of(context).ExcludePausedDoor();
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] door-blocked: pause on {} hit DoorPauseExitSeconds -> "
+                 "resuming with the door excluded, re-planning",
+                 bot->GetName(), pausedDoor.ToString());
+    }
+
     ResetForResume(context);
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     std::string const target = next.has_value() ? next->name : "the next boss";
     DcStatusPublisher::SendAddonMessage(
-        botAI, "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
+        botAI, timedExit
+                   ? "CHAT\tA locked door held us too long \xe2\x80\x94 routing around it. Heading to " +
+                         target + "."
+                   : "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }
