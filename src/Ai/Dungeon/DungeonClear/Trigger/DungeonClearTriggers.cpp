@@ -834,8 +834,7 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
     GameObject* door = botAI->GetGameObject(doorGuid);
     // Door open: resume. Door still shut past DoorPauseExitSeconds: resume too, with
     // the door excluded (the action does that), so the pause always has an exit.
-    uint32 const pausedForMs =
-        DcRun::Of(context).pausedAtMs ? getMSTimeDiff(DcRun::Of(context).pausedAtMs, getMSTime()) : 0u;
+    uint32 const pausedForMs = DcRun::Of(context).DoorPauseElapsedMs(getMSTime());
     return DcDoorPolicy::DecideDoorPauseExit(
                true, DcEngageGeometry::IsDoorClosed(door), pausedForMs,
                DcSettings::GetUInt(bot, "DoorPauseExitSeconds") * 1000u) !=

@@ -3198,19 +3198,15 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // !paused, so it won't re-fire and re-announce every tick.
         if (!DcRun::Of(context).paused)
         {
-            DcRun::Of(context).paused = true;
-            // Record the cause so the status panel shows the door reason rather
-            // than a generic hold (manual pause stamps its own reason instead).
-            DcRun::Of(context).pauseReason =
-                "a closed door is blocking the path";
-            // Stash THIS door's GUID so DungeonClearDoorReopenedTrigger can poll
-            // it and auto-resume the instant a player opens it (door is non-null
-            // here — the can-open branch above already required it). The null-door
-            // fallback path below leaves this empty, so it simply stays manual.
-            DcRun::Of(context).pausedDoor =
-                door ? door->GetGUID() : ObjectGuid::Empty;
-            // Start the bounded-exit clock (0 means "unstamped", so never store 0).
-            DcRun::Of(context).pausedAtMs = std::max<uint32>(getMSTime(), 1u);
+            // One transition (DcRunState::PauseForDoor): the flag, the door reason
+            // for the status panel (manual pause stamps its own reason instead),
+            // THIS door's GUID so DungeonClearDoorReopenedTrigger can poll it and
+            // auto-resume the instant a player opens it, and the bounded-exit
+            // clock. The door is non-null here (the can-open branch above already
+            // required it); a null door would leave the GUID empty, so that pause
+            // simply stays manual.
+            DcRun::Of(context).PauseForDoor(door ? door->GetGUID() : ObjectGuid::Empty,
+                                            getMSTime());
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
             bot->StopMovingOnCurrentPos();

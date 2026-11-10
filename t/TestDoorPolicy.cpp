@@ -778,20 +778,24 @@ TEST(DcDoorFlagTest, DoorPauseEscapesAtTheBoundAndTheNextScanDoesNotFlagTheDoor)
     DcRunState run;
     // Scan 1: the route crosses the gate, so it is flagged and the run pauses.
     ASSERT_TRUE(DcDoorPolicy::ShouldFlagDoor(run.IsDoorExcluded(gate), Gate(), legs, LosNeverBlocked));
-    run.paused = true;
-    run.pausedDoor = gate;
-    run.pausedAtMs = 1000;
+    // The same transition the door-blocked action runs.
+    run.PauseForDoor(gate, 1000);
+    ASSERT_TRUE(run.paused);
+    ASSERT_EQ(gate, run.pausedDoor);
+    EXPECT_FALSE(run.pauseReason.empty());
 
+    // The same elapsed read the door-reopened trigger makes.
     auto const exitAt = [&](uint32 nowMs)
     {
         return DcDoorPolicy::DecideDoorPauseExit(!run.pausedDoor.IsEmpty(), /*doorClosed*/ true,
-                                                 nowMs - run.pausedAtMs, BOUND_MS);
+                                                 run.DoorPauseElapsedMs(nowMs), BOUND_MS);
     };
     EXPECT_EQ(E::Hold, exitAt(1000 + BOUND_MS - 1));
     ASSERT_EQ(E::ResumeExcludingDoor, exitAt(1000 + BOUND_MS));
 
-    // The resume action: exclude the door, then clear the pause cluster.
-    run.excludedDoors.push_back(run.pausedDoor);
+    // The same two calls the door-resume action makes on a timed exit: exclude
+    // the door, then clear the pause cluster.
+    run.ExcludePausedDoor();
     run.OnResume();
     EXPECT_FALSE(run.paused);
     EXPECT_TRUE(run.pausedDoor.IsEmpty());
@@ -804,6 +808,34 @@ TEST(DcDoorFlagTest, DoorPauseEscapesAtTheBoundAndTheNextScanDoesNotFlagTheDoor)
     // dc on / dc off wipes the exclusion with the rest of the run.
     run.Reset();
     EXPECT_FALSE(run.IsDoorExcluded(gate));
+}
+
+TEST(DcDoorFlagTest, DoorPauseClockNeverStoresTheUnstampedValue)
+{
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
+    DcRunState run;
+    // No pause yet: the clock is unstamped and reads as no time held.
+    EXPECT_EQ(0u, run.DoorPauseElapsedMs(50000));
+
+    // A pause at server-clock 0 still starts the clock (0 means unstamped).
+    run.PauseForDoor(gate, 0);
+    EXPECT_EQ(1u, run.pausedAtMs);
+    EXPECT_EQ(29999u, run.DoorPauseElapsedMs(30000));
+}
+
+TEST(DcDoorFlagTest, ExcludingThePausedDoorAddsItOnceAndNeverAnEmptyGuid)
+{
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
+    DcRunState run;
+    // No door recorded (a manual pause, or the null-door fallback): nothing to exclude.
+    run.ExcludePausedDoor();
+    EXPECT_TRUE(run.excludedDoors.empty());
+
+    run.PauseForDoor(gate, 1000);
+    run.ExcludePausedDoor();
+    run.ExcludePausedDoor();
+    ASSERT_EQ(1u, run.excludedDoors.size());
+    EXPECT_EQ(gate, run.excludedDoors.front());
 }
 
 TEST(DcDoorPolicyTest, SkipClearsOnlyADoorPause)

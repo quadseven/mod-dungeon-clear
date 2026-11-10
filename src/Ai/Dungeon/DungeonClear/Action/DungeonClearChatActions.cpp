@@ -1400,7 +1400,7 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
     bool const timedExit = DcEngageGeometry::IsDoorClosed(botAI->GetGameObject(pausedDoor));
     if (timedExit)
     {
-        DcRun::Of(context).excludedDoors.push_back(pausedDoor);
+        DcRun::Of(context).ExcludePausedDoor();
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] door-blocked: pause on {} hit DoorPauseExitSeconds -> "
                  "resuming with the door excluded, re-planning",
