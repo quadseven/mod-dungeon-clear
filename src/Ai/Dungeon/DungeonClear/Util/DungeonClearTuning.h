@@ -512,6 +512,12 @@ constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
 // throttled at all.
 constexpr uint32 DC_PARTY_YIELD_LOG_INTERVAL_MS = 30000;
 
+// How long the run stops holding pulls for damage dealers' mana once the
+// between-pulls wait has reached its ceiling on that alone (issue 102). Long
+// enough for the next pack or two; when it lapses the ordinary floors return, so
+// a member who is still low gets a fresh wait to regenerate in.
+constexpr uint32 DC_DAMAGE_MANA_WAIVER_MS = 120000;
+
 // The at-boss valve (DcAtBossGate): how long the tank may hold at a live boss,
 // party ready and no loot pending, on gates the valve may override, before the
 // engage runs anyway. Long enough that a working room clear (whose pulls drop

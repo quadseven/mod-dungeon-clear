@@ -429,6 +429,11 @@ DungeonClear.UnreachableCombatPurgeSecs = 60
 #        carries on short-handed; the run only ends early if what is left cannot
 #        clear the dungeon (no healer, or fewer than two members).
 #
+#        A hold kept only by damage dealers' mana does not end the run at the
+#        ceiling: the party goes on, and for 2 minutes damage dealers have no
+#        mana floor (a damage dealer short of mana makes a fight slower, not a
+#        wipe). Healers, tanks, health and spread are still waited on.
+#
 #        Long by design, like StrandedRecoveryNoProgressSecs: a legitimate rest or
 #        a slow catch-up must never reach it. The clock restarts every time the
 #        party does become ready.

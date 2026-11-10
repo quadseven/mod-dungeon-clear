@@ -183,6 +183,56 @@ TEST(DcRestFloorTest, HealerWithNoDrinkIsNotCapped)
     EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
 }
 
+// ---- the damage-mana waiver (issue 102) -------------------------------------------
+
+TEST(DcRestFloorTest, AWaivedDamageDealerHasNoManaFloorAtAnyRisk)
+{
+    // Live, run 4747 (Scarlet Library): Grunty, a level 53 hunter with no drink in
+    // a level 35 to 38 party, held the wait twice at Arcanist Doan and the run was
+    // ended both times. Once the wait has gone on without its mana, the hunter
+    // holds nothing, whatever the next fight is.
+    Member hunter = Mage();
+    hunter.canDrink = false;
+    hunter.manaWaived = true;
+    for (Risk r : {Risk::Easy, Risk::Normal, Risk::Boss, Risk::Hard, Risk::LowLevel})
+    {
+        EXPECT_FLOAT_EQ(0.0f, FloorsFor(hunter, kHp, kMp, r).mp);
+        EXPECT_TRUE(Meets(hunter, 100.0f, 14.0f, r));
+    }
+    // A drink in the bags changes nothing about a waiver.
+    hunter.canDrink = true;
+    EXPECT_FLOAT_EQ(0.0f, FloorsFor(hunter, kHp, kMp, Risk::Hard).mp);
+}
+
+TEST(DcRestFloorTest, TheWaiverNeverTouchesHealersTanksOrHealth)
+{
+    Member priest = Priest();
+    priest.manaWaived = true;
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(priest, kHp, kMp, Risk::Hard).mp);
+    EXPECT_FALSE(Meets(priest, 100.0f, 30.0f, Risk::Boss));
+
+    Member tank = Mage();
+    tank.role = Role::Tank;
+    tank.manaWaived = true;
+    EXPECT_FLOAT_EQ(kBossTankMana, FloorsFor(tank, kHp, kMp, Risk::Boss).mp);
+
+    // Health stays held for the waived damage dealer.
+    Member hunter = Mage();
+    hunter.manaWaived = true;
+    EXPECT_FLOAT_EQ(kHp, FloorsFor(hunter, kHp, kMp, Risk::Hard).hp);
+    EXPECT_FALSE(Meets(hunter, 40.0f, 100.0f, Risk::Hard));
+}
+
+TEST(DcRestFloorTest, WithoutTheWaiverANoDrinkDamageDealerStillWaits)
+{
+    // The waiver is the only thing that drops the floor: the ordinary no-drink
+    // damage dealer keeps its 50% cap, so a fresh wait still lets it regenerate.
+    Member hunter = Mage();
+    hunter.canDrink = false;
+    EXPECT_FALSE(Meets(hunter, 100.0f, 14.0f, Risk::Boss));
+    EXPECT_FLOAT_EQ(kNoDrinkDamageCap, FloorsFor(hunter, kHp, kMp, Risk::Hard).mp);
+}
+
 
 // ---- readiness-scaled Leeroy ceiling --------------------------------------------
 
