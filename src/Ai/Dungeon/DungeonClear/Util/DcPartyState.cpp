@@ -706,7 +706,8 @@ bool DcPartyState::HasDeadSameMapMember(Player* bot)
 
 std::uint32_t DcPartyState::OutOfRangeMemberCount(Player* bot, float maxSpread,
                                                   Position const* spreadAnchor,
-                                                  float maxTankGap)
+                                                  float maxTankGap,
+                                                  float withinYardsOfTank)
 {
     if (!bot)
         return 0;
@@ -727,13 +728,13 @@ std::uint32_t DcPartyState::OutOfRangeMemberCount(Player* bot, float maxSpread,
             continue;
         float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
                                           : bot->GetDistance(member);
-        if (spread > maxSpread)
-        {
-            ++count;
+        bool const stray = spread > maxSpread ||
+                           (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap);
+        if (!stray)
             continue;
-        }
-        if (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)
-            ++count;
+        if (withinYardsOfTank > 0.0f && bot->GetDistance(member) > withinYardsOfTank)
+            continue;
+        ++count;
     }
     return count;
 }

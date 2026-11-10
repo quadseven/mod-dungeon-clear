@@ -238,6 +238,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     // See Util/DcPartyWaitDecision.h.
     { "PartyWaitTimeoutSecs",          DcType::UInt, 180,   0, 3600,  true  },
 
+    // Regroup rung of the between-pulls wait. After this many seconds of one
+    // uninterrupted wait that is held only by bot members who are out of range but
+    // plainly able to come back (alive, on this map, within 60 yards of the tank),
+    // the party's followers are ordered to follow the tank again once: a held
+    // "stay" pin is cleared and the follow order is re-issued. No teleport, so it
+    // does not need StrandedRecovery. Live (mod-dungeon-clear#107): a Blackrock
+    // Depths healer stood 30 yards back for the whole 180s and the run stopped.
+    // 0 disables the rung. See Util/DcPartyWaitDecision.h.
+    { "PartyWaitRegroupSecs",          DcType::UInt,  20,   0,  600,  true  },
+
     // Run-level no-kill watchdog, the backstop behind every failsafe above. A
     // run that completes no boss or objective for this many seconds while a boss
     // is still ahead ends with "no kill for N min before <boss>". A tank closing

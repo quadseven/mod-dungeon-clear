@@ -970,6 +970,10 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     waitIn.strandedOutOfRange =
         DcPartyState::OutOfRangeMemberCount(bot, gate.maxSpread, gate.anchor, gate.maxTankGap);
     waitIn.strandedRecoveryEnabled = DcSettings::GetBool(bot, "StrandedRecovery");
+    // The regroup rung: how many of those strays are lagging rather than stuck.
+    waitIn.regroupAfterMs = DcSettings::GetUInt(bot, "PartyWaitRegroupSecs") * 1000;
+    waitIn.regroupableStrays = DcPartyState::OutOfRangeMemberCount(
+        bot, gate.maxSpread, gate.anchor, gate.maxTankGap, DcPartyWaitDecision::kRegroupMaxYards);
     // The rescue record lives beside the timeout memory, outside the approach
     // state that DisableDungeonClear wipes. See DcPartyWaitDecision::TimeoutMemory.
     auto& memory = botAI->GetAiObjectContext()
@@ -977,6 +981,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     uint32 const bossEntry = st.next ? st.next->entry : 0;
     waitIn.rescueAlreadyFired =
         DcPartyWaitDecision::RescueFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
+    waitIn.regroupAlreadyFired =
+        DcPartyWaitDecision::RegroupFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
+
     // Would the party be ready with damage dealers' mana floors waived? Asked only
     // at the ceiling (the only place the kernel reads it), only for the scaled
     // gate (an operator's RestManaPct is an order), and never over a pending
@@ -991,6 +998,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     }
 
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
+
+    // REGROUP before any teleport: tell a lagging member (a healer 30yd back, live
+    // mod-dungeon-clear#107) to follow the tank again. Once per wait; the wait
+    // clock keeps running, so a regroup that does not bring them in still reaches
+    // the rescue and the ceiling.
+    if (verdict.outcome == DcPartyWaitDecision::Outcome::Regroup)
+    {
+        DcPartyWaitDecision::RecordRegroup(memory, bossEntry, appr.partyNotReadySinceMs);
+        std::uint32_t const ordered = DcStrandedRecovery::RegroupLaggards(
+            bot, gate.maxSpread, gate.anchor, gate.maxTankGap);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] between-pulls wait regrouping {} lagging member(s) after {}ms "
+                 "(once this wait): {}",
+                 bot->GetName(), ordered, waitIn.waitedMs, why);
+        return Step::ReturnFalse;
+    }
 
     // RESCUE before stopping: teleport the stranded members to the tank,
     // re-anchor the camp, and keep waiting. Once per wait, and the wait clock

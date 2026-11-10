@@ -12,6 +12,9 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFollowerLifecycle.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
@@ -393,5 +396,56 @@ namespace DcStrandedRecovery
             leaderAI,
             "CHAT\tRescued " + std::to_string(moved) +
                 (moved == 1 ? " stuck party member." : " stuck party members."));
+    }
+
+    std::uint32_t RegroupLaggards(Player* tank, float maxSpread, Position const* spreadAnchor,
+                                  float maxTankGap)
+    {
+        if (!tank || tank->isDead())
+            return 0;
+        Group* group = tank->GetGroup();
+        if (!group)
+            return 0;
+
+        std::uint32_t ordered = 0;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            // The same members OutOfRangeMemberCount counted, so the verdict that
+            // asked for this and the order agree about who is lagging.
+            if (!member || member == tank || !member->IsInWorld() || !member->IsAlive())
+                continue;
+            if (!DcSameInstance(member, tank))
+                continue;
+            PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+            if (!memberAI || member->GetVehicle())
+                continue;
+            float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
+                                              : tank->GetDistance(member);
+            float const gap = tank->GetDistance(member);
+            bool const stray = spread > maxSpread || (maxTankGap > 0.0f && gap > maxTankGap);
+            if (!stray || gap > DcPartyWaitDecision::kRegroupMaxYards)
+                continue;
+
+            // Release a pin DC itself applied (the healer's "stay" among them) and
+            // drop the stale follow: follow-tank refuses to re-issue a follow on a
+            // tank it already believes it follows, so a generator that was cleared
+            // under it (the camp hold does exactly that) left the member standing
+            // still for the whole wait. Emptying the record makes the next tick a
+            // fresh order.
+            DcFollowerLifecycle::RemoveFollowerPassive(member);
+            if (member->GetMotionMaster() &&
+                member->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+                DcMovement::StopBot(member, DcMovement::Stop::Hold);
+            memberAI->GetAiObjectContext()->GetValue<ObjectGuid>(DcKey::FollowedTank)->Set(ObjectGuid::Empty);
+            DcFollowerLifecycle::UnmarkFollowing(member->GetGUID());
+            ++ordered;
+
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] regroup: {} is {:.0f}yd from the tank (gate {:.0f}) -> follow "
+                     "order re-issued, no teleport",
+                     tank->GetName(), member->GetName(), gap, maxSpread);
+        }
+        return ordered;
     }
 }
