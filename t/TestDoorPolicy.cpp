@@ -750,7 +750,7 @@ TEST(DcDoorFlagTest, DoorPauseEscapesAtTheBoundAndTheNextScanDoesNotFlagTheDoor)
 {
     using E = DcDoorPolicy::DoorPauseExit;
     constexpr uint32 BOUND_MS = 30000;
-    ObjectGuid const gate(HighGuid::GameObject, 170559, 15617);
+    ObjectGuid const gate(HighGuid::GameObject, /*entry*/ 170559, ObjectGuid::LowType(15617));
     std::vector<Leg> legs = {{0.0f, -30.0f, 0.0f, 0.0f, 30.0f, 0.0f}};
 
     DcRunState run;
