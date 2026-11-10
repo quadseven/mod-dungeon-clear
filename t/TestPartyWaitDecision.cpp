@@ -342,6 +342,131 @@ TEST(DcPartyWaitTest, RescueMemoryAllowsOneRescuePerWait)
     EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
 }
 
+// --- the regroup rung (mod-dungeon-clear#107) ---------------------------------
+
+namespace
+{
+    // Blackrock Depths, wow-dev: the healer alive, in the instance, 30 yards from
+    // the tank, the only member holding the wait. StrandedRecovery is OFF (its
+    // default), so no teleport rescue is on offer.
+    Inputs LaggingHealer()
+    {
+        Inputs in = Healthy();
+        in.strandedOutOfRange = 1;
+        in.regroupableStrays = 1;
+        in.regroupAfterMs = 20000;
+        in.strandedRecoveryEnabled = false;
+        return in;
+    }
+}
+
+TEST(DcPartyWaitTest, ALaggingHealerIsRegroupedBeforeTheCeilingWithRescueOff)
+{
+    Inputs in = LaggingHealer();
+    in.waitedMs = 20000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Regroup);
+    EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
+}
+
+TEST(DcPartyWaitTest, NoRegroupBeforeItsClock)
+{
+    Inputs in = LaggingHealer();
+    in.waitedMs = 19999;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RegroupIsOncePerWaitAndTheCeilingStillEndsAnUnhelpedWait)
+{
+    Inputs in = LaggingHealer();
+    in.regroupAlreadyFired = true;
+    in.waitedMs = 100000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    in.waitedMs = 180000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+    EXPECT_EQ(Decide(in).reason, Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, AMemberFarBeyondSightIsStuckNotLaggingAndIsNotRegrouped)
+{
+    // Out of range but not within the regroup distance: that is the teleport
+    // rescue's member, and with the rescue off the ceiling ends the run as before.
+    Inputs in = LaggingHealer();
+    in.regroupableStrays = 0;
+    in.waitedMs = 100000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    in.waitedMs = 180000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+}
+
+TEST(DcPartyWaitTest, RegroupNeedsEveryStrayToBeLagging)
+{
+    // One near, one far: ordering the near one would not release the wait, and the
+    // far one is the rescue's. No regroup.
+    Inputs in = LaggingHealer();
+    in.strandedOutOfRange = 2;
+    in.regroupableStrays = 1;
+    in.waitedMs = 30000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, RegroupOffAtZeroSecs)
+{
+    Inputs in = LaggingHealer();
+    in.regroupAfterMs = 0;
+    in.waitedMs = 100000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, ADeadMemberIsNeverRegroupedAndStillStopsAtTheCeiling)
+{
+    // A dead member is not a stray (OutOfRangeMemberCount skips the dead), so the
+    // wait it holds is the rez recovery's and the ceiling ends it as before.
+    Inputs in = Healthy();
+    in.regroupAfterMs = 20000;
+    in.waitedMs = 100000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    in.waitedMs = 180000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+    EXPECT_EQ(Decide(in).reason, Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, AHealerOnAnotherMapStillEndsTheRunImmediately)
+{
+    // Viability outranks the regroup: a healer who left the instance cannot be
+    // ordered back by a follow command.
+    Inputs in = LaggingHealer();
+    in.presentAlive = 4;
+    in.presentHasHealer = false;
+    in.strandedOutOfRange = 0;
+    in.regroupableStrays = 0;
+    in.waitedMs = 25000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+    EXPECT_EQ(Decide(in).reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, RegroupIsTriedBeforeTheTeleportRescueWhenBothAreDue)
+{
+    Inputs in = LaggingHealer();
+    in.strandedRecoveryEnabled = true;
+    in.strandedTimeoutMs = 20000;
+    in.waitedMs = 25000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Regroup);
+    in.regroupAlreadyFired = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Rescue);
+}
+
+TEST(DcPartyWaitTest, RegroupMemoryAllowsOneRegroupPerWait)
+{
+    DcPartyWaitDecision::TimeoutMemory mem;
+    EXPECT_FALSE(DcPartyWaitDecision::RegroupFiredThisWait(mem, 9025u, 1000u));
+    DcPartyWaitDecision::RecordRegroup(mem, 9025u, 1000u);
+    EXPECT_TRUE(DcPartyWaitDecision::RegroupFiredThisWait(mem, 9025u, 1000u));
+    EXPECT_FALSE(DcPartyWaitDecision::RegroupFiredThisWait(mem, 9025u, 2000u));
+    EXPECT_FALSE(DcPartyWaitDecision::RegroupFiredThisWait(mem, 4887u, 1000u));
+    // The rescue record is separate.
+    EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 9025u, 1000u));
+}
+
 // --- a wait held only by damage dealers' mana goes on (issue 102) -------------
 
 TEST(DcPartyWaitTest, AtTheCeilingDamageManaAloneGoesOnInsteadOfEnding)
