@@ -341,3 +341,61 @@ TEST(DcPartyWaitTest, RescueMemoryAllowsOneRescuePerWait)
     DcPartyWaitDecision::RecordTimeout(mem, 6243u, "Gelihast", 180, "Waiting on Gorvash (out of range)");
     EXPECT_TRUE(DcPartyWaitDecision::RescueFiredThisWait(mem, 6243u, 1000u));
 }
+
+// --- a wait held only by damage dealers' mana goes on (issue 102) -------------
+
+TEST(DcPartyWaitTest, AtTheCeilingDamageManaAloneGoesOnInsteadOfEnding)
+{
+    // Live: 26 of 48 guild run stalls in 72 hours ended "the party never became
+    // ready after 180s (Waiting on <hunter/paladin/shaman> (low mana))", every
+    // one a damage dealer with no drink. The run goes on instead.
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    in.onlyDamageManaShort = true;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::GoOn);
+    EXPECT_EQ(r.reason, Reason::DamageManaOnly);
+}
+
+TEST(DcPartyWaitTest, BelowTheCeilingDamageManaStillWaits)
+{
+    // The waiver is not a shortcut: the damage dealer gets the whole ceiling to
+    // regenerate first.
+    Inputs in = Healthy();
+    in.waitedMs = 179999;
+    in.onlyDamageManaShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, AnyOtherWaitAtTheCeilingStillEndsTheRun)
+{
+    // Out of range, a hurt member, a healer's or tank's mana: onlyDamageManaShort
+    // is false and the ceiling ends the run exactly as before.
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, ViabilityStillOutranksGoingOn)
+{
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    in.onlyDamageManaShort = true;
+    in.presentHasHealer = false;
+    LeaveInstance(in, 1);
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, ZeroTimeoutNeverGoesOnEither)
+{
+    // An operator who turned the ceiling off keeps a frozen wait, as before.
+    Inputs in = Healthy();
+    in.timeoutMs = 0;
+    in.waitedMs = 3600000;
+    in.onlyDamageManaShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}

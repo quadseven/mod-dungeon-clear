@@ -115,6 +115,11 @@ namespace DcRestFloorDecision
         // Whether the member holds a drink it is old enough to use. True for a
         // real player (their client drinks) and for a member nobody asked.
         bool canDrink = true;
+        // The between-pulls wait already ran to its ceiling on damage dealers'
+        // mana alone and the run went on (DcPartyWaitDecision::Outcome::GoOn).
+        // While that waiver lasts a DAMAGE dealer has no mana floor at all; a
+        // healer's or a tank's floor is untouched, and so is everyone's health.
+        bool manaWaived = false;
     };
 
     struct Floors

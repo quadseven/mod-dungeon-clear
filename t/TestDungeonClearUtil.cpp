@@ -22,6 +22,8 @@
 #include "WorldMock.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "ScriptMgr.h"
@@ -319,6 +321,31 @@ TEST_F(DungeonClearUtilTest, RestMinMpPctClamping)
 
     // Restore
     DcPbConfig::HighMana() = originalValue;
+}
+
+// The damage-mana waiver (issue 102) lasts exactly DC_DAMAGE_MANA_WAIVER_MS from
+// the moment the between-pulls wait goes on, then the ordinary floors return.
+TEST(DcDamageManaWaiver, LastsTheTuningWindowThenLapses)
+{
+    DcRunState run;
+    EXPECT_FALSE(DcPartyState::DamageManaWaived(run, 1000u));
+
+    DcPartyState::WaiveDamageMana(run, 1000u);
+    EXPECT_TRUE(DcPartyState::DamageManaWaived(run, 1000u));
+    EXPECT_TRUE(DcPartyState::DamageManaWaived(run, 1000u + DC_DAMAGE_MANA_WAIVER_MS - 1u));
+    EXPECT_FALSE(DcPartyState::DamageManaWaived(run, 1000u + DC_DAMAGE_MANA_WAIVER_MS));
+    EXPECT_FALSE(DcPartyState::DamageManaWaived(run, 1000u + 10u * DC_DAMAGE_MANA_WAIVER_MS));
+}
+
+TEST(DcDamageManaWaiver, SurvivesTheMillisecondClockWrapping)
+{
+    // getMSTime() wraps at 2^32; a waiver granted just before the wrap still
+    // runs its full window and still ends.
+    DcRunState run;
+    uint32 const nearWrap = 0xFFFFFFFFu - 1000u;
+    DcPartyState::WaiveDamageMana(run, nearWrap);
+    EXPECT_TRUE(DcPartyState::DamageManaWaived(run, nearWrap + 2000u));  // wrapped past 0
+    EXPECT_FALSE(DcPartyState::DamageManaWaived(run, nearWrap + DC_DAMAGE_MANA_WAIVER_MS));
 }
 
 // Test party readiness and waiting descriptions for a solo player (no group)
