@@ -67,8 +67,10 @@ namespace DcDoorOpener
 
     Player* PartyOpener(Player* bot, GameObject* go,
                         DcDoorPolicy::LockSlot const (&slots)[DcDoorPolicy::LOCK_SLOT_COUNT],
-                        bool lockEnforced, float reach)
+                        bool lockEnforced, float reach, bool* holdForOpener)
     {
+        if (holdForOpener)
+            *holdForOpener = false;
         if (!bot || !go)
             return nullptr;
         std::vector<Player*> members{bot};
@@ -82,6 +84,8 @@ namespace DcDoorOpener
         for (Player* member : members)
             party.push_back(Candidate(member, bot, go, slots, lockEnforced, reach));
         int const chosen = DcDoorPolicy::PickOpener(party);
+        if (holdForOpener)
+            *holdForOpener = DcDoorPolicy::HoldForOpener(party);
         return chosen < 0 ? nullptr : members[static_cast<std::size_t>(chosen)];
     }
 }

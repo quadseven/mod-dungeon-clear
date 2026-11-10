@@ -14,6 +14,7 @@
 class AiObjectContext;
 class Player;
 struct Position;
+struct DcRunState;
 
 class DcPartyState
 {
@@ -148,8 +149,19 @@ public:
         // its role at `risk` instead of one number for everybody.
         bool scaled = false;
         DcRestFloorDecision::Risk risk = DcRestFloorDecision::Risk::Hard;
+        // Scaled gates only: damage dealers have no mana floor while the run's
+        // waiver lasts (see WaiveDamageMana). Never set for an operator's floors.
+        bool waiveDamageMana = false;
     };
     static RestGate GetRestGate(Player* bot, AiObjectContext* context);
+
+    // The damage-mana waiver (issue 102). When the between-pulls wait reaches its
+    // ceiling held by nothing but damage dealers' mana, the run goes on instead of
+    // ending, and for DC_DAMAGE_MANA_WAIVER_MS the scaled gate gives damage
+    // dealers no mana floor, so the next pulls are not held for it either. When
+    // it lapses the ordinary floors return and a later wait regenerates them.
+    static bool DamageManaWaived(DcRunState const& run, std::uint32_t nowMs);
+    static void WaiveDamageMana(DcRunState& run, std::uint32_t nowMs);
 
     // IsPartyReady / DescribePartyNotReady against a RestGate: the same walk,
     // with per-member floors when the gate is `scaled`. Every caller that got a

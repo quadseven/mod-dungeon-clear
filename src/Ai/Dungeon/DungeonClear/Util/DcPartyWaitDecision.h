@@ -56,6 +56,7 @@ namespace DcPartyWaitDecision
         Regroup, // order the lagging members to follow the tank again and keep waiting (once per wait)
         Rescue,  // teleport the stranded out-of-range members to the tank and keep waiting (once per wait)
         EndRun,  // stop the clear and report `reason`
+        GoOn,    // stop waiting and pull: only damage dealers' mana was holding the party
     };
 
     enum class Reason
@@ -64,6 +65,7 @@ namespace DcPartyWaitDecision
         LostHealer,       // the group's only healer is not in this instance any more
         TooFewMembers,    // not enough living members left here to clear anything
         Timeout,          // the wait never became satisfiable
+        DamageManaOnly,   // GoOn: the ceiling was reached on damage dealers' mana alone
     };
 
     // The party has to keep a healer AND at least this many living members in the
@@ -118,6 +120,13 @@ namespace DcPartyWaitDecision
         // stuck, not lagging, and is the teleport rescue's problem).
         std::uint32_t regroupableStrays = 0;
         bool regroupAlreadyFired = false;     // RegroupFiredThisWait
+
+        // The party would be ready this tick if damage dealers had no mana floor:
+        // every member is in range, every health bar and every healer's and tank's
+        // mana is met, and nobody is waiting on a resurrection. A damage dealer's
+        // mana only makes a fight slower, so a wait held by nothing else is not a
+        // reason to end the run (issue 102).
+        bool onlyDamageManaShort = false;
     };
 
     // A lagging member farther than this from the tank is stuck rather than slow:
@@ -257,8 +266,14 @@ namespace DcPartyWaitDecision
         // 3. The ceiling. Disabled (0) only by an operator who has decided a
         //    frozen run is preferable to an ended one; the registry's floor keeps
         //    the enabled values long enough that a legitimate rest never trips it.
+        //    A wait held only by damage dealers' mana goes on instead of ending:
+        //    the party pulls a little slower, which beats losing the whole run.
         if (in.timeoutMs && in.waitedMs >= in.timeoutMs)
+        {
+            if (in.onlyDamageManaShort)
+                return verdict(Outcome::GoOn, Reason::DamageManaOnly);
             return verdict(Outcome::EndRun, Reason::Timeout);
+        }
 
         return verdict(Outcome::Wait, Reason::StillWaiting);
     }
