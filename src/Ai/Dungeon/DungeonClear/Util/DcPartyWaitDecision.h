@@ -92,12 +92,6 @@ namespace DcPartyWaitDecision
         std::uint32_t presentAlive = 0;
         bool presentHasHealer = false;
 
-        // Dead members on the leader's own Map. Used to distinguish a party that
-        // STARTED small (no dead) from one that suffered a partial wipe (has dead
-        // members in the instance). A run with presentAlive=1, presentDead=0 is a
-        // deliberate solo/duo; presentAlive=1, presentDead>0 is a partial wipe.
-        std::uint32_t presentDead = 0;
-
         // Living members of the group anywhere, and whether any of them heals.
         // The comparison against `present*` is what detects "somebody left the
         // instance" without needing to remember the comp the run started with.
@@ -238,21 +232,14 @@ namespace DcPartyWaitDecision
             return out;
         };
 
-        // 0. Partial wipe / sole survivor: if fewer than the minimum viable
-        //    members remain alive in the instance AND there are dead members also
-        //    in the instance, this is a partial wipe (not a deliberately small
-        //    party). End immediately rather than waiting for a timeout that will
-        //    never be satisfied (no healer to satisfy the readiness gate, damage
-        //    mana waiver would loop indefinitely).
-        if (in.presentAlive < kMinViableMembers && in.presentDead > 0)
-            return verdict(Outcome::EndRun, Reason::TooFewMembers);
-
         // 1. Viability, only when the roster has actually shrunk. A party that is
         //    all present and merely not ready yet is an ordinary wait, however
         //    small it is - a two-member run that STARTED as two is not something
         //    this rung gets to cancel.
         if (in.presentAlive < in.rosterAlive)
         {
+            if (in.presentAlive < kMinViableMembers)
+                return verdict(Outcome::EndRun, Reason::TooFewMembers);
             // Only a party that HAD a healer can have lost one. A deliberate
             // healer-less comp keeps running exactly as it did before.
             if (in.rosterHasHealer && !in.presentHasHealer)

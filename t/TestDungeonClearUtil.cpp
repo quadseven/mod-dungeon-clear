@@ -23,6 +23,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoKillDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -651,7 +652,6 @@ TEST_F(DungeonClearGroupTest, PartyPresenceNamesTheMemberInAnotherCopy)
     DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
     EXPECT_EQ(presence.presentAlive, 4u);
     EXPECT_EQ(presence.rosterAlive, 5u);
-    EXPECT_EQ(presence.presentDead, 0u);
     EXPECT_EQ(presence.absentNames, "Member3");
 
     LeaveWorld();
@@ -662,16 +662,115 @@ TEST_F(DungeonClearGroupTest, PartyPresenceCountsDeadMembersOnSameMap)
 {
     // Kill two members but keep them on the same map.
     members[2]->SetHealth(0);
+    members[2]->setDeathState(DeathState::Dead);
     members[3]->SetHealth(0);
+    members[3]->setDeathState(DeathState::Dead);
+    ASSERT_FALSE(members[2]->IsAlive());
+    ASSERT_FALSE(members[3]->IsAlive());
     EnterWorld();
 
     DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
     EXPECT_EQ(presence.presentAlive, 3u);  // tank + 2 living members
-    EXPECT_EQ(presence.presentDead, 2u);   // 2 dead on same map
     EXPECT_EQ(presence.rosterAlive, 3u);   // dead don't count in rosterAlive
+    EXPECT_EQ(presence.rosterDead, 2u);
     EXPECT_EQ(presence.rosterHasHealer, false);
 
     LeaveWorld();
+}
+
+TEST_F(DungeonClearGroupTest, DeadMembersInAnotherCopyRemainKnownRosterDeaths)
+{
+    TestMap otherCopy;
+    members[2]->MoveToTestMap(&otherCopy);
+    members[2]->SetMapId(1);
+    members[2]->setDeathState(DeathState::Dead);
+    EnterWorld();
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 4u);
+    EXPECT_EQ(presence.rosterAlive, 4u);
+    EXPECT_EQ(presence.rosterDead, 1u);
+    EXPECT_EQ(presence.soleLivingMember, nullptr);
+    LeaveWorld();
+    members[2]->MoveToTestMap(testMap);
+}
+
+TEST_F(DungeonClearGroupTest, OutOfWorldMembersAreNotInventedAsKnownDeaths)
+{
+    members[2]->setDeathState(DeathState::Dead);
+    EnterWorld();
+    members[2]->SetTestInWorld(false);
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 4u);
+    EXPECT_EQ(presence.rosterAlive, 4u);
+    EXPECT_EQ(presence.rosterDead, 0u);
+    LeaveWorld();
+}
+
+// The registered owner may be a released ghost while the last survivor is
+// still inside. Count the whole known roster, not the owner's current map.
+TEST_F(DungeonClearGroupTest, DeadOwnerOutsideStillObservesTheSoleSurvivor)
+{
+    TestMap graveyard;
+    player->MoveToTestMap(&graveyard);
+    player->setDeathState(DeathState::Dead);
+    ASSERT_FALSE(player->IsAlive());
+    for (unsigned i = 1; i < 4; ++i)
+    {
+        members[i]->MoveToTestMap(&graveyard);
+        members[i]->setDeathState(DeathState::Dead);
+        ASSERT_FALSE(members[i]->IsAlive());
+    }
+    EnterWorld();
+    auto const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 0u);
+    ASSERT_EQ(presence.rosterAlive, 1u);
+    ASSERT_EQ(presence.rosterDead, 4u);
+    ASSERT_EQ(presence.soleLivingMember, members[0]);
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = presence.rosterAlive;
+    in.rosterDead = presence.rosterDead;
+    in.dungeonParty = true;
+    std::uint32_t stamp = 0;
+    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, in).end);
+    LeaveWorld();
+    player->MoveToTestMap(testMap);
+    for (TestPlayer* member : members)
+        member->MoveToTestMap(testMap);
+}
+
+TEST_F(DungeonClearGroupTest, DeadOwnerOutsideDoesNotMistakeFourLivingMembersForAWipe)
+{
+    TestMap graveyard;
+    player->MoveToTestMap(&graveyard);
+    player->setDeathState(DeathState::Dead);
+    ASSERT_FALSE(player->IsAlive());
+    EnterWorld();
+    auto const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 0u);
+    EXPECT_EQ(presence.rosterAlive, 4u);
+    EXPECT_EQ(presence.rosterDead, 1u);
+    EXPECT_EQ(presence.soleLivingMember, nullptr);
+    LeaveWorld();
+    player->MoveToTestMap(testMap);
+}
+
+TEST_F(DungeonClearGroupTest, LivingMembersElsewhereAreNotInventedAsDeaths)
+{
+    TestMap otherCopy;
+    for (TestPlayer* member : members)
+    {
+        member->MoveToTestMap(&otherCopy);
+        member->SetMapId(1);
+    }
+    EnterWorld();
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 1u);
+    EXPECT_EQ(presence.rosterAlive, 5u);
+    EXPECT_EQ(presence.rosterDead, 0u);
+    EXPECT_EQ(presence.soleLivingMember, nullptr);
+    LeaveWorld();
+    for (TestPlayer* member : members)
+        member->MoveToTestMap(testMap);
 }
 
 class DungeonClearStatusTest : public DungeonClearTestBase

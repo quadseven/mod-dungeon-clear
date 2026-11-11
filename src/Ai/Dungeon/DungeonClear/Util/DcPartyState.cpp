@@ -790,16 +790,16 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
     {
         ++out.presentAlive;
         ++out.rosterAlive;
+        out.soleLivingMember = bot;
         if (PlayerbotAI::IsHeal(bot))
         {
             out.presentHasHealer = true;
             out.rosterHasHealer = true;
         }
     }
-    else
+    else if (bot->IsInWorld())
     {
-        // Dead leader on its own map.
-        ++out.presentDead;
+        ++out.rosterDead;
     }
 
     Group* group = bot->GetGroup();
@@ -816,39 +816,38 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
         Player* member = ref->GetSource();
         if (!member || member == bot)
             continue;
+        if (!member->IsInWorld())
+            continue;
+        if (!member->IsAlive())
+        {
+            // AI-REVIEW 2026-11-11 [deepseek-v4.1-flash (opencode-go)] DC121-E1:
+            // Corpse presence is separate from the unchanged living roster.
+            // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-003:
+            // Released ghosts remain known dead; offline members stay unknown.
+            ++out.rosterDead;
+            continue;
+        }
 
+        ++out.rosterAlive;
+        out.soleLivingMember = out.rosterAlive == 1 ? member : nullptr;
         bool const heals = PlayerbotAI::IsHeal(member);
-        bool const sameMap = DcSameInstance(member, bot);
+        if (heals)
+            out.rosterHasHealer = true;
 
-        if (member->IsAlive())
+        // The one test that matters, and the one the readiness gate now uses:
+        // the same Map OBJECT, not merely the same map id. See DcSameInstance.h.
+        if (DcSameInstance(member, bot))
         {
-            if (sameMap)
-            {
-                ++out.presentAlive;
-                if (heals)
-                    out.presentHasHealer = true;
-            }
-            ++out.rosterAlive;
+            ++out.presentAlive;
             if (heals)
-                out.rosterHasHealer = true;
-
-            if (!sameMap)
-            {
-                if (absent.size() < MAX_NAMED)
-                    absent.push_back(member->GetName());
-                else
-                    ++extra;
-            }
+                out.presentHasHealer = true;
+            continue;
         }
+
+        if (absent.size() < MAX_NAMED)
+            absent.push_back(member->GetName());
         else
-        {
-            // Dead member - count if on same map (for partial-wipe detection).
-            if (sameMap)
-                ++out.presentDead;
-            // A dead healer anywhere means we HAD a healer but lost them.
-            if (heals)
-                out.rosterHasHealer = true;
-        }
+            ++extra;
     }
 
     for (size_t i = 0; i < absent.size(); ++i)

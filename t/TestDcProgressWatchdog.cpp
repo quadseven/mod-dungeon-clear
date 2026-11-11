@@ -498,3 +498,57 @@ TEST(DcNoKillWatchdog, NoBossAheadOrALimitOfZeroNeverEnds)
     off.limitMs = 0;        // NoKillTimeoutSecs = 0
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, off).end);
 }
+
+TEST(DcPartialWipeWatchdog, SoleSurvivorEndsWithoutANoKillClockOrNextBoss)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 1;
+    in.rosterDead = 4;
+    in.dungeonParty = true;
+    std::uint32_t stamp = 0;
+    auto const verdict = DcNoKillDecision::Tick(stamp, in);
+    EXPECT_TRUE(verdict.end);
+    EXPECT_EQ(verdict.reason,
+              "Dungeon clear stopped: partial wipe (1 alive, 4 dead in the group; no ready resurrector).");
+}
+
+TEST(DcPartialWipeWatchdog, HoldsRecoveryAndUnknownDeathsKeepTheRun)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 1;
+    in.rosterDead = 4;
+    in.dungeonParty = true;
+    std::uint32_t stamp = 0;
+    in.held = true;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.held = false;
+    in.survivorCanResurrect = true;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.survivorCanResurrect = false;
+    in.dungeonParty = false;  // raids and non-dungeon groups are not this policy
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.dungeonParty = true;
+    in.rosterAlive = 0;  // full wipe recovery retains ownership
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.rosterAlive = 2;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.rosterAlive = 4;  // a dead owner outside with four living inside
+    in.rosterDead = 1;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    in.rosterAlive = 1;
+    in.rosterDead = 0;  // deliberate solo or unknown/offline members
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+}
+
+TEST(DcPartialWipeWatchdog, CompletedObjectiveKeepsTheExistingKillPriority)
+{
+    DcNoKillDecision::Inputs in;
+    in.nowMs = 5000;
+    in.killed = true;
+    in.rosterAlive = 1;
+    in.rosterDead = 4;
+    in.dungeonParty = true;
+    std::uint32_t stamp = 1000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    EXPECT_EQ(stamp, 5000u);
+}

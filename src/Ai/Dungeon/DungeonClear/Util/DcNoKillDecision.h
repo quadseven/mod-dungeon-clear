@@ -47,6 +47,11 @@ namespace DcNoKillDecision
         std::uint32_t limitMs = 0;   // NoKillTimeoutSecs * 1000; 0 = off
         bool          killed = false; // a boss or objective completed this tick
         bool          held = false;   // paused / raid boss stand-down / chess: an intentional hold
+        // Whole known roster, independent of a released owner's current map.
+        std::uint32_t rosterAlive = 0;
+        std::uint32_t rosterDead = 0;
+        bool dungeonParty = false;
+        bool survivorCanResurrect = false;
         std::string   nextBoss;       // the boss still ahead; empty = none left (or unknown)
     };
 
@@ -65,13 +70,32 @@ namespace DcNoKillDecision
                " min before " + nextBoss + ".";
     }
 
-    // One tick. `killStampMs` is the clock (DcRunState::killProgress.stampMs;
+    // One tick. An unrecoverable one-survivor dungeon party ends independently
+    // of the no-kill clock. Intentional holds and viable resurrection win.
+    // `killStampMs` is the clock (DcRunState::killProgress.stampMs;
     // 0 = unarmed). A kill, an intentional hold, or an unarmed clock re-stamps it
     // to now and never ends the run. Otherwise the run ends once the quiet time
     // is MORE than the limit with a boss still ahead.
     inline Result Tick(std::uint32_t& killStampMs, Inputs const& in)
     {
         Result r;
+        // AI-REVIEW 2026-11-11 [Codex/in-process/runtime-trace] DC121-REV-004:
+        // The world watchdog also runs after the owner dies or releases outside.
+        // Only an unrecoverable one-survivor dungeon party is an early ending;
+        // full wipes and ready resurrectors retain the existing recovery path.
+        // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-005:
+        // A completed objective retains its existing priority over failure.
+        if (!in.killed && !in.held && in.dungeonParty && in.rosterAlive == 1 &&
+            in.rosterDead > 0 && !in.survivorCanResurrect)
+        {
+            r.end = true;
+            // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-001:
+            // Deaths are not departures and have no absent-member name list.
+            r.reason = "Dungeon clear stopped: partial wipe (1 alive, " +
+                       std::to_string(in.rosterDead) +
+                       " dead in the group; no ready resurrector).";
+            return r;
+        }
         if (in.killed || in.held || killStampMs == 0)
         {
             killStampMs = in.nowMs ? in.nowMs : 1u;  // never 0, which means unarmed
