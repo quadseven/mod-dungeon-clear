@@ -24,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/DcRunState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoKillDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -736,6 +737,31 @@ TEST_F(DungeonClearGroupTest, DeadOwnerOutsideStillObservesTheSoleSurvivor)
     player->MoveToTestMap(testMap);
     for (TestPlayer* member : members)
         member->MoveToTestMap(testMap);
+}
+
+TEST_F(DungeonClearGroupTest, PendingResurrectionOfferPreservesTheSoleSurvivorsRecovery)
+{
+    player->setDeathState(DeathState::Dead);
+    for (unsigned i = 1; i < 4; ++i)
+        members[i]->setDeathState(DeathState::Dead);
+    EnterWorld();
+    members[1]->setResurrectRequestData(members[0]->GetGUID(), members[0]->GetMapId(),
+                                      0.0f, 0.0f, 0.0f, 1, 0);
+    auto const presence = DcPartyState::GetPartyPresence(player);
+    ASSERT_EQ(presence.soleLivingMember, members[0]);
+    ASSERT_TRUE(DcRezRecovery::HoldsResurrectOffer(members[0]));
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = presence.rosterAlive;
+    in.rosterDead = presence.rosterDead;
+    in.dungeonParty = true;
+    in.survivorCanResurrect = DcRezRecovery::HoldsResurrectOffer(presence.soleLivingMember);
+    std::uint32_t stamp = 0;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    members[1]->clearResurrectRequestData();
+    in.survivorCanResurrect = DcRezRecovery::HoldsResurrectOffer(presence.soleLivingMember);
+    EXPECT_FALSE(in.survivorCanResurrect);
+    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, in).end);
+    LeaveWorld();
 }
 
 TEST_F(DungeonClearGroupTest, DeadOwnerOutsideDoesNotMistakeFourLivingMembersForAWipe)

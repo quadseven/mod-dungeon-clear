@@ -48,6 +48,11 @@ namespace DcRezRecovery
     // every call.
     SpellInfo const* KnownResurrectSpell(Player const* p);
 
+    // A dead same-map group member holds an offer from this caster. A completed
+    // cooldown-gated cast remains recoverable until the offer is accepted.
+    // Read-only; shared with the registered-run watchdog.
+    bool HoldsResurrectOffer(Player const* p);
+
     // The kernel verdict resolved to live identities. rezzer/target are only
     // meaningful for Hold outcomes; deadName always names the first same-map
     // corpse (for disable messages).

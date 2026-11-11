@@ -51,7 +51,7 @@ namespace DcNoKillDecision
         std::uint32_t rosterAlive = 0;
         std::uint32_t rosterDead = 0;
         bool dungeonParty = false;
-        bool survivorCanResurrect = false;
+        bool survivorCanResurrect = false;  // ready spell or pending offer from this survivor
         std::string   nextBoss;       // the boss still ahead; empty = none left (or unknown)
     };
 
@@ -70,12 +70,13 @@ namespace DcNoKillDecision
                " min before " + nextBoss + ".";
     }
 
+    // AI-REVIEW 2026-11-11 [Codex/in-process/comment-analyzer] DC121-REV-007:
     // One tick. An unrecoverable one-survivor dungeon party ends independently
     // of the no-kill clock. Intentional holds and viable resurrection win.
     // `killStampMs` is the clock (DcRunState::killProgress.stampMs;
-    // 0 = unarmed). A kill, an intentional hold, or an unarmed clock re-stamps it
-    // to now and never ends the run. Otherwise the run ends once the quiet time
-    // is MORE than the limit with a boss still ahead.
+    // 0 = unarmed). After the partial-wipe check, the ordinary no-kill branch
+    // re-stamps an unarmed clock, a kill, or a hold without ending the run.
+    // Otherwise it ends once quiet time is MORE than the limit and a boss is known.
     inline Result Tick(std::uint32_t& killStampMs, Inputs const& in)
     {
         Result r;

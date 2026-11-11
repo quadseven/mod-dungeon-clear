@@ -97,13 +97,17 @@ namespace DcNoKillWatchdog
             Map* const survivorMap = survivor ? survivor->GetMap() : nullptr;
             in.dungeonParty = group && !group->isRaidGroup() && survivorMap &&
                               survivorMap->IsDungeon() && !survivorMap->IsRaid();
-            in.survivorCanResurrect = survivor && DcRezRecovery::KnownResurrectSpell(survivor);
-            // Any boss still on the roster counts, on whatever map the tank stands:
-            // a tank that has left the instance (a corpse run that never came
-            // back) is a stalled run too. No next boss with a roster means the
-            // dungeon is cleared, and DungeonClearAllClearedTrigger owns that
-            // ending. A partial-wipe ending remains independent of this value:
-            // a released owner outside the dungeon cannot calculate next boss.
+            // AI-REVIEW 2026-11-11 [Codex/in-process/runtime-trace] DC121-REV-006:
+            // A successful cooldown-gated cast leaves a pending offer; preserve
+            // that recovery even after the caster's spell becomes unavailable.
+            in.survivorCanResurrect = survivor &&
+                (DcRezRecovery::KnownResurrectSpell(survivor) ||
+                 DcRezRecovery::HoldsResurrectOffer(survivor));
+            // AI-REVIEW 2026-11-11 [Codex/in-process/comment-analyzer] DC121-REV-007:
+            // Next boss may be unavailable while the owner is outside a dungeon;
+            // absence alone is not evidence of a completed run. The ordinary
+            // no-kill clock needs a known remaining boss. Partial-wipe viability
+            // instead uses this registered owner's enabled context independently.
             if (next.has_value())
                 in.nextBoss = next->name;
 

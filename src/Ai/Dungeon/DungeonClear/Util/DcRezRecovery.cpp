@@ -47,27 +47,6 @@ namespace
 {
     using DcRezDecision::Member;
 
-    // Does a dead same-map group member hold a resurrect offer from `p`? A
-    // completed resurrect raises no one: it leaves an offer, which the rez rung
-    // accepts on the corpse's behalf on its next tick (DungeonClearRezPartyAction).
-    // By then a cooldown-gated resurrect is on cooldown, so KnownResurrectSpell no
-    // longer returns it. Without this the caster would drop out of the election
-    // before it accepts, and the body would wait on an offer nobody takes up.
-    bool HoldsResurrectOffer(Player const* p)
-    {
-        Group const* group = p->GetGroup();
-        if (!group)
-            return false;
-        for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
-        {
-            Player const* member = ref->GetSource();
-            if (member && member != p && member->GetMapId() == p->GetMapId() &&
-                member->isDead() && member->isResurrectRequestedBy(p->GetGUID()))
-                return true;
-        }
-        return false;
-    }
-
     bool IsRezClass(Player const* p)
     {
         switch (p->getClass())
@@ -96,7 +75,7 @@ namespace
                 // `>= MAX_CLASSES` test, since a fork that adds classes has
                 // usually raised MAX_CLASSES.
                 return DcRezRecovery::KnownResurrectSpell(p) != nullptr ||
-                       HoldsResurrectOffer(p);
+                       DcRezRecovery::HoldsResurrectOffer(p);
         }
     }
 
@@ -577,6 +556,27 @@ namespace
 
 namespace DcRezRecovery
 {
+    // Does a dead same-map group member hold a resurrect offer from `p`? A
+    // completed resurrect raises no one: it leaves an offer, which the rez rung
+    // accepts on the corpse's behalf on its next tick (DungeonClearRezPartyAction).
+    // By then a cooldown-gated resurrect is on cooldown, so KnownResurrectSpell no
+    // longer returns it. Without this the caster would drop out of the election
+    // before it accepts, and the body would wait on an offer nobody takes up.
+    bool HoldsResurrectOffer(Player const* p)
+    {
+        Group const* group = p->GetGroup();
+        if (!group)
+            return false;
+        for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player const* member = ref->GetSource();
+            if (member && member != p && member->GetMapId() == p->GetMapId() &&
+                member->isDead() && member->isResurrectRequestedBy(p->GetGUID()))
+                return true;
+        }
+        return false;
+    }
+
     bool Enabled(Player* bot)
     {
         return DcSettings::GetBool(bot, "PostCombatRez");
