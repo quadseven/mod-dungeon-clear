@@ -37,7 +37,7 @@ namespace DcRestFloorDecision
         out.hp = configuredHp;
         out.mp = m.usesMana ? configuredMp : 0.0f;
 
-        if (risk == Risk::Boss && m.usesMana)
+        if (!m.ordered && risk == Risk::Boss && m.usesMana)
         {
             float bossMp = configuredMp;
             if (m.role == Role::Tank)
@@ -47,7 +47,7 @@ namespace DcRestFloorDecision
             out.mp = std::min(out.mp, bossMp);
         }
 
-        if (risk != Risk::Hard && risk != Risk::Boss && risk != Risk::LowLevel)
+        if (!m.ordered && risk != Risk::Hard && risk != Risk::Boss && risk != Risk::LowLevel)
         {
             bool const easy = risk == Risk::Easy;
             float hp = kNormalHp;
@@ -91,6 +91,12 @@ namespace DcRestFloorDecision
         // a no-drink hunter, paladin or shaman at low mana, issue 102).
         if (m.usesMana && m.manaWaived && m.role == Role::Damage)
             out.mp = 0.0f;
+        // A no-drink healer, after the same whole-ceiling wait, may pull from a
+        // bounded low bar rather than end the run (mod-dungeon-clear#134). It
+        // still needs the bar: below it the wait ends the run as before.
+        if (m.usesMana && !m.canDrink && m.manaWaived && m.role == Role::Healer &&
+            risk != Risk::LowLevel)
+            out.mp = std::min(out.mp, kNoDrinkHealerWaivedFloor);
         return out;
     }
 

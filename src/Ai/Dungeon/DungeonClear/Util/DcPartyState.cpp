@@ -180,11 +180,13 @@ namespace
     // only when the member is short of the STOCK mana floor, so a healthy party
     // pays nothing for it.
     DcRestFloorDecision::Floors ScaledFloors(Player* member, float minHpPct, float minMpPct,
-                                             DcRestFloorDecision::Risk risk, bool waiveDamageMana)
+                                             DcRestFloorDecision::Risk risk, bool waiveDamageMana,
+                                             bool ordered)
     {
         DcRestFloorDecision::Member m;
         m.role = DcPartyState::RoleOf(member);
         m.manaWaived = waiveDamageMana;
+        m.ordered = ordered;
         uint32 const maxMp = member->GetMaxPower(POWER_MANA);
         m.usesMana = DcPartyState::GatesOnMana(member);
         if (m.usesMana)
@@ -234,28 +236,30 @@ namespace
 
     bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                         Position const* spreadAnchor, float maxTankGap,
-                        DcRestFloorDecision::Risk const* risk, bool waiveDamageMana);
+                        DcRestFloorDecision::Risk const* risk, bool waiveDamageMana,
+                        bool ordered);
 }
 
 bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                                 Position const* spreadAnchor, float maxTankGap)
 {
     return PartyReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap, nullptr,
-                          false);
+                          false, false);
 }
 
 bool DcPartyState::IsPartyReady(Player* bot, RestGate const& rest, float maxSpread,
                                 Position const* spreadAnchor, float maxTankGap)
 {
     return PartyReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
-                          rest.scaled ? &rest.risk : nullptr, rest.waiveDamageMana);
+                          (rest.scaled || rest.ordered) ? &rest.risk : nullptr, rest.waiveDamageMana,
+                          rest.ordered);
 }
 
 namespace
 {
 bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                     Position const* spreadAnchor, float maxTankGap,
-                    DcRestFloorDecision::Risk const* risk, bool waiveDamageMana)
+                    DcRestFloorDecision::Risk const* risk, bool waiveDamageMana, bool ordered)
 {
     if (!bot)
         return false;
@@ -284,7 +288,7 @@ bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread
         if (risk)
         {
             DcRestFloorDecision::Floors const f = ScaledFloors(member, minHpPct, minMpPct, *risk,
-                                                                   waiveDamageMana);
+                                                                   waiveDamageMana, ordered);
             hpFloor = f.hp;
             mpFloor = f.mp;
         }
@@ -576,6 +580,14 @@ DcPartyState::RestGate DcPartyState::GetRestGate(Player* bot, AiObjectContext* c
         gate.risk = NextFightRisk(bot, context);
         gate.waiveDamageMana = DamageManaWaived(DcRun::Of(context), getMSTime());
     }
+    else
+    {
+        // An operator's floor is held verbatim, except for a member that cannot
+        // drink: standing still will not get it there (mod-dungeon-clear#134).
+        gate.ordered = true;
+        gate.risk = NextFightRisk(bot, context);
+        gate.waiveDamageMana = DamageManaWaived(DcRun::Of(context), getMSTime());
+    }
     return gate;
 }
 bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
@@ -775,7 +787,7 @@ namespace
     std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
                                      float maxSpread, Position const* spreadAnchor,
                                      float maxTankGap, DcRestFloorDecision::Risk const* risk,
-                                     bool waiveDamageMana);
+                                     bool waiveDamageMana, bool ordered);
 }
 
 DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
@@ -868,7 +880,7 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float maxTankGap)
 {
     return DescribeNotReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap,
-                                nullptr, false);
+                                nullptr, false, false);
 }
 
 std::string DcPartyState::DescribePartyNotReady(Player* bot, RestGate const& rest,
@@ -876,7 +888,8 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot, RestGate const& res
                                                 float maxTankGap)
 {
     return DescribeNotReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
-                                rest.scaled ? &rest.risk : nullptr, rest.waiveDamageMana);
+                                (rest.scaled || rest.ordered) ? &rest.risk : nullptr, rest.waiveDamageMana,
+                                rest.ordered);
 }
 
 namespace
@@ -884,7 +897,7 @@ namespace
 std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
                                  float maxSpread, Position const* spreadAnchor,
                                  float maxTankGap, DcRestFloorDecision::Risk const* risk,
-                                 bool waiveDamageMana)
+                                 bool waiveDamageMana, bool ordered)
 {
     if (!bot)
         return "";
@@ -924,7 +937,7 @@ std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
             if (risk)
             {
                 DcRestFloorDecision::Floors const f =
-                    ScaledFloors(member, minHpPct, minMpPct, *risk, waiveDamageMana);
+                    ScaledFloors(member, minHpPct, minMpPct, *risk, waiveDamageMana, ordered);
                 hpFloor = f.hp;
                 mpFloor = f.mp;
             }
