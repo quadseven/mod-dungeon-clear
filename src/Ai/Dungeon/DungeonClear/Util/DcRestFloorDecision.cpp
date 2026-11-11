@@ -184,8 +184,10 @@ namespace DcRestFloorDecision
         return PullSize::SetUp;
     }
 
-    bool PullSizeHolds(PullSize size, bool waitExpired)
+    bool PullSizeHolds(PullSize size, bool waitExpired, bool roomClearGaveUp)
     {
+        if (roomClearGaveUp)
+            return false;
         switch (size)
         {
             case PullSize::TooBig:

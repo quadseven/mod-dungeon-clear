@@ -390,6 +390,20 @@ TEST(DcPullSizeTest, RagefireEightTroggsAreNeverPulledWhole)
     EXPECT_TRUE(PullSizeHolds(PullSize::TooBig, true));
 }
 
+TEST(DcPullSizeTest, ARoomClearThatGaveUpReleasesATooBigHold)
+{
+    // Emperor Dagran Thaurissan's throne room (live, 2026-11-11): a 32-strong
+    // Senator pack reads TooBig, which holds for good. Room clear gave up with 47
+    // left and pulled the boss anyway, but the tank stood planted in front of the
+    // pack until a `dc skip` skipped the Emperor and ended the run. Once the room
+    // clear has given up, neither a TooBig nor a Wait hold may stand.
+    Readiness ready;
+    EXPECT_EQ(PullSize::TooBig, ClassifyPullSize(56, 56, 15, ready, kNeverWholePct));
+    EXPECT_TRUE(PullSizeHolds(PullSize::TooBig, false, false));
+    EXPECT_FALSE(PullSizeHolds(PullSize::TooBig, false, true));
+    EXPECT_FALSE(PullSizeHolds(PullSize::Wait, false, true));
+}
+
 TEST(DcPullSizeTest, AFourTroggClumpWaitsForRestThenIsSetUp)
 {
     // Healer at 40%: the scaled ceiling is 4 of 6. Twelve thirds is three

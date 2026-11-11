@@ -35,6 +35,10 @@ public:
     {
     }
 
+    // True once the no-progress valve has given up on this room (latched until the
+    // boss changes): the boss is pulled with whatever is left standing.
+    bool GaveUp() const { return gaveUp; }
+
 protected:
     GuidVector Calculate() override;
 
