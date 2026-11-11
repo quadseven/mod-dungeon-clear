@@ -121,6 +121,15 @@ namespace DcRestFloorDecision
     // the same reason as the damage dealer: its bar refills in seconds.
     constexpr float kNoDrinkHealerCap = 40.0f;
 
+    // The lowest a no-drink healer may be when the wait has already held a whole
+    // ceiling and the run goes on (the same waiver the damage dealers get). Live
+    // (mod-dungeon-clear#134): the cap above never bound on the realm, because
+    // DungeonClear.RestManaPct is set there and an operator's floor is not scaled,
+    // so a no-drink healer was held to the full 50 and the run ended twice at the
+    // Ring of Law. Below this floor the healer is too empty to pull on and the
+    // wait still ends the run, as it always did. 25 is the damage reserve at Easy.
+    constexpr float kNoDrinkHealerWaivedFloor = 25.0f;
+
     struct Member
     {
         Role role = Role::Damage;
@@ -133,6 +142,12 @@ namespace DcRestFloorDecision
         // While that waiver lasts a DAMAGE dealer has no mana floor at all; a
         // healer's or a tank's floor is untouched, and so is everyone's health.
         bool manaWaived = false;
+        // The configured floors are an operator's order (DungeonClear.RestManaPct
+        // or RestHealthPct is set), not the stock ones: the role-and-risk scaling
+        // is skipped and the floors are held as given, EXCEPT for a member that
+        // cannot drink, which is bounded the same as under the scaled gate (an
+        // order cannot make standing still regenerate mana).
+        bool ordered = false;
     };
 
     struct Floors

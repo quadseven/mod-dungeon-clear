@@ -985,10 +985,10 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         DcPartyWaitDecision::RegroupFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
 
     // Would the party be ready with damage dealers' mana floors waived? Asked only
-    // at the ceiling (the only place the kernel reads it), only for the scaled
-    // gate (an operator's RestManaPct is an order), and never over a pending
-    // resurrection, which holds the gate on its own clock.
-    if (waitIn.timeoutMs && waitIn.waitedMs >= waitIn.timeoutMs && rest.scaled &&
+    // at the ceiling (the only place the kernel reads it), for the scaled gate and
+    // for an operator's floors (where only members with no drink are waived), and
+    // never over a pending resurrection, which holds the gate on its own clock.
+    if (waitIn.timeoutMs && waitIn.waitedMs >= waitIn.timeoutMs && (rest.scaled || rest.ordered) &&
         !rest.waiveDamageMana && !DcRezRecovery::IsPending(bot))
     {
         DcPartyState::RestGate waived = rest;
@@ -1040,7 +1040,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         DcPartyState::WaiveDamageMana(DcRun::Of(context), nowMs);
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] between-pulls wait going on after {} ticks / {}ms without "
-                 "damage dealers' mana ({}); their mana floor is waived for {}s",
+                 "the mana of members who cannot be held to it ({}); their floor is relaxed for {}s",
                  bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
                  DC_DAMAGE_MANA_WAIVER_MS / 1000);
         appr.partyNotReadyTicks = 0;
