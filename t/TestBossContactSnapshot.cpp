@@ -17,6 +17,7 @@ namespace
     {
         Inputs in;
         in.contactName = "Zug";
+    in.tankName = "Zug";
         in.bossName = "Emperor Dagran Thaurissan";
         in.contactDistToBoss = 14.6f;
         in.targetName = "Twilight's Hammer Ambassador";
@@ -36,7 +37,7 @@ TEST(BossContactSnapshot, NamesEveryFieldTheEmperorQuestionNeeds)
     std::string const line = Format(EmperorContact());
     EXPECT_NE(line.find("[DC:Zug] boss contact snapshot: Emperor Dagran Thaurissan at 14.6yd"),
               std::string::npos) << line;
-    EXPECT_NE(line.find("target Twilight's Hammer Ambassador 3.2yd"), std::string::npos) << line;
+    EXPECT_NE(line.find("tank Zug target Twilight's Hammer Ambassador 3.2yd"), std::string::npos) << line;
     EXPECT_NE(line.find("room trash 35 left, room-clear gave up"), std::string::npos) << line;
     EXPECT_NE(line.find("last gate party not ready"), std::string::npos) << line;
     EXPECT_NE(line.find("pull phase 0"), std::string::npos) << line;
@@ -56,7 +57,7 @@ TEST(BossContactSnapshot, NoTargetNoGateAndStillGoingRead)
     in.lastGate.clear();
     in.roomGaveUp = false;
     std::string const line = Format(in);
-    EXPECT_NE(line.find("target none"), std::string::npos) << line;
+    EXPECT_NE(line.find("tank Zug target none"), std::string::npos) << line;
     EXPECT_NE(line.find("last gate none"), std::string::npos) << line;
     EXPECT_NE(line.find("room-clear still going"), std::string::npos) << line;
 }
@@ -75,4 +76,15 @@ TEST(BossContactSnapshot, AFightingMemberSaysFighting)
     Inputs in = EmperorContact();
     in.members[0].inCombat = true;
     EXPECT_NE(Format(in).find("Zug hp 80% mana none fighting 14.6yd;"), std::string::npos);
+}
+
+TEST(BossContactSnapshot, ATankTargetIsNamedForTheTankNotTheContact)
+{
+    Inputs in = EmperorContact();
+    in.contactName = "Oz";
+    in.tankName = "Zug";
+    std::string const line = Format(in);
+    EXPECT_NE(line.find("[DC:Oz] boss contact snapshot"), std::string::npos) << line;
+    EXPECT_NE(line.find("tank Zug target Twilight's Hammer Ambassador 3.2yd"), std::string::npos)
+        << line;
 }

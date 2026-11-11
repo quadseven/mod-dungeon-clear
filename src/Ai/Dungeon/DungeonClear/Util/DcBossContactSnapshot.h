@@ -38,8 +38,9 @@ namespace DcBossContactSnapshot
         std::string contactName;       // the member the boss touched first
         std::string bossName;
         float contactDistToBoss = 0.0f;
-        std::string targetName;        // what the member is attacking now; empty: none
-        float targetDist = 0.0f;
+        std::string tankName;          // the run owner (the tank), who may not be the contact
+        std::string targetName;        // what the TANK is attacking now; empty: none
+        float targetDist = 0.0f;       // tank to that target
         std::uint32_t roomTrashLeft = 0;
         bool roomGaveUp = false;
         std::string lastGate;          // last at-boss gate verdict logged; empty: none
@@ -57,7 +58,7 @@ namespace DcBossContactSnapshot
         };
 
         std::string out = "[DC:" + in.contactName + "] boss contact snapshot: " + in.bossName +
-                          " at " + f1(in.contactDistToBoss) + "yd | target ";
+                          " at " + f1(in.contactDistToBoss) + "yd | tank " + in.tankName + " target ";
         if (in.targetName.empty())
             out += "none";
         else

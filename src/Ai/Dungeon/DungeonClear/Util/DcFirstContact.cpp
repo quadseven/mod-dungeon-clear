@@ -128,10 +128,12 @@ void DcFirstContact::OnEnterCombat(Player* bot, Unit* enemy)
         snap.contactName = bot->GetName();
         snap.bossName = enemy->GetName();
         snap.contactDistToBoss = bot->GetExactDist(enemy);
-        if (Unit* const victim = bot->GetVictim())
+        // The TANK's target, not the contact's: the run owner leads the pulls.
+        snap.tankName = owner->GetName();
+        if (Unit* const victim = owner->GetVictim())
         {
             snap.targetName = victim->GetName();
-            snap.targetDist = bot->GetExactDist(victim);
+            snap.targetDist = owner->GetExactDist(victim);
         }
         snap.roomTrashLeft = static_cast<uint32>(
             ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().size());
