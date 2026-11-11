@@ -844,12 +844,10 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
         {
             // Dead member - count if on same map (for partial-wipe detection).
             if (sameMap)
-            {
                 ++out.presentDead;
-                // A dead healer on the same map means we HAD a healer but lost them.
-                if (heals)
-                    out.rosterHasHealer = true;
-            }
+            // A dead healer anywhere means we HAD a healer but lost them.
+            if (heals)
+                out.rosterHasHealer = true;
         }
     }
 

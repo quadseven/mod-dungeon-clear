@@ -618,7 +618,8 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
             // GetRestGate. See DcPartyState::GetRestGate.
             DcPartyState::RestGate gate = DcPartyState::GetRestGate(bot, botAI->GetAiObjectContext());
             gate.waiveDamageMana = false;
-            r.gateNotReady = !DcPartyState::IsPartyReady(bot, gate, gate.maxSpread, gate.anchor, gate.maxTankGap);
+            DcPartyState::SpreadGate spreadGate = DcPartyState::GetSpreadGate(bot, botAI->GetAiObjectContext());
+            r.gateNotReady = !DcPartyState::IsPartyReady(bot, gate, spreadGate.maxSpread, spreadGate.anchor, spreadGate.maxTankGap);
         }
         else
         {
@@ -662,9 +663,9 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                           !(bot->GetMap() && bot->GetMap()->IsRaid());
     DcRestFloorDecision::PullSize const size = sizeGate
         ? DcRestFloorDecision::ClassifyPullSize(
-              weightThirds, tagThirds, fragileCeilingThirds, ready,
+              weightThirds, tagThirds, ceilingThirds, ready,
               DcSettings::GetUInt(bot, "PullOversizeNeverPct"))
-        : (DcRestFloorDecision::ShouldSetUp(weightThirds, fragileCeilingThirds, ready)
+        : (DcRestFloorDecision::ShouldSetUp(weightThirds, ceilingThirds, ready)
                ? DcRestFloorDecision::PullSize::SetUp
                : DcRestFloorDecision::PullSize::FacePull);
     bool const advanced = size != DcRestFloorDecision::PullSize::FacePull;

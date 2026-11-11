@@ -578,3 +578,59 @@ TEST(DcReadinessCeilingTest, PatrolContendedCeilingIgnoresDamageManaWaiver)
     EXPECT_LE(weight, ReadinessScaledCeilingThirds(15, readyWaived));   // appears Leeroy
     EXPECT_GT(weight, ReadinessScaledCeilingThirds(15, readyNoWaiver)); // actually contended
 }
+
+// ---- Stilgiss/Fineous BRD scenario: dry damage dealer pulling Fineous in chain range ----
+//
+// Live issue: BRD Stilgiss (static boss) and Fineous (patroller) share a chamber.
+// Fineous patrols into chain range of Stilgiss. A dry damage dealer (mage with 0 mana)
+// that received the damage-mana waiver (issue 102) would have gateNotReady=false,
+// incorrectly making the party appear fully ready and raising the patrol-contended
+// ceiling. The fix ensures the patrol-contended check uses the non-waived ceiling.
+// This test covers the full classification: ShouldSetUp returns true (set-up pull,
+// not face-pull) because the pack is patrol-contended even though the waiver makes
+// the party look ready at first glance.
+TEST(DcReadinessCeilingTest, StilgissFineousPatrolContendedWithDryMage)
+{
+    // Ceiling for this chamber: 13 thirds (roughly 4-5 elites)
+    unsigned const ceiling = 13;
+    // Pack weight: Stilgiss + Fineous = 12 thirds (at the edge margin of 13)
+    unsigned const weight = 12;
+    // Tag: only Fineous in chain range = 6 thirds (well within ceiling)
+    unsigned const tag = 6;
+    unsigned const neverWholePct = 200; // default
+
+    // Waived readiness: dry mage's mana waived, gate is green
+    Readiness readyWaived;
+    readyWaived.gateNotReady = false;
+    readyWaived.healerManaPct = 80.0f;   // healer fine
+    readyWaived.tankHpPct = 90.0f;       // tank fine
+    readyWaived.lowestManaPct = 10.0f;   // dry mage at 10% mana (waived, so not counted)
+    readyWaived.membersFighting = 0;
+    readyWaived.membersDown = 0;
+
+    // Non-waived readiness: dry mage OOM, gate is red
+    Readiness readyNoWaiver = readyWaived;
+    readyNoWaiver.gateNotReady = true;
+
+    // With waiver: ceiling = 13, weight 12 <= 13 -> appears face-pull
+    EXPECT_LE(weight, ReadinessScaledCeilingThirds(ceiling, readyWaived));
+    EXPECT_FALSE(ShouldSetUp(weight, ReadinessScaledCeilingThirds(ceiling, readyWaived), readyWaived));
+
+    // Without waiver: ceiling = 9 (13 scaled down by gateNotReady), weight 12 > 9 -> patrol-contended
+    EXPECT_GT(weight, ReadinessScaledCeilingThirds(ceiling, readyNoWaiver));
+    EXPECT_TRUE(ShouldSetUp(weight, ReadinessScaledCeilingThirds(ceiling, readyNoWaiver), readyNoWaiver));
+
+    // Full classification: the tag (6) fits the scaled ceiling (9) -> SetUp, not Wait
+    PullSize const sizeWaived = ClassifyPullSize(weight, tag, ceiling, readyWaived, neverWholePct);
+    PullSize const sizeNoWaiver = ClassifyPullSize(weight, tag, ceiling, readyNoWaiver, neverWholePct);
+
+    // With waiver the pack appears FacePull (dangerous - would charge into patroller)
+    EXPECT_EQ(PullSize::FacePull, sizeWaived);
+
+    // Without waiver it's correctly SetUp (Advanced pull to camp)
+    EXPECT_EQ(PullSize::SetUp, sizeNoWaiver);
+
+    // The governor must hold on SetUp until ready; the patrol-wait gate handles the rest.
+    EXPECT_FALSE(PullSizeHolds(sizeWaived, false));
+    EXPECT_FALSE(PullSizeHolds(sizeNoWaiver, false));
+}
