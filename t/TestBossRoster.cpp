@@ -12,6 +12,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
 namespace
 {
@@ -493,6 +494,36 @@ TEST(BossRosterRegistryTest, BlackrockDepthsBackHalfIsOrdered)
     EXPECT_NE(expected & (1u << 16), 0u) << "the Seven";
     EXPECT_NE(expected & (1u << 17), 0u) << "Magmus";
     EXPECT_NE(expected & (1u << 18), 0u) << "the Emperor";
+}
+
+// Run 1805838: a party re-enabled after lighting both Lyceum braziers. `dc on`
+// wipes the cleared-anchor latch, so the two Lyceum objectives came back as
+// candidates and, once Magmus died, the same-index sibling rule sent the party
+// to the south brazier instead of the Emperor. The objectives must read done off
+// the instance script while TYPE_LYCEUM is DONE (3), and only then.
+TEST(BossRosterRegistryTest, BlackrockDepthsLyceumObjectivesAreDoneWhenTheInstanceSaysSo)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(9938, 17, "Magmus", 230),
+        Boss(9019, 18, "Emperor Dagran Thaurissan", 230),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
+
+    int seen = 0;
+    for (DungeonBossInfo const& b : out)
+    {
+        if (b.kind != DungeonAnchorKind::Objective ||
+            (b.eventId != DcBlackrockDepths::EVENT_LYCEUM_SOUTH &&
+             b.eventId != DcBlackrockDepths::EVENT_LYCEUM_NORTH))
+            continue;
+        ++seen;
+        EXPECT_EQ(b.doneInstanceDataId, static_cast<int32>(DcBlackrockDepths::TYPE_LYCEUM)) << b.name;
+        EXPECT_EQ(b.doneInstanceDataValue, 3u) << b.name << " must wait for DONE, not IN_PROGRESS";
+        EXPECT_EQ(AnchorDoneByInstanceValues(b, 0, 3), DcAnchorDoneVia::InstanceData) << b.name;
+        for (uint32 v : { 0u, 1u, 2u })
+            EXPECT_EQ(AnchorDoneByInstanceValues(b, 0, v), DcAnchorDoneVia::None) << b.name << " " << v;
+    }
+    EXPECT_EQ(seen, 2) << "both Lyceum objectives";
 }
 
 // Deadmines: the Defias Cannon objective shares Mr. Smite's bit (3); the
