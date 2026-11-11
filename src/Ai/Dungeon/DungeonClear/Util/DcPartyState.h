@@ -257,11 +257,12 @@ public:
     // not a failure the clear engine gets to have an opinion about.
     struct PartyPresence
     {
-        std::uint32_t presentAlive = 0;  // living members on the leader's own Map, leader included
-        std::uint32_t rosterAlive  = 0;  // living members of the group, any map
+        std::uint32_t presentAlive = 0;   // living members on the leader's own Map, leader included
+        std::uint32_t rosterAlive  = 0;   // living members of the group, any map
+        std::uint32_t presentDead  = 0;   // dead members on the leader's own Map (for partial-wipe detection)
         bool presentHasHealer = false;
         bool rosterHasHealer  = false;
-        std::string absentNames;       // comma-joined, capped; "" when nobody is absent
+        std::string absentNames;          // comma-joined, capped; "" when nobody is absent
     };
     static PartyPresence GetPartyPresence(Player* bot);
 

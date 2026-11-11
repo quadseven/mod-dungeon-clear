@@ -796,6 +796,11 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
             out.rosterHasHealer = true;
         }
     }
+    else
+    {
+        // Dead leader on its own map.
+        ++out.presentDead;
+    }
 
     Group* group = bot->GetGroup();
     if (!group)
@@ -811,28 +816,41 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
         Player* member = ref->GetSource();
         if (!member || member == bot)
             continue;
-        if (!member->IsInWorld() || !member->IsAlive())
-            continue;
 
-        ++out.rosterAlive;
         bool const heals = PlayerbotAI::IsHeal(member);
-        if (heals)
-            out.rosterHasHealer = true;
+        bool const sameMap = DcSameInstance(member, bot);
 
-        // The one test that matters, and the one the readiness gate now uses:
-        // the same Map OBJECT, not merely the same map id. See DcSameInstance.h.
-        if (DcSameInstance(member, bot))
+        if (member->IsAlive())
         {
-            ++out.presentAlive;
+            if (sameMap)
+            {
+                ++out.presentAlive;
+                if (heals)
+                    out.presentHasHealer = true;
+            }
+            ++out.rosterAlive;
             if (heals)
-                out.presentHasHealer = true;
-            continue;
-        }
+                out.rosterHasHealer = true;
 
-        if (absent.size() < MAX_NAMED)
-            absent.push_back(member->GetName());
+            if (!sameMap)
+            {
+                if (absent.size() < MAX_NAMED)
+                    absent.push_back(member->GetName());
+                else
+                    ++extra;
+            }
+        }
         else
-            ++extra;
+        {
+            // Dead member - count if on same map (for partial-wipe detection).
+            if (sameMap)
+            {
+                ++out.presentDead;
+                // A dead healer on the same map means we HAD a healer but lost them.
+                if (heals)
+                    out.rosterHasHealer = true;
+            }
+        }
     }
 
     for (size_t i = 0; i < absent.size(); ++i)

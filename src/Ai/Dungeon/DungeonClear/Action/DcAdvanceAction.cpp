@@ -962,6 +962,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     waitIn.strandedTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
     waitIn.presentAlive = presence.presentAlive;
     waitIn.presentHasHealer = presence.presentHasHealer;
+    waitIn.presentDead = presence.presentDead;
     waitIn.rosterAlive = presence.rosterAlive;
     waitIn.rosterHasHealer = presence.rosterHasHealer;
     // How many living bot members on the leader's map are out of spread of the

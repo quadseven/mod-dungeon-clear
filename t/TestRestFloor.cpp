@@ -549,3 +549,32 @@ TEST(DcRestFloorTest, TheSeatWinsElseAHealStrategyElseNobody)
     EXPECT_LT(HealerManaPct({dps}), 0.0f);
     EXPECT_LT(HealerManaPct({}), 0.0f);
 }
+
+// ---- patrol-contended ceiling: the damage mana waiver must not raise the ceiling ----
+//
+// When a lone patroller in chain range is the only reason a pack reads ADVANCED
+// (patrol-contended), the damage mana waiver (issue 102) must not make the party
+// appear ready and raise the ceiling. The BRD Stilgiss/Fineous case: Fineous
+// (patroller) is in chain range of Stilgiss; a dry mage with waived mana would
+// raise the ceiling via gateNotReady=false, incorrectly making the patrol wait
+// expire and the pull commit. The fix computes the ceiling WITHOUT the waiver for
+// the patrol-contended check.
+TEST(DcReadinessCeilingTest, PatrolContendedCeilingIgnoresDamageManaWaiver)
+{
+    // Full readiness (waived): gateNotReady=false -> ceiling = 15
+    Readiness readyWaived;
+    readyWaived.gateNotReady = false;
+    EXPECT_EQ(15u, ReadinessScaledCeilingThirds(15, readyWaived));
+
+    // Same party, no waiver (damage dealer OOM): gateNotReady=true -> ceiling = 11
+    Readiness readyNoWaiver = readyWaived;
+    readyNoWaiver.gateNotReady = true;
+    EXPECT_EQ(11u, ReadinessScaledCeilingThirds(15, readyNoWaiver));
+
+    // A pack at weight 12/3: with waiver it's a face-pull (12 <= 15),
+    // without waiver it's patrol-contended (12 > 11). The patrol-contended
+    // check MUST use the non-waived ceiling.
+    unsigned const weight = 12;
+    EXPECT_LE(weight, ReadinessScaledCeilingThirds(15, readyWaived));   // appears Leeroy
+    EXPECT_GT(weight, ReadinessScaledCeilingThirds(15, readyNoWaiver)); // actually contended
+}

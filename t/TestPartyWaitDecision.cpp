@@ -57,11 +57,30 @@ TEST(DcPartyWaitTest, ASmallPartyThatSTARTEDSmallIsNotCancelled)
     in.rosterAlive = 2;
     in.presentHasHealer = false;
     in.rosterHasHealer = false;
+    in.presentDead = 0;  // no dead members - this party STARTED this size
     EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
 
     in.presentAlive = 1;
     in.rosterAlive = 1;
+    in.presentDead = 0;  // started as solo - deliberate comp
     EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, PartialWipeEndsRunImmediately)
+{
+    // A 5-man party where 4 died and 1 survives in the instance.
+    // presentAlive=1 (survivor), presentDead=4 (bodies in the instance).
+    // This is NOT a deliberately small party - it's a partial wipe.
+    // The run must end immediately, not wait for the timeout.
+    Inputs in = Healthy();
+    in.presentAlive = 1;
+    in.rosterAlive = 1;   // dead members don't count in rosterAlive
+    in.presentHasHealer = false;
+    in.rosterHasHealer = true;  // the group HAD a healer (now dead)
+    in.presentDead = 4;   // four dead bodies in the instance
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::TooFewMembers);
 }
 
 // --- continue with who is left: the point of the whole change ----------------

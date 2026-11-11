@@ -651,10 +651,27 @@ TEST_F(DungeonClearGroupTest, PartyPresenceNamesTheMemberInAnotherCopy)
     DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
     EXPECT_EQ(presence.presentAlive, 4u);
     EXPECT_EQ(presence.rosterAlive, 5u);
+    EXPECT_EQ(presence.presentDead, 0u);
     EXPECT_EQ(presence.absentNames, "Member3");
 
     LeaveWorld();
     members[2]->MoveToTestMap(testMap);
+}
+
+TEST_F(DungeonClearGroupTest, PartyPresenceCountsDeadMembersOnSameMap)
+{
+    // Kill two members but keep them on the same map.
+    members[2]->SetHealth(0);
+    members[3]->SetHealth(0);
+    EnterWorld();
+
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(player);
+    EXPECT_EQ(presence.presentAlive, 3u);  // tank + 2 living members
+    EXPECT_EQ(presence.presentDead, 2u);   // 2 dead on same map
+    EXPECT_EQ(presence.rosterAlive, 3u);   // dead don't count in rosterAlive
+    EXPECT_EQ(presence.rosterHasHealer, false);
+
+    LeaveWorld();
 }
 
 class DungeonClearStatusTest : public DungeonClearTestBase

@@ -577,11 +577,10 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // and whether the between-pulls gate is green. A marginal pack that a rested
     // party face-pulls becomes a set-up pull when the healer is low or a fight is
     // already on. See DcRestFloorDecision::ReadinessScaledCeilingThirds.
-    DcRestFloorDecision::Readiness ready;
+    auto computeReadiness = [&](bool withWaiver)
     {
-        ready.tankHpPct = bot->GetHealthPct();
-        // The seated healer, else a heal-strategy member: DcPartyState::
-        // HealerManaPct. 100 only when the party truly has nobody to heal.
+        DcRestFloorDecision::Readiness r;
+        r.tankHpPct = bot->GetHealthPct();
         float const healerMp = DcPartyState::HealerManaPct(bot);
         if (Group* group = bot->GetGroup())
         {
@@ -592,32 +591,66 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                     continue;
                 if (!m->IsAlive())
                 {
-                    ++ready.membersDown;
+                    ++r.membersDown;
                     continue;
                 }
                 if (m->IsInCombat())
-                    ++ready.membersFighting;
-                // Mana only for a member whose mana is a reason to wait: never a
-                // warrior's or rogue's, never a druid tank's (DcPartyState::GatesOnMana).
+                    ++r.membersFighting;
                 if (DcPartyState::GatesOnMana(m))
-                    ready.lowestManaPct = std::min(
-                        ready.lowestManaPct,
+                    r.lowestManaPct = std::min(
+                        r.lowestManaPct,
                         100.0f * float(m->GetPower(POWER_MANA)) /
                             float(m->GetMaxPower(POWER_MANA)));
             }
         }
-        ready.healerManaPct = healerMp < 0.0f ? 100.0f : healerMp;
-        ready.gateNotReady = !DcPartyState::IsBetweenPullsReady(
-            bot, botAI->GetAiObjectContext(), /*requireNoLoot*/ false);
-    }
+        r.healerManaPct = healerMp < 0.0f ? 100.0f : healerMp;
+        // For the non-waived readiness, force the damage mana waiver OFF.
+        // This is used when the pull is patrol-contended (a lone patroller in
+        // chain range is the only reason the pack reads ADVANCED): we must not
+        // let the damage mana waiver (issue #102) make the party appear ready
+        // and raise the ceiling, because the patrol will still chain-aggro
+        // regardless of the damage dealer's mana.
+        if (!withWaiver)
+        {
+            // Temporarily clear the waiver flag to compute conservative readiness.
+            // We do this by constructing a RestGate with waiveDamageMana = false
+            // and calling IsPartyReady directly, bypassing the waiver in
+            // GetRestGate. See DcPartyState::GetRestGate.
+            DcPartyState::RestGate gate = DcPartyState::GetRestGate(bot, botAI->GetAiObjectContext());
+            gate.waiveDamageMana = false;
+            r.gateNotReady = !DcPartyState::IsPartyReady(bot, gate, gate.maxSpread, gate.anchor, gate.maxTankGap);
+        }
+        else
+        {
+            r.gateNotReady = !DcPartyState::IsBetweenPullsReady(
+                bot, botAI->GetAiObjectContext(), /*requireNoLoot*/ false);
+        }
+        return r;
+    };
+
+    DcRestFloorDecision::Readiness const readyWaived = computeReadiness(true);
+    DcRestFloorDecision::Readiness const readyNoWaiver = computeReadiness(false);
+
     // Below DcRestFloorDecision::kLowLevelParty the ceiling also answers to the
     // TANK's real health against the mob's level, not only to the party's mean:
     // the leader is the tank (or, with no tank, the member the pack goes to).
     uint32 const fragileCeilingThirds = DcRestFloorDecision::TankHpCeilingThirds(
         DungeonClearMath::FragilityScaledCeilingThirds(maxLeeroy * 3, healthPerLevel),
         partyAverageLevel, bot->GetMaxHealth(), static_cast<int>(target->GetLevel()));
-    uint32 const ceilingThirds =
-        DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, ready);
+    uint32 const ceilingWaived = DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, readyWaived);
+    uint32 const ceilingNoWaiver = DcRestFloorDecision::ReadinessScaledCeilingThirds(fragileCeilingThirds, readyNoWaiver);
+
+    // Determine if the pull is patrol-contended using the CONSERVATIVE (no-waiver)
+    // ceiling. If a lone patroller in chain range is the only reason the pack
+    // exceeds the ceiling, we must treat it as patrol-contended even if the
+    // damage mana waiver would otherwise make the party appear ready.
+    bool const patrolContended = (weightThirds > ceilingNoWaiver);
+
+    // For the final classification, use the non-waived readiness if patrol-contended,
+    // else the waived readiness (preserving issue #102 behavior for normal pulls).
+    DcRestFloorDecision::Readiness const& ready = patrolContended ? readyNoWaiver : readyWaived;
+    uint32 const ceilingThirds = patrolContended ? ceilingNoWaiver : ceilingWaived;
+
     // A pull within the edge margin of the ceiling needs full readiness: 12/3
     // against 13/3 is the party's limit, not a comfortable pack. See
     // DcRestFloorDecision::ShouldSetUp.
