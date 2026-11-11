@@ -947,6 +947,11 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
                           insideNeighbour ||
                           DcSettings::GetBool(bot, "PullForceAdvanced");
 
+    // The room clear gave up on its room: the boss is being pulled anyway, with
+    // what is left. A pack held as too big to pull whole is then released and
+    // pulled with the set-up maneuver, not held for good in front of the boss.
+    bool const roomGaveUp = DcTargeting::RoomClearGaveUp(bot, context);
+
     // Per-pack latch, UPGRADE-ONLY while approaching the SAME pack.
     //
     // ClassifyPullAdvanced now sizes up the pack with a search centred on the PACK
@@ -1045,7 +1050,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             uint32 const waitMs =
                 uint32(DcSettings::GetFloat(bot, "PullOversizeWaitSec") * 1000.0f);
             bool const expired = getMSTimeDiff(pull.oversizeWaitSince, now) >= waitMs;
-            obs.sizeHold = DcRestFloorDecision::PullSizeHolds(cls.size, expired);
+            obs.sizeHold = DcRestFloorDecision::PullSizeHolds(cls.size, expired, roomGaveUp);
         }
         else
             pull.oversizeWaitSince = 0;
@@ -1104,7 +1109,8 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             return;
         pull.decisionSince = now;
         DcPullClassification cls;
-        bool const advanced = ClassifyPullAdvanced(botAI, target, &cls) || forceAdv;
+        bool const advanced =
+        ClassifyPullAdvanced(botAI, target, &cls) || forceAdv || roomGaveUp;
         resolve(advanced, cls);
         return;
     }
@@ -1113,7 +1119,8 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     pull.patrolWaitSince = 0;
     pull.oversizeWaitSince = 0;
     DcPullClassification cls;
-    bool const advanced = ClassifyPullAdvanced(botAI, target, &cls) || forceAdv;
+    bool const advanced =
+        ClassifyPullAdvanced(botAI, target, &cls) || forceAdv || roomGaveUp;
     pull.decisionTarget = target->GetGUID();
     pull.decisionSince = getMSTime();
     // One tick of the telemetry sequence per NEW pack — the edge an observer

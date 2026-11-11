@@ -270,8 +270,13 @@ namespace DcRestFloorDecision
                               unsigned neverWholePct);
 
     // Whether the governor holds the pack this tick. Wait holds until its wait
-    // budget runs out and then becomes a set-up pull; TooBig always holds.
-    bool PullSizeHolds(PullSize size, bool waitExpired);
+    // budget runs out and then becomes a set-up pull; TooBig always holds -- except
+    // once the room clear before a room-aggro boss has given up on its room
+    // (`roomClearGaveUp`): the party has already decided to pull anyway, and a hold
+    // with no clock would plant the tank in front of the pack for good (Emperor
+    // Dagran Thaurissan's 32-strong Senator pack, live: 5 minutes still, then a
+    // `dc skip` skipped the Emperor himself).
+    bool PullSizeHolds(PullSize size, bool waitExpired, bool roomClearGaveUp = false);
 }
 
 #endif  // _DC_REST_FLOOR_DECISION_H

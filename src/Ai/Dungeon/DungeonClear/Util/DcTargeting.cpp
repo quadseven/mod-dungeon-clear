@@ -11,6 +11,7 @@
 #include "DcDoorIndex.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearRoomTrashValue.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include <algorithm>
 #include <cmath>
@@ -1355,6 +1356,14 @@ bool DcTargeting::RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx)
         return false;
 
     return IsRoomClearActive(bot, ctx);
+}
+bool DcTargeting::RoomClearGaveUp(Player* bot, AiObjectContext* ctx)
+{
+    if (!bot || !ctx)
+        return false;
+    auto* const trash = dynamic_cast<DungeonClearRoomTrashValue*>(
+        ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining));
+    return trash && trash->GaveUp();
 }
 float DcTargeting::ActiveRoomSkirt(Player* bot, AiObjectContext* ctx)
 {

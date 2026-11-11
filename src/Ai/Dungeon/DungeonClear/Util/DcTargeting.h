@@ -308,6 +308,12 @@ public:
     // probe already run for the pull path).
     static bool RoomClearForcesAdvanced(Player* bot, AiObjectContext* ctx);
 
+    // True once the room clear before the next boss has given up on its room (the
+    // no-progress valve fired; latched until the boss changes). The pull planner
+    // reads it to release a size hold: the party is pulling anyway, so a pack that
+    // is "too big to pull whole" must not keep the tank planted for good.
+    static bool RoomClearGaveUp(Player* bot, AiObjectContext* ctx);
+
     // The widened avoid-sphere skirt (yd) of the room-aggro boss currently being
     // pre-cleared, or 0 when no room-clear is active or that boss carries no skirt
     // override (RoomAggroBoss::skirtRadius). The advanced-pull camp raises its boss
