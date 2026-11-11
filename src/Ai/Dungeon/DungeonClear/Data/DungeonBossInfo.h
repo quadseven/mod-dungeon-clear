@@ -104,6 +104,18 @@ struct DungeonBossInfo
     int32 doneInstanceDataId{-1};
     uint32 doneInstanceDataValue{0};
 
+    // An OBJECTIVE that only gates the boss sharing its encounterIndex (a door,
+    // a lever, a keg, a gossip that makes the boss attackable): finished once the
+    // DBC kill bit at encounterIndex is set, i.e. once that boss is dead. Opt-in,
+    // because the mask is otherwise consulted for Boss anchors only (an
+    // objective's ordering index can collide with an unrelated boss's bit). Without
+    // it a `dc on`, which wipes the cleared-anchor latch, left the objective a
+    // candidate again: it waited behind the stale commit on its boss, then the
+    // same-index sibling rule walked the party back to it. Do NOT set it where the
+    // credited boss dies BEFORE the objective ends (Tomb of the Seven: Anger'rel
+    // is the first of seven). false => not used.
+    bool doneWithBossBit{false};
+
     // Clear-ORDER override. When >= 0 the clear orders this anchor by this value
     // INSTEAD of encounterIndex, while completion still keys on encounterIndex
     // (the real DBC kill-bit, untouched). Lets a roster patch reorder a real
@@ -176,6 +188,16 @@ enum class DcAnchorDoneVia : uint8
     BossState,     // doneBossStateIndex reads DONE
     InstanceData,  // GetData(doneInstanceDataId) == doneInstanceDataValue
 };
+
+// Does the DBC completed-encounter mask finish this anchor? A Boss anchor is
+// done when its bit is set; an Objective only when it opted in with
+// doneWithBossBit (see there). Pure, shared by the target picker and the report.
+inline bool AnchorDoneByEncounterMask(DungeonBossInfo const& b, uint32 completedMask)
+{
+    if (b.kind != DungeonAnchorKind::Boss && !b.doneWithBossBit)
+        return false;
+    return b.encounterIndex < 32 && (completedMask & (1u << b.encounterIndex)) != 0u;
+}
 
 // Does the instance script say this anchor is finished — by its boss-state slot
 // (doneBossStateIndex) or by a GetData value (doneInstanceData)? Pure: the caller

@@ -1434,6 +1434,33 @@ void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
                 o.doneInstanceDataId = static_cast<int32>(DcBlackrockDepths::TYPE_LYCEUM);
                 o.doneInstanceDataValue = static_cast<uint32>(STATE_DONE);
             }
+        // The same weakness (issue 122) for the other Blackrock Depths objectives.
+        // Ring of Law and the Tomb of the Seven read done off the instance's own
+        // state (DONE only; both can reset while running, never after). The four
+        // that only gate the boss sharing their slot (Hurley's kegs, Ribbly's
+        // gossip, Rocknot's ale run for Phalanx, the Shadowforge Lock for
+        // Angerforge) have no instance state of their own, so they read done once
+        // that boss is dead. TYPE_BAR cannot stand in for Rocknot: it reads DONE
+        // seven seconds before Phalanx turns hostile.
+        for (DungeonBossInfo& o : p.add)
+        {
+            if (o.kind != DungeonAnchorKind::Objective)
+                continue;
+            if (o.entry == OBJ(1))
+            {
+                o.doneInstanceDataId = static_cast<int32>(BRD_TYPE_RING_OF_LAW);
+                o.doneInstanceDataValue = static_cast<uint32>(STATE_DONE);
+            }
+            else if (o.entry == OBJ(DcBlackrockDepths::OBJ_TOMB_OF_SEVEN))
+            {
+                o.doneInstanceDataId = static_cast<int32>(DcBlackrockDepths::TYPE_TOMB_OF_SEVEN);
+                o.doneInstanceDataValue = static_cast<uint32>(STATE_DONE);
+            }
+            else if (o.entry == OBJ(2) || o.entry == OBJ(DcBlackrockDepths::OBJ_HURLEY_KEGS) ||
+                     o.entry == OBJ(DcBlackrockDepths::OBJ_RIBBLY) ||
+                     o.entry == OBJ(DcBlackrockDepths::OBJ_ROCKNOT))
+                o.doneWithBossBit = true;
+        }
         // --- Blackrock Depths — Stilgiss and Darkvire before Incendius ---
         // DBC order runs Loregrain -> Incendius (bit 5) -> Stilgiss (6) ->
         // Darkvire (7); the clear path takes Stilgiss and Darkvire first, then
