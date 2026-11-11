@@ -46,7 +46,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     if (!DcRun::Of(context).enabled || DcRun::Of(context).paused)
     {
         trackedBoss = 0;
-        gaveUp = false;
+        stages = {};
         noteSent = false;
         return out;
     }
@@ -55,7 +55,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     if (!next.has_value())
     {
         trackedBoss = 0;
-        gaveUp = false;
+        stages = {};
         noteSent = false;
         return out;
     }
@@ -66,7 +66,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     if (!room)
     {
         trackedBoss = 0;
-        gaveUp = false;
+        stages = {};
         noteSent = false;
         return out;
     }
@@ -76,15 +76,16 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     if (trackedBoss != room->bossEntry)
     {
         trackedBoss = room->bossEntry;
-        clock = {};
-        gaveUp = false;
+        stages = {};
         noteSent = false;
     }
 
-    // Already gave up on this room -> report it clear so the boss gate opens and
-    // the run proceeds (the straggler comes with the boss). Stays latched until
-    // the boss changes.
-    if (gaveUp)
+    // Gave up for good on this room (the second no-progress timeout, see
+    // DungeonClearMath::StepRoomClearStages) -> report it clear so the boss gate
+    // opens and the run proceeds (the straggler comes with the boss). Stays latched
+    // until the boss changes. The FIRST timeout is not this: it only lets the planner
+    // pull oversize packs (GaveUp()), and the room stays counted below.
+    if (stages.finished)
         return out;
 
     // Measure from the LIVE boss (some flagged bosses wander) — the room is its
@@ -107,7 +108,8 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     // starts when clearing actually begins, not during the walk in.
     if (!DcEngageGeometry::TankReachedRoomByPath(bot, context, *next))
     {
-        clock = {};
+        stages.first = {};
+        stages.second = {};
         return out;
     }
 
@@ -368,21 +370,35 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         (bot->IsInCombat() ||
          !DcTickMemoAccess::BetweenPullsReady(bot, context, /*requireNoLoot*/ true));
     uint32 const timeoutMs = DcSettings::GetUInt(bot, "RoomClearTimeout") * 1000u;
-    if (DungeonClearMath::RoomClearGiveUpDue(clock, remaining, inRoom, busy, now, timeoutMs))
+    bool const wasGaveUp = stages.gaveUp;
+    switch (DungeonClearMath::StepRoomClearStages(stages, remaining, inRoom, busy, now,
+                                                  timeoutMs))
     {
-        gaveUp = true;
-        if (!noteSent && DcLeaderSignal::IsDungeonClearLeader(bot))
-        {
-            noteSent = true;
-            DcStatusPublisher::SendAddonMessage(
-                botAI, "CHAT\tCouldn't fully clear the room before " + next->name +
-                           " — pulling anyway (some adds will join).");
-        }
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] room-clear gave up on {} ({} left after {}s) -> pulling boss",
-                 bot->GetName(), next->name, remaining,
-                 DcSettings::GetUInt(bot, "RoomClearTimeout"));
-        out.clear();
+        case DungeonClearMath::RoomClearStage::Clearing:
+            break;
+        case DungeonClearMath::RoomClearStage::Oversize:
+            if (!wasGaveUp)
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] room-clear stalled on {} ({} left after {}s) -> oversize "
+                         "packs allowed, still clearing the room",
+                         bot->GetName(), next->name, remaining,
+                         DcSettings::GetUInt(bot, "RoomClearTimeout"));
+            break;
+        case DungeonClearMath::RoomClearStage::Final:
+            if (!noteSent && DcLeaderSignal::IsDungeonClearLeader(bot))
+            {
+                noteSent = true;
+                DcStatusPublisher::SendAddonMessage(
+                    botAI, "CHAT\tCouldn't fully clear the room before " + next->name +
+                               " — pulling anyway (some adds will join).");
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] room-clear gave up on {} ({} left after {}s, again) -> pulling "
+                     "boss",
+                     bot->GetName(), next->name, remaining,
+                     DcSettings::GetUInt(bot, "RoomClearTimeout"));
+            out.clear();
+            break;
     }
 
     return out;

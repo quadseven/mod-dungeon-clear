@@ -3320,6 +3320,86 @@ TEST(DungeonClearRoomClearClockTest, ZeroTimeoutNeverGivesUp)
     EXPECT_FALSE(Poll(c, 5, false, 1000, 200000, 0));
 }
 
+// --- StepRoomClearStages (the two-stage give-up) ---------------------------
+// Blackrock Depths, Emperor Dagran Thaurissan (run 1833457): the first no-progress
+// timeout emptied the room set with about 30 mobs up and the boss was tagged into
+// the whole throne room. The first timeout only allows oversize packs; the room
+// stays counted until a second timeout with no drop.
+
+using DungeonClearMath::RoomClearStage;
+using DungeonClearMath::RoomClearStages;
+using DungeonClearMath::StepRoomClearStages;
+
+namespace
+{
+    // 500ms polls from `from` to `to` at a fixed count; returns the last stage.
+    RoomClearStage StepPolls(RoomClearStages& s, std::uint32_t remaining, bool busy,
+                             std::uint32_t from, std::uint32_t to, std::uint32_t timeoutMs)
+    {
+        RoomClearStage st = RoomClearStage::Clearing;
+        for (std::uint32_t t = from; t <= to; t += 500)
+            st = StepRoomClearStages(s, remaining, /*inRoom*/ true, busy, t, timeoutMs);
+        return st;
+    }
+}
+
+TEST(DungeonClearRoomClearStagesTest, FirstTimeoutAllowsOversizeButKeepsTheRoomCounted)
+{
+    RoomClearStages s;
+    EXPECT_EQ(StepPolls(s, 50, false, 1000, 30000, 30000), RoomClearStage::Clearing);
+    EXPECT_FALSE(s.gaveUp);
+    EXPECT_EQ(StepPolls(s, 50, false, 30500, 32000, 30000), RoomClearStage::Oversize);
+    EXPECT_TRUE(s.gaveUp);
+    EXPECT_FALSE(s.finished);
+}
+
+TEST(DungeonClearRoomClearStagesTest, ProgressAfterTheFirstTimeoutNeverReachesFinal)
+{
+    // The Emperor run: seven packs fell after the give-up, one drop every ~20s.
+    RoomClearStages s;
+    StepPolls(s, 50, false, 1000, 32000, 30000);
+    ASSERT_TRUE(s.gaveUp);
+    std::uint32_t t = 32500;
+    for (std::uint32_t left = 49; left >= 30; --left)
+    {
+        EXPECT_EQ(StepPolls(s, left, false, t, t + 20000, 30000), RoomClearStage::Oversize);
+        t += 20500;
+    }
+    EXPECT_FALSE(s.finished);
+}
+
+TEST(DungeonClearRoomClearStagesTest, AStallAfterTheFirstTimeoutIsFinalAfterOneMoreTimeout)
+{
+    RoomClearStages s;
+    StepPolls(s, 50, false, 1000, 32000, 30000);
+    ASSERT_TRUE(s.gaveUp);
+    EXPECT_EQ(StepPolls(s, 50, false, 32500, 60000, 30000), RoomClearStage::Oversize);
+    EXPECT_EQ(StepPolls(s, 50, false, 60500, 63000, 30000), RoomClearStage::Final);
+    EXPECT_TRUE(s.finished);
+    // Latched: a later drop does not reopen it.
+    EXPECT_EQ(StepRoomClearStages(s, 10, true, false, 70000, 30000), RoomClearStage::Final);
+}
+
+TEST(DungeonClearRoomClearStagesTest, BusyTimeCountsTowardNeitherClock)
+{
+    RoomClearStages s;
+    // A long fight before any ready time: nothing runs out.
+    EXPECT_EQ(StepPolls(s, 50, true, 1000, 100000, 30000), RoomClearStage::Clearing);
+    EXPECT_EQ(StepPolls(s, 50, false, 100500, 132000, 30000), RoomClearStage::Oversize);
+    // And after the first timeout a long fight does not run the second one out.
+    EXPECT_EQ(StepPolls(s, 50, true, 132500, 250000, 30000), RoomClearStage::Oversize);
+    EXPECT_FALSE(s.finished);
+}
+
+TEST(DungeonClearRoomClearStagesTest, AnEmptiedRoomNeverFinishes)
+{
+    RoomClearStages s;
+    StepPolls(s, 5, false, 1000, 32000, 30000);
+    ASSERT_TRUE(s.gaveUp);
+    EXPECT_EQ(StepPolls(s, 0, false, 32500, 200000, 30000), RoomClearStage::Oversize);
+    EXPECT_FALSE(s.finished);
+}
+
 // --- Room-clear straight pull (RankStraightPullLanes) -------------------------
 //
 // Karazhan Banquet Hall, tr-20260926-192642-3: the west Phantom Guest formation
