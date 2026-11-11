@@ -1078,6 +1078,57 @@ namespace DungeonClearMath
         return timeoutMs && c.idleMs > timeoutMs;
     }
 
+    // The room clear's two-stage give-up (pure). One no-progress timeout is not the
+    // end of a room clear: the first one only means "stop holding oversize packs and
+    // pull them with the set-up maneuver" (the planner already does that once
+    // GaveUp reads true), while the room stays counted so the at-boss room-trash
+    // hold, the room-clear driver and the tank's keep-out ring stay on. Only a
+    // second full timeout with no drop in the count is final: the boss is then
+    // pulled with what is left, as the single stage used to do at once.
+    //
+    // Live, Blackrock Depths (run 1833457, 2026-11-11): the first give-up emptied
+    // the set with about 30 mobs up, the planner took seven packs in 2.5 minutes
+    // with no death, ran out of corridor and the tank tagged the Emperor with the
+    // rest of the throne room alive (29 enemies in two seconds).
+    enum class RoomClearStage : std::uint8_t
+    {
+        Clearing = 0,   // the first timeout has not run out
+        Oversize,       // gave up once: oversize packs allowed, room still counted
+        Final,          // gave up for good: the set is empty, pull the boss
+    };
+
+    struct RoomClearStages
+    {
+        RoomClearClock first;
+        RoomClearClock second;
+        bool gaveUp = false;     // the first timeout ran out (latched)
+        bool finished = false;   // the second ran out too (latched)
+    };
+
+    inline RoomClearStage StepRoomClearStages(RoomClearStages& s, std::uint32_t remaining,
+                                              bool inRoom, bool busy, std::uint32_t now,
+                                              std::uint32_t timeoutMs)
+    {
+        if (s.finished)
+            return RoomClearStage::Final;
+        if (!s.gaveUp)
+        {
+            if (!RoomClearGiveUpDue(s.first, remaining, inRoom, busy, now, timeoutMs))
+                return RoomClearStage::Clearing;
+            s.gaveUp = true;
+            s.second = RoomClearClock{};
+            return RoomClearStage::Oversize;
+        }
+        // Progress after the first give-up (a smaller count) re-arms the second
+        // clock inside RoomClearGiveUpDue; an emptied room resets it.
+        if (RoomClearGiveUpDue(s.second, remaining, inRoom, busy, now, timeoutMs))
+        {
+            s.finished = true;
+            return RoomClearStage::Final;
+        }
+        return RoomClearStage::Oversize;
+    }
+
     // Engage-fizzle handoff latch (pure). An advanced-pull "camp fight" ended with
     // the tank out of combat but the pulled pack still ALIVE and IDLE — the drag
     // fizzled (a planted caster evaded home the moment the tank broke LOS at camp).
