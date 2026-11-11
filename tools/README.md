@@ -47,3 +47,14 @@ world->pixel affine. On caverns and other multi-level maps the levels flatten
 together top-down; narrow them with `--z=LO,HI` and `--style height`. Point it
 at the server's `mmaps/` with `--mmaps` or `AC_MMAPS_DIR`; it writes only the
 PNG you name. See `--help` for an example.
+
+### Registered watchdog replay
+
+`generate_watchdog_replay.py` emits the actual clearing-tank registration,
+party observation, resurrection-offer detection, and five-second watchdog bodies
+with isolated game SDK adapters. The native `dungeon_clear_watchdog_tests` target
+runs automatically through `dungeon_clear_watchdog_check` whenever
+`dungeon_clear_tests` builds, including incremental builds. This is a registered
+sweep regression, not a full game-engine integration test. Linux CI builds that
+target in both core-pin legs. Windows smoke compiles production code with testing
+disabled and does not execute this replay.
