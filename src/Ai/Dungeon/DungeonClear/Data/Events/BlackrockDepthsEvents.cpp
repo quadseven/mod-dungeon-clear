@@ -38,7 +38,9 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/BlackrockDepthsLyceum.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
@@ -264,6 +266,47 @@ namespace
 
     uint32 AleMugsNeeded() { return ALE_TURN_INS * ALE_MUGS_PER_TURN_IN; }
 
+    // --- AleRunPartyReady (hook 64) ----------------------------------------
+    // The ale run is the point of no return. Rocknot's last kick breaks the Bar
+    // Door, the Keg Trap fires seven seconds later, and every Grim, Guzzling and
+    // Hammered Patron in the bar starts attacking the nearest player (their
+    // SmartAI "On Data Set 1 1 - Start Attack"), with Phalanx joining as he
+    // reaches the door: fifteen to twenty hostiles on a party standing in the
+    // bar. Run 1816286 (09:41Z) lost its tank, two damage dealers and the healer
+    // in under a minute. Nothing in the buy or the hand-in looked at the party,
+    // so the run started the brawl at whatever health and mana it arrived with.
+    // This step holds before the buy, on the same rest gate the between-pulls
+    // wait and the other event drivers use, and is Done once the run is under way
+    // so a rewind does not hold a party that is already fighting.
+    ObjectiveArriveResult AleRunPartyReady(Player* bot, AiObjectContext* context,
+                                           DungeonBossInfo const& /*info*/)
+    {
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (!inst)
+            return ObjectiveArriveResult::Running;
+        uint32 const bar = inst->GetData(TYPE_BAR);
+        if (bar == STATE_DONE || bar == STATE_SPECIAL)
+            return ObjectiveArriveResult::Done;
+
+        bool ready = true;
+        if (DcSmartRest::Enabled(bot))
+            ready = !DcSmartRest::UpdateLatch(bot, context);
+        else
+        {
+            DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+            if (rest.minHp > 0.0f || rest.minMp > 0.0f)
+                ready = DcPartyState::IsPartyReady(bot, rest, /*maxSpread*/ 100000.0f);
+        }
+        if (ready)
+            return ObjectiveArriveResult::Done;
+
+        if (!DcRun::Of(context).Throttled(DcThrottle::BrdEventLog, 10000))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] Grim Guzzler — holding before Rocknot's ale run: the Bar Door fight "
+                     "brings the whole bar down on the party, so it rests first", bot->GetName());
+        return ObjectiveArriveResult::Running;
+    }
+
     // --- BuyRocknotAle (hook 54) -------------------------------------------
     // Done once the leader carries six mugs, once the run is already under way,
     // or once a purchase was attempted (success or not: hook 47 decides what a
@@ -335,9 +378,22 @@ namespace
                      "[DC:{}] Grim Guzzler — bought {} Dark Iron Ale Mug(s) from Plugger Spazzring "
                      "(now carrying {})", bot->GetName(), want, bot->GetItemCount(ITEM_DARK_IRON_ALE_MUG));
         else
+        {
+            // Name the reason. Every run since the log archive begins (BRD runs of
+            // 9-11 Nov) logged the old "stock, gold or bag space" line and went on to
+            // the hand-in fallback; which of the three it was was never recorded.
+            ItemPosCountVec dest;
+            InventoryResult const bagRes = bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, ITEM_DARK_IRON_ALE_MUG, want);
+            ItemTemplate const* proto = sObjectMgr->GetItemTemplate(ITEM_DARK_IRON_ALE_MUG);
+            uint64 const price = proto ? static_cast<uint64>(proto->BuyPrice) * want : 0;
+            VendorItem const* vi = stock ? stock->GetItem(slot) : nullptr;
+            uint32 const left = vi && vi->maxcount ? plugger->GetVendorItemCurrentCount(vi) : want;
             LOG_WARN("playerbots.dungeonclear",
-                     "[DC:{}] Blackrock Depths — could not buy {} Dark Iron Ale Mug(s) from Plugger "
-                     "(stock, gold or bag space)", bot->GetName(), want);
+                     "[DC:{}] Blackrock Depths — could not buy {} Dark Iron Ale Mug(s) from Plugger: "
+                     "bag space {} (store result {}), gold {} of {} copper, stock {} of {}",
+                     bot->GetName(), want, bagRes == EQUIP_ERR_OK ? "ok" : "FULL",
+                     static_cast<uint32>(bagRes), bot->GetMoney(), price, left, want);
+        }
         return ObjectiveArriveResult::Done;
     }
 
@@ -1036,6 +1092,7 @@ void RegisterBlackrockDepthsHooks(ObjectiveHookRegistry::HookTable& out)
     ObjectiveHookRegistry::AddHook(out, HOOK_START_ROCKNOT_ALE_RUN, &StartRocknotAleRun);
     ObjectiveHookRegistry::AddHook(out, HOOK_WAKE_HURLEY, &WakeHurley);
     ObjectiveHookRegistry::AddHook(out, HOOK_BUY_ROCKNOT_ALE, &BuyRocknotAle);
+    ObjectiveHookRegistry::AddHook(out, HOOK_ALE_PARTY_READY, &AleRunPartyReady);
     ObjectiveHookRegistry::AddHook(out, HOOK_PHALANX_AT_DOOR, &PhalanxAtDoor);
 }
 
@@ -1174,6 +1231,8 @@ void RegisterBlackrockDepthsEvents(std::vector<DungeonEvent>& out)
             .Anchored(/*orderIndex*/ 13)
             .Persistent()
             .MoveTo(ROCKNOT_HOLD_X, ROCKNOT_HOLD_Y, ROCKNOT_HOLD_Z, ROCKNOT_HOLD_RADIUS)
+            .Custom(HOOK_ALE_PARTY_READY)
+            .Timeout(BRD_ALE_READY_TIMEOUT_MS)
             .Custom(HOOK_BUY_ROCKNOT_ALE)
             .Timeout(60000)
             .Custom(HOOK_START_ROCKNOT_ALE_RUN)

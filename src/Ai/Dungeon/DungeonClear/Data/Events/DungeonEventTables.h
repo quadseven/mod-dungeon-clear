@@ -136,6 +136,11 @@ namespace DcBlackrockDepths
     constexpr uint32 HOOK_WAKE_HURLEY = 52;
     constexpr uint32 HOOK_BUY_ROCKNOT_ALE = 54;
     constexpr uint32 HOOK_PHALANX_AT_DOOR = 55;
+    // Hold the ale run until the party has rested (see AleRunPartyReady).
+    constexpr uint32 HOOK_ALE_PARTY_READY = 64;
+    // How long the pre-run rest hold may last before its step times out: the smart
+    // rest failsafe (DC_SMART_REST_MAX_MS, 180s) releases first.
+    constexpr uint32 BRD_ALE_READY_TIMEOUT_MS = 240000;
 
     constexpr uint32 NPC_HURLEY = 9537;
     constexpr uint32 NPC_PHALANX = 9502;
