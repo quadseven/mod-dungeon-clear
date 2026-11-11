@@ -81,6 +81,8 @@ namespace DcRestFloorDecision
                 out.mp = std::min(out.mp, kNoDrinkDamageCap);
             else if (m.role == Role::Tank)
                 out.mp = std::min(out.mp, kNoDrinkTankCap);
+            else if (m.role == Role::Healer && risk != Risk::LowLevel)
+                out.mp = std::min(out.mp, kNoDrinkHealerCap);
         }
 
         // A damage dealer's mana only shortens a fight. Once the wait has
