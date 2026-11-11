@@ -91,6 +91,8 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestSocialQuarantine.cpp"
             "${MOD_PATH}/t/TestSealedEncounter.cpp"
             "${MOD_PATH}/t/TestWaitAtBoss.cpp"
+            "${MOD_PATH}/t/TestBossContactSnapshot.cpp"
+            "${MOD_PATH}/t/TestBossWakeVeto.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDcCoreCompat.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"

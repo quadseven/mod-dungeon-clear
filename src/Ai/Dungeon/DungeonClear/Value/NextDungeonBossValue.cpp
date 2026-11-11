@@ -154,8 +154,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 bool invalid = false;
                 if (cleared.count(info.entry) || info.skipByDesign)
                     invalid = true;
-                else if (info.kind == DungeonAnchorKind::Boss &&
-                         info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+                else if (AnchorDoneByEncounterMask(info, completedMask))
                     invalid = true;
                 else if (DcAnchorDoneByInstanceScript(info, inst))
                     invalid = true;
@@ -225,9 +224,9 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         // Authoritative: this encounter is already complete in this instance.
         // Objectives never carry a real kill-bit, so the mask is consulted for
         // Boss anchors only (an objective's ordering index could otherwise
-        // collide with an unrelated boss's set bit and vanish prematurely).
-        if (info.kind == DungeonAnchorKind::Boss &&
-            info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+        // collide with an unrelated boss's set bit and vanish prematurely),
+        // plus the objectives that opt in with doneWithBossBit.
+        if (AnchorDoneByEncounterMask(info, completedMask))
             continue;
 
         // Non-DBC door-gating boss (e.g. the Mechanar Gatewatchers): no

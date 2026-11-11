@@ -108,6 +108,19 @@ namespace DcRestFloorDecision
     // stationary wait for mana that cannot be replenished in the field.
     constexpr float kNoDrinkTankCap = 35.0f;
 
+    // A healer that cannot drink regenerates only by standing still, which does
+    // not carry it from the end of a pack to the configured floor (65 or more)
+    // inside the party-wait ceiling. Live (mod-dungeon-clear#128): one Blackrock
+    // Depths party, a paladin healer with no drink in its bags, ended the run
+    // seven times in two and a half hours on "never became ready after 180s
+    // (low mana)", each stop costing the wait plus minutes before the re-arm.
+    // The healer's mana is the party's insurance, so the cap stays well above a
+    // floor that would let a near-empty healer pull: 40 is above the tank's 35
+    // and the damage dealer's reserve at Easy, and below the healer's own Easy
+    // floor of 50, so it binds at every risk. A low-level party is excluded for
+    // the same reason as the damage dealer: its bar refills in seconds.
+    constexpr float kNoDrinkHealerCap = 40.0f;
+
     struct Member
     {
         Role role = Role::Damage;

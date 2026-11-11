@@ -689,25 +689,33 @@ TEST(DungeonEventRegistryTest, BlackrockRocknotAleRunEventShape)
     EXPECT_TRUE(e->persistent) << "the buy and the hand-in walk the tank off the anchor";
     EXPECT_TRUE(e->required);
 
-    ASSERT_EQ(e->steps.size(), 6u);
+    ASSERT_EQ(e->steps.size(), 7u);
     EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
     EXPECT_FLOAT_EQ(e->steps[0].x, B::ROCKNOT_HOLD_X);
     EXPECT_FLOAT_EQ(e->steps[0].y, B::ROCKNOT_HOLD_Y);
+    // The rest hold comes BEFORE the buy: the ale run is the point of no return
+    // (the Keg Trap turns the whole bar on the party), and run 1816286 started it
+    // without looking at the party. Its step timeout outlasts the smart rest
+    // failsafe (180s) so the failsafe, not a stalled run, ends a stuck rest.
     EXPECT_EQ(e->steps[1].kind, EventStepKind::Custom);
-    EXPECT_EQ(e->steps[1].hookId, B::HOOK_BUY_ROCKNOT_ALE);
+    EXPECT_EQ(e->steps[1].hookId, B::HOOK_ALE_PARTY_READY);
+    EXPECT_GT(e->steps[1].timeoutMs, 180000u);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(B::HOOK_ALE_PARTY_READY));
     EXPECT_EQ(e->steps[2].kind, EventStepKind::Custom);
-    EXPECT_EQ(e->steps[2].hookId, B::HOOK_START_ROCKNOT_ALE_RUN);
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::MoveTo);
-    EXPECT_FLOAT_EQ(e->steps[3].x, B::ROCKNOT_HOLD_X);
-    EXPECT_FLOAT_EQ(e->steps[3].y, B::ROCKNOT_HOLD_Y);
-    EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
-    EXPECT_EQ(e->steps[4].goEntry, B::GO_BAR_DOOR);
-    EXPECT_EQ(e->steps[4].wantState, 2u);  // GO_STATE_ACTIVE_ALTERNATIVE, as npc_rocknot sets it
-    EXPECT_GE(e->steps[4].timeoutMs, 60000u) << "the escort alone is ~40s";
-    EXPECT_EQ(e->steps[5].kind, EventStepKind::Custom);
-    EXPECT_EQ(e->steps[5].hookId, B::HOOK_PHALANX_AT_DOOR)
+    EXPECT_EQ(e->steps[2].hookId, B::HOOK_BUY_ROCKNOT_ALE);
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::Custom);
+    EXPECT_EQ(e->steps[3].hookId, B::HOOK_START_ROCKNOT_ALE_RUN);
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[4].x, B::ROCKNOT_HOLD_X);
+    EXPECT_FLOAT_EQ(e->steps[4].y, B::ROCKNOT_HOLD_Y);
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[5].goEntry, B::GO_BAR_DOOR);
+    EXPECT_EQ(e->steps[5].wantState, 2u);  // GO_STATE_ACTIVE_ALTERNATIVE, as npc_rocknot sets it
+    EXPECT_GE(e->steps[5].timeoutMs, 60000u) << "the escort alone is ~40s";
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::Custom);
+    EXPECT_EQ(e->steps[6].hookId, B::HOOK_PHALANX_AT_DOOR)
         << "the door breaks 7s before Phalanx even starts his run to it";
-    EXPECT_GE(e->steps[5].timeoutMs, 22000u) << "7s cork delay + his 15s run cap";
+    EXPECT_GE(e->steps[6].timeoutMs, 22000u) << "7s cork delay + his 15s run cap";
     for (EventStep const& st : e->steps)
         EXPECT_NE(st.instanceDataId, static_cast<int32>(B::TYPE_BAR))
             << "TYPE_BAR is SPECIAL (>= DONE) for the whole escort";

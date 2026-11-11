@@ -176,11 +176,38 @@ TEST(DcRestFloorTest, TankWithNoDrinkUsesTheLowerReserveOnABossPull)
     EXPECT_FLOAT_EQ(kBossTankMana, FloorsFor(tank, kHp, kMp, Risk::Boss).mp);
 }
 
-TEST(DcRestFloorTest, HealerWithNoDrinkIsNotCapped)
+TEST(DcRestFloorTest, HealerWithNoDrinkIsBoundedAtTheHealerCapAtEveryRisk)
+{
+    // mod-dungeon-clear#128: a no-drink paladin healer held the full 65 to 80
+    // floor until the 180s ceiling ended the run, seven times in one party.
+    Member p = Priest();
+    p.canDrink = false;
+    for (Risk r : {Risk::Easy, Risk::Normal, Risk::Boss, Risk::Hard})
+        EXPECT_FLOAT_EQ(kNoDrinkHealerCap, FloorsFor(p, kHp, kMp, r).mp);
+    // The cap never raises an operator floor that is already lower.
+    EXPECT_FLOAT_EQ(30.0f, FloorsFor(p, kHp, 30.0f, Risk::Hard).mp);
+    // A healer that can drink keeps the floors it had.
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(Priest(), kHp, kMp, Risk::Hard).mp);
+    EXPECT_FLOAT_EQ(kHealerNormalMana, FloorsFor(Priest(), kHp, kMp, Risk::Normal).mp);
+}
+
+TEST(DcRestFloorTest, ANoDrinkHealerBelowTheCapStillHoldsTheGate)
+{
+    // The bound is not a waiver: a near-empty healer never pulls, and health is
+    // untouched.
+    Member p = Priest();
+    p.canDrink = false;
+    EXPECT_FALSE(Meets(p, 100.0f, 25.0f, Risk::Hard));
+    EXPECT_TRUE(Meets(p, 100.0f, 41.0f, Risk::Hard));
+    EXPECT_FALSE(Meets(p, 40.0f, 100.0f, Risk::Hard));
+    EXPECT_FLOAT_EQ(kHp, FloorsFor(p, kHp, kMp, Risk::Hard).hp);
+}
+
+TEST(DcRestFloorTest, ALowLevelHealerWithNoDrinkStillRegensToTheFloor)
 {
     Member p = Priest();
     p.canDrink = false;
-    EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, ClassifyRisk(false, false, 18, 20)).mp);
 }
 
 // ---- the damage-mana waiver (issue 102) -------------------------------------------
