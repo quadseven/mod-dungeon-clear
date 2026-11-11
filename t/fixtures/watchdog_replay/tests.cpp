@@ -26,6 +26,8 @@ protected:
         rogue.map = &instance;
         rogue.guid = 8;
         group.Add(&rogue);
+        // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-008:
+        // Every roster member has a distinct identity, as in a real group.
         unsigned ghostGuid = 9;
         for (auto& ghost : ghosts)
         {
