@@ -576,3 +576,96 @@ TEST(DcRestFloorTest, TheSeatWinsElseAHealStrategyElseNobody)
     EXPECT_LT(HealerManaPct({dps}), 0.0f);
     EXPECT_LT(HealerManaPct({}), 0.0f);
 }
+
+// ---- an operator's floor and a healer who cannot drink (mod-dungeon-clear#134) -----
+//
+// Live, run 1827951 (Blackrock Depths): the realm sets DungeonClear.RestManaPct = 50,
+// so the gate is not scaled and the #128 cap never reached a healer. A paladin
+// healer with no drink was held to the full 50 and the run ended twice at the Ring
+// of Law ("never became ready after 180s", 54 minutes at three bosses).
+
+namespace
+{
+    Member NoDrinkHealer()
+    {
+        Member p = Priest();
+        p.canDrink = false;
+        return p;
+    }
+}
+
+TEST(DcRestFloorTest, AnOperatorFloorIsHeldVerbatimForAMemberThatCanDrink)
+{
+    // 50 is the realm's RestManaPct; the stock Easy floor for a healer is also 50,
+    // so use 65 to see that the risk scaling is skipped.
+    Member p = Priest();
+    p.ordered = true;
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Easy).mp);
+    EXPECT_FLOAT_EQ(kHp, FloorsFor(p, kHp, kMp, Risk::Easy).hp);
+    Member mage = Mage();
+    mage.ordered = true;
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(mage, kHp, kMp, Risk::Boss).mp);
+}
+
+TEST(DcRestFloorTest, AnOperatorFloorDoesNotHoldANoDrinkHealerAboveTheCap)
+{
+    Member p = NoDrinkHealer();
+    p.ordered = true;
+    for (Risk r : {Risk::Easy, Risk::Normal, Risk::Boss, Risk::Hard})
+        EXPECT_FLOAT_EQ(kNoDrinkHealerCap, FloorsFor(p, kHp, 50.0f, r).mp);
+    // Below the cap the healer still holds the gate, and a low operator floor wins.
+    EXPECT_FALSE(FloorsFor(p, kHp, 50.0f, Risk::Hard).mp <= 30.0f);
+    EXPECT_FLOAT_EQ(30.0f, FloorsFor(p, kHp, 30.0f, Risk::Hard).mp);
+    // A low-level healer regenerates in seconds: the order stands.
+    EXPECT_FLOAT_EQ(50.0f, FloorsFor(p, kHp, 50.0f, Risk::LowLevel).mp);
+}
+
+TEST(DcRestFloorTest, AnOperatorFloorStillBoundsANoDrinkDamageDealerAndTank)
+{
+    Member mage = Mage();
+    mage.canDrink = false;
+    mage.ordered = true;
+    EXPECT_FLOAT_EQ(kNoDrinkDamageCap, FloorsFor(mage, kHp, kMp, Risk::Hard).mp);
+    Member tank = Mage();
+    tank.role = Role::Tank;
+    tank.canDrink = false;
+    tank.ordered = true;
+    EXPECT_FLOAT_EQ(kNoDrinkTankCap, FloorsFor(tank, kHp, kMp, Risk::Hard).mp);
+}
+
+TEST(DcRestFloorTest, AWaivedNoDrinkHealerNeedsOnlyTheWaivedFloor)
+{
+    // After a whole ceiling the run goes on: the healer pulls from a bounded low
+    // bar instead of ending the run, at every risk but LowLevel, scaled or ordered.
+    for (bool ordered : {false, true})
+    {
+        Member p = NoDrinkHealer();
+        p.manaWaived = true;
+        p.ordered = ordered;
+        for (Risk r : {Risk::Easy, Risk::Normal, Risk::Boss, Risk::Hard})
+        {
+            EXPECT_FLOAT_EQ(kNoDrinkHealerWaivedFloor, FloorsFor(p, kHp, 50.0f, r).mp);
+            EXPECT_TRUE(FloorsFor(p, kHp, 50.0f, r).mp <= kNoDrinkHealerWaivedFloor);
+        }
+    }
+}
+
+TEST(DcRestFloorTest, AWaivedNoDrinkHealerBelowTheWaivedFloorStillHoldsTheGate)
+{
+    Member p = NoDrinkHealer();
+    p.manaWaived = true;
+    p.ordered = true;
+    Floors const f = FloorsFor(p, kHp, 50.0f, Risk::Hard);
+    EXPECT_GT(f.mp, 24.0f);
+    EXPECT_LE(f.mp, 25.0f);
+    // Health is never waived.
+    EXPECT_FLOAT_EQ(kHp, f.hp);
+}
+
+TEST(DcRestFloorTest, TheHealerWaiverNeverTouchesAHealerThatCanDrink)
+{
+    Member p = Priest();
+    p.manaWaived = true;
+    p.ordered = true;
+    EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
+}

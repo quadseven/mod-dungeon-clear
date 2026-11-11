@@ -152,6 +152,10 @@ public:
         // Scaled gates only: damage dealers have no mana floor while the run's
         // waiver lasts (see WaiveDamageMana). Never set for an operator's floors.
         bool waiveDamageMana = false;
+        // The floors are an operator's RestManaPct / RestHealthPct, held verbatim
+        // but for a member with no usable drink (DcRestFloorDecision::Member::
+        // ordered). Never set with `scaled`, nor for the raid muster's push.
+        bool ordered = false;
     };
     static RestGate GetRestGate(Player* bot, AiObjectContext* context);
 
