@@ -731,8 +731,15 @@ TEST_F(DungeonClearGroupTest, DeadOwnerOutsideStillObservesTheSoleSurvivor)
     in.rosterAlive = presence.rosterAlive;
     in.rosterDead = presence.rosterDead;
     in.dungeonParty = true;
+    in.rosterComplete = group->GetMembersCount() == presence.rosterAlive + presence.rosterDead;
     std::uint32_t stamp = 0;
-    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, in).end);
+    DcNoKillDecision::PartialWipeState partial;
+    in.nowMs = 5000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    DcNoKillDecision::Result result;
+    for (in.nowMs = 10000; in.nowMs <= 95000; in.nowMs += 5000)
+        result = DcNoKillDecision::Tick(stamp, partial, in);
+    EXPECT_TRUE(result.end);
     LeaveWorld();
     player->MoveToTestMap(testMap);
     for (TestPlayer* member : members)
@@ -754,13 +761,20 @@ TEST_F(DungeonClearGroupTest, PendingResurrectionOfferPreservesTheSoleSurvivorsR
     in.rosterAlive = presence.rosterAlive;
     in.rosterDead = presence.rosterDead;
     in.dungeonParty = true;
+    in.rosterComplete = group->GetMembersCount() == presence.rosterAlive + presence.rosterDead;
     in.survivorCanResurrect = DcRezRecovery::HoldsResurrectOffer(presence.soleLivingMember);
     std::uint32_t stamp = 0;
-    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, in).end);
+    DcNoKillDecision::PartialWipeState partial;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
     members[1]->clearResurrectRequestData();
     in.survivorCanResurrect = DcRezRecovery::HoldsResurrectOffer(presence.soleLivingMember);
     EXPECT_FALSE(in.survivorCanResurrect);
-    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, in).end);
+    in.nowMs = 5000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    DcNoKillDecision::Result result;
+    for (in.nowMs = 10000; in.nowMs <= 95000; in.nowMs += 5000)
+        result = DcNoKillDecision::Tick(stamp, partial, in);
+    EXPECT_TRUE(result.end);
     LeaveWorld();
 }
 

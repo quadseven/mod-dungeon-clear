@@ -20,6 +20,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/DcChessConductor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoKillDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcThrottle.h"
@@ -295,6 +296,7 @@ struct DcRunState
     DcRunProgress::Mark progress;
     DcRunProgress::Mark purgeProgress;
     DcRunProgress::Mark killProgress;
+    DcNoKillDecision::PartialWipeState partialWipe; // reset with this run, including missed observations
 
     // === Blackwing Lair — Razorgore's orb and egg run (leader-owned) =============
     // The one encounter DC orchestrates from INSIDE a raid fight (see

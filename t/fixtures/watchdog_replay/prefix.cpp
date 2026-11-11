@@ -30,6 +30,7 @@ public:
     unsigned size = 0;
     bool raid = false;
     bool isRaidGroup() const { return raid; }
+    unsigned GetMembersCount() const { return size; }
     void Add(Player* player)
     {
         if (size)
@@ -50,6 +51,7 @@ struct DungeonBossInfo
 struct DcRunState
 {
     bool enabled = true, paused = false;
+    DcNoKillDecision::PartialWipeState partialWipe;
     struct
     {
         unsigned stampMs = 0;
@@ -88,7 +90,11 @@ static bool standDown = false, chess = false;
 #define LOG_INFO(...) ((void)0)
 namespace ObjectAccessor
 {
-    Player* FindPlayer(ObjectGuid id) { return players[id]; }
+    Player* FindPlayer(ObjectGuid id)
+    {
+        Player* player = players[id];
+        return player && player->IsInWorld() ? player : nullptr;
+    }
 } // namespace ObjectAccessor
 class DcStatusPublisher
 {
@@ -105,9 +111,20 @@ namespace DcKey
 {
     constexpr auto NextDungeonBoss = "next";
 }
+static unsigned replayRecoveryGraceSecs = 90;
+static std::map<ObjectGuid, unsigned> replayOwnerGrace;
 namespace DcSettings
 {
-    unsigned GetUInt(Player*, char const*) { return 1800; }
+    unsigned GetUInt(ObjectGuid owner, char const* key)
+    {
+        auto const found = replayOwnerGrace.find(owner);
+        return std::string(key) == "PostCombatRezTimeoutSecs" && found != replayOwnerGrace.end()
+            ? found->second : replayRecoveryGraceSecs;
+    }
+    unsigned GetUInt(Player*, char const* key)
+    {
+        return std::string(key) == "PostCombatRezTimeoutSecs" ? replayRecoveryGraceSecs : 1800;
+    }
 } // namespace DcSettings
 namespace DcRunProgress
 {
@@ -138,4 +155,5 @@ namespace DcActionShared
         ai->run.enabled = false;
     }
 } // namespace DcActionShared
-unsigned getMSTime() { return 10000; }
+static unsigned replayNowMs = 0;
+unsigned getMSTime() { return replayNowMs; }
