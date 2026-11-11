@@ -314,6 +314,15 @@ public:
     // is "too big to pull whole" must not keep the tank planted for good.
     static bool RoomClearGaveUp(Player* bot, AiObjectContext* ctx);
 
+    // True when `pack` stands inside the wake radius of the next boss and that
+    // boss is a room-aggro boss still asleep (DcBossWakeVeto::PackOffLimits). The
+    // radius is the room-trash exclusion's own (the row's pullOutRadius, else
+    // DcEngageGeometry::RoomAggroSphereRadius). Unlike IsRoomClearActive this does
+    // NOT lapse when the room clear gives up, which is the point: such a pack is
+    // never a pull target, so the tank stands off and the at-boss gate pulls the
+    // boss (Refs #132). Authored RoomAggroRegistry rows only.
+    static bool PackInSleepingBossWake(Player* bot, AiObjectContext* ctx, Unit const* pack);
+
     // The widened avoid-sphere skirt (yd) of the room-aggro boss currently being
     // pre-cleared, or 0 when no room-clear is active or that boss carries no skirt
     // override (RoomAggroBoss::skirtRadius). The advanced-pull camp raises its boss

@@ -10,6 +10,7 @@
 
 #include "DcDoorIndex.h"
 #include "DungeonClearMath.h"
+#include "DcBossWakeVeto.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearRoomTrashValue.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -821,6 +822,18 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
         return nullptr;
     }
 
+    // Never pull a pack standing inside a sleeping room-aggro boss's wake radius:
+    // it cannot be fought there without waking him, and the room clear's own
+    // protections lapse when it gives up (#132). Null leaves the tank at the
+    // keep-out edge for the at-boss gate, which pulls the boss once the party is
+    // rested, looted and together.
+    if (PackInSleepingBossWake(bot, context, trash))
+    {
+        DC_PULL_DEBUG("[DC:{}] pull target {} vetoed - inside the sleeping boss's wake radius",
+                      bot->GetName(), trash->GetGUID().ToString());
+        return nullptr;
+    }
+
     // Never pull a pack on the far side of a closed door: doors are navmesh-
     // passable (the mesh is baked without them), so the tank would otherwise run
     // through and drag the pack back through the doorway. ClosedDoorBetween is a
@@ -905,6 +918,10 @@ bool DcTargeting::IsStickyPullTargetValid(Player* bot, AiObjectContext* ctx, Uni
     // scan returned, so a boss should never be sticky — but the invariant
     // (a boss is NEVER a pull target) is cheap to keep airtight locally.
     if (IsDungeonBossEntry(ctx, u->GetEntry()) || IsBossSummon(u))
+        return false;
+
+    // Same wake-radius veto as the fresh scan (#132): a latch must not outlive it.
+    if (PackInSleepingBossWake(bot, ctx, u))
         return false;
 
     // A pack a prior pull gave up on is handed to the normal walk-in engage;
@@ -1364,6 +1381,27 @@ bool DcTargeting::RoomClearGaveUp(Player* bot, AiObjectContext* ctx)
     auto* const trash = dynamic_cast<DungeonClearRoomTrashValue*>(
         ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining));
     return trash && trash->GaveUp();
+}
+bool DcTargeting::PackInSleepingBossWake(Player* bot, AiObjectContext* ctx, Unit const* pack)
+{
+    if (!bot || !ctx || !pack)
+        return false;
+    std::optional<DungeonBossInfo> const next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Boss)
+        return false;
+    // Cheap registry gate first: every pull in every dungeon asks this.
+    RoomAggroBoss const* const room = RoomAggroRegistry::Find(bot->GetMapId(), next->entry);
+    if (!room)
+        return false;
+    Creature* const boss = GetLiveBoss(bot, ctx, next->entry);
+    if (!boss || !boss->IsAlive())
+        return false;
+    float const wakeRadius = room->pullOutRadius > 0.0f
+        ? room->pullOutRadius
+        : DcEngageGeometry::RoomAggroSphereRadius(bot, boss);
+    return DcBossWakeVeto::PackOffLimits(true, boss->IsInCombat(),
+                                         boss->GetExactDist2d(pack), wakeRadius);
 }
 float DcTargeting::ActiveRoomSkirt(Player* bot, AiObjectContext* ctx)
 {
