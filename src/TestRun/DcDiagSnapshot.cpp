@@ -679,8 +679,7 @@ namespace DcDiag
                 done = true;
                 b.doneVia = "anchor";
             }
-            else if (info.kind == DungeonAnchorKind::Boss && info.encounterIndex < 32 &&
-                     (snap.completedEncounterMask & (1u << info.encounterIndex)))
+            else if (AnchorDoneByEncounterMask(info, snap.completedEncounterMask))
             {
                 done = true;
                 b.doneVia = "mask";

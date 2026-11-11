@@ -526,6 +526,51 @@ TEST(BossRosterRegistryTest, BlackrockDepthsLyceumObjectivesAreDoneWhenTheInstan
     EXPECT_EQ(seen, 2) << "both Lyceum objectives";
 }
 
+// Issue 122: the other Blackrock Depths objectives need a done signal that
+// survives a `dc on` too. Ring of Law and the Tomb read done off their instance
+// state (DONE only); the four that gate the boss at their slot (Hurley's kegs,
+// Ribbly, Rocknot's ale run, the Shadowforge Lock) read done once that boss's kill
+// bit is set, and an objective that did not opt in never reads done off the mask.
+TEST(BossRosterRegistryTest, BlackrockDepthsObjectivesReadDoneAfterAReEnable)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(9033, 9, "General Angerforge", 230),
+        Boss(9537, 11, "Hurley Blackbreath", 230),
+        Boss(9543, 12, "Ribbly Screwspigot", 230),
+        Boss(9502, 13, "Phalanx", 230),
+        Boss(9035, 16, "Anger'rel", 230),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
+
+    int viaData = 0, viaBit = 0;
+    for (DungeonBossInfo const& b : out)
+    {
+        if (b.kind != DungeonAnchorKind::Objective)
+            continue;
+        if (b.eventId == 1u || b.eventId == DcBlackrockDepths::EVENT_TOMB_OF_SEVEN)
+        {
+            ++viaData;
+            EXPECT_GE(b.doneInstanceDataId, 0) << b.name;
+            EXPECT_EQ(AnchorDoneByInstanceValues(b, 0, 3), DcAnchorDoneVia::InstanceData) << b.name;
+            for (uint32 v : { 0u, 1u, 2u })
+                EXPECT_EQ(AnchorDoneByInstanceValues(b, 0, v), DcAnchorDoneVia::None) << b.name << " " << v;
+            EXPECT_FALSE(AnchorDoneByEncounterMask(b, ~0u)) << b.name << " is not a boss-bit objective";
+        }
+        else if (b.eventId == 2u || b.eventId == DcBlackrockDepths::EVENT_HURLEY_KEGS ||
+                 b.eventId == DcBlackrockDepths::EVENT_RIBBLY || b.eventId == DcBlackrockDepths::EVENT_ROCKNOT)
+        {
+            ++viaBit;
+            EXPECT_TRUE(b.doneWithBossBit) << b.name;
+            ASSERT_LT(b.encounterIndex, 32u) << b.name;
+            EXPECT_FALSE(AnchorDoneByEncounterMask(b, 0u)) << b.name;
+            EXPECT_FALSE(AnchorDoneByEncounterMask(b, ~(1u << b.encounterIndex))) << b.name;
+            EXPECT_TRUE(AnchorDoneByEncounterMask(b, 1u << b.encounterIndex)) << b.name;
+        }
+    }
+    EXPECT_EQ(viaData, 2) << "Ring of Law and the Tomb";
+    EXPECT_EQ(viaBit, 4) << "kegs, Ribbly, Rocknot, the Lock";
+}
+
 // Deadmines: the Defias Cannon objective shares Mr. Smite's bit (3); the
 // objective-before-boss tie-break must order it after Gilnid (bit 2) and before
 // Mr. Smite, so the tank opens the Iron Clad Door before heading to the ship.
