@@ -678,6 +678,9 @@ DungeonClear.ClearRoomBeforeBoss = 1
 #        resting, looting or regrouping between pulls does not count. Long
 #        enough for a careful group to kill a pack, rest, and pull the next
 #        one before the boss: a short value pulls the boss with the room still up.
+#        The timeout runs twice: the first lets the planner pull packs it held
+#        as too big and keeps counting the room; only a second full timeout with
+#        no drop in the count gives up for good and pulls the boss.
 #            0 = never give up (not recommended — can livelock)
 #
 #        Default: 120

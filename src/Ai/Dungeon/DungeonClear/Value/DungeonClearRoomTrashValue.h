@@ -35,9 +35,11 @@ public:
     {
     }
 
-    // True once the no-progress valve has given up on this room (latched until the
-    // boss changes): the boss is pulled with whatever is left standing.
-    bool GaveUp() const { return gaveUp; }
+    // True once the no-progress valve has timed out on this room (latched until the
+    // boss changes): the planner may pull oversize packs. The room stays counted
+    // until a second timeout (StepRoomClearStages), then the boss is pulled with
+    // whatever is left standing.
+    bool GaveUp() const { return stages.gaveUp; }
 
 protected:
     GuidVector Calculate() override;
@@ -46,8 +48,7 @@ private:
     // No-progress give-up bookkeeping (see Calculate). bossEntry detects a boss
     // change so the latch self-resets across bosses/runs without external wiring.
     uint32 trackedBoss = 0;
-    DungeonClearMath::RoomClearClock clock;
-    bool   gaveUp = false;
+    DungeonClearMath::RoomClearStages stages;
     bool   noteSent = false;
     // Last kept-count we emitted the exclusion-breakdown diagnostic for; the log
     // fires only on a change. SIZE_MAX so the first computation always logs.
