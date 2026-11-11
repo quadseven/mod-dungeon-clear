@@ -82,6 +82,20 @@ TEST_F(DcRegisteredWatchdogReplay, ReleasedDeadOwnerReceivesRecoveryGraceBeforeI
     EXPECT_TRUE(otherAI.run.enabled);
     EXPECT_NE(stopReason.find("recovery grace 90s"), std::string::npos);
 }
+TEST_F(DcRegisteredWatchdogReplay, FourDeathsWithOneDungeonSurvivorEndWithinRecoveryBound)
+{
+    // The registered tank is dead outside the instance; only the rogue remains
+    // alive inside. The first sweep observes the partial wipe, then the same
+    // production watchdog must end this unrecoverable run within its 90s grace.
+    Sweep(5000);
+    EXPECT_EQ(stopped, nullptr);
+    Sweep(85000);
+    EXPECT_EQ(stopped, nullptr);
+    Sweep(5000);
+    EXPECT_EQ(stopped, &ownerAI);
+    EXPECT_LE(replayNowMs, 95000u);
+    EXPECT_FALSE(ownerAI.run.enabled);
+}
 TEST_F(DcRegisteredWatchdogReplay, FourLivingInsideDoNotLookLikeAWipeOnTheOwnersOutsideMap)
 {
     for (auto& ghost : ghosts)
