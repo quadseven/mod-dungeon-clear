@@ -6,11 +6,15 @@
 #include "DcFirstContact.h"
 
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcAtBossGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossContactSnapshot.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 #include "CombatManager.h"
@@ -114,6 +118,49 @@ void DcFirstContact::OnEnterCombat(Player* bot, Unit* enemy)
                  refs, alreadyFighting,
                  static_cast<uint32>(pull.phase), pull.HasCamp() ? "set" : "none",
                  pull.scriptedStage);
+
+    // The boss itself touching a member: record the state the first Emperor pull
+    // (run 1823401) could not be explained from - the tank's target, the room
+    // clear and the last gate verdict, and every member's bars (Refs #130).
+    if (isObjective)
+    {
+        DcBossContactSnapshot::Inputs snap;
+        snap.contactName = bot->GetName();
+        snap.bossName = enemy->GetName();
+        snap.contactDistToBoss = bot->GetExactDist(enemy);
+        if (Unit* const victim = bot->GetVictim())
+        {
+            snap.targetName = victim->GetName();
+            snap.targetDist = bot->GetExactDist(victim);
+        }
+        snap.roomTrashLeft = static_cast<uint32>(
+            ctx->GetValue<GuidVector>(DcKey::RoomTrashRemaining)->Get().size());
+        snap.roomGaveUp = DcTargeting::RoomClearGaveUp(bot, ctx);
+        uint8 const gate =
+            ctx->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().atBossGateLogged &
+            0x7F;
+        if (gate != 0)
+            snap.lastGate = DcAtBossGate::Name(static_cast<DcAtBossGate::Gate>(gate));
+        snap.pullPhase = static_cast<uint32>(pull.phase);
+        if (Group* group = bot->GetGroup())
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member->GetMapId() != bot->GetMapId())
+                    continue;
+                DcBossContactSnapshot::Member m;
+                m.name = member->GetName();
+                m.alive = member->IsAlive();
+                m.hpPct = static_cast<uint32>(member->GetHealthPct());
+                m.manaPct = member->GetMaxPower(POWER_MANA) > 0
+                                ? static_cast<int>(member->GetPowerPct(POWER_MANA))
+                                : -1;
+                m.inCombat = member->IsInCombat();
+                m.distToBoss = member->GetExactDist(enemy);
+                snap.members.push_back(m);
+            }
+        DC_PULL_INFO("{}", DcBossContactSnapshot::Format(snap));
+    }
 
     // An OBJECTIVE arriving with the party already fighting is the shape that has
     // no other record anywhere, so it gets its own greppable line at WARN. This is
