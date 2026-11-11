@@ -1418,6 +1418,22 @@ void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
                           /*arriveRadius*/ 8.0f, /*gateEntry*/ 0, /*hook*/ 0,
                           DcBlackrockDepths::EVENT_LYCEUM_NORTH),
         };
+        // The Lyceum objectives are finished while the instance's own Lyceum
+        // state reads DONE (both braziers lit), read live off the script. A
+        // `dc on` wipes the run's cleared-anchor latch, so without this signal a
+        // party re-enabled after lighting both braziers had the objectives back
+        // as candidates: the stale commit on Magmus hid them until he died, then
+        // the same-index sibling rule sent the party back to the south brazier
+        // instead of to the Emperor (run 1805838). Only DONE counts: IN_PROGRESS
+        // is one brazier lit, and the other still needs its event.
+        for (DungeonBossInfo& o : p.add)
+            if (o.kind == DungeonAnchorKind::Objective &&
+                (o.entry == OBJ(DcBlackrockDepths::OBJ_LYCEUM_SOUTH) ||
+                 o.entry == OBJ(DcBlackrockDepths::OBJ_LYCEUM_NORTH)))
+            {
+                o.doneInstanceDataId = static_cast<int32>(DcBlackrockDepths::TYPE_LYCEUM);
+                o.doneInstanceDataValue = static_cast<uint32>(STATE_DONE);
+            }
         // --- Blackrock Depths — Stilgiss and Darkvire before Incendius ---
         // DBC order runs Loregrain -> Incendius (bit 5) -> Stilgiss (6) ->
         // Darkvire (7); the clear path takes Stilgiss and Darkvire first, then
