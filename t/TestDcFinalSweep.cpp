@@ -54,7 +54,7 @@ namespace
         return m;
     }
 
-    DcFinalSweep::Decision Run(std::vector<DungeonBossInfo> const& bosses, uint32 mask,
+    DcFinalSweep::Decision RunSweep(std::vector<DungeonBossInfo> const& bosses, uint32 mask,
                                DcFinalSweep::State& st, uint32 now = 1000,
                                std::unordered_set<uint32> corpses = {})
     {
@@ -69,7 +69,7 @@ TEST(DcFinalSweepTest, IncidentMaskLackingBit12SweepsPhalanxAndItsAleRun)
     // 520191 in the incident = every bit but 12; here the BRD tail with the Emperor down.
     DcFinalSweep::State st;
     uint32 const mask = Mask({11, 13, 14, 18});
-    auto d = Run(Roster(), mask, st);
+    auto d = RunSweep(Roster(), mask, st);
     ASSERT_EQ(d.outcome, DcFinalSweep::Outcome::Sweep);
     EXPECT_EQ(d.target, PHALANX);
     EXPECT_EQ(d.missingMask, 1u << 12);
@@ -83,7 +83,7 @@ TEST(DcFinalSweepTest, IncidentMaskLackingBit12SweepsPhalanxAndItsAleRun)
 TEST(DcFinalSweepTest, AllBitsSetIsReallyCleared)
 {
     DcFinalSweep::State st;
-    auto d = Run(Roster(), Mask({11, 12, 13, 14, 18}), st);
+    auto d = RunSweep(Roster(), Mask({11, 12, 13, 14, 18}), st);
     EXPECT_EQ(d.outcome, DcFinalSweep::Outcome::NothingMissing);
     EXPECT_EQ(d.missingMask, 0u);
     EXPECT_TRUE(st.attempts.empty());
@@ -95,7 +95,7 @@ TEST(DcFinalSweepTest, LowestClearOrderMissingBossIsSweptFirst)
     // Ribbly (order 12) and Phalanx (order 13) both missing: the clear order wins,
     // not the raw bit order.
     DcFinalSweep::State st;
-    auto d = Run(Roster(), Mask({11, 14, 18}), st);
+    auto d = RunSweep(Roster(), Mask({11, 14, 18}), st);
     ASSERT_EQ(d.outcome, DcFinalSweep::Outcome::Sweep);
     EXPECT_EQ(d.target, RIBBLY);
     EXPECT_EQ(d.missingMask, Mask({12, 13}));
@@ -109,7 +109,7 @@ TEST(DcFinalSweepTest, GateObjectiveKeyedToAnotherBitIsLeftAlone)
     DcFinalSweep::State st;
     auto roster = Roster();
     // Mask lacks only Plugger (14): nothing gates it, only the boss reopens.
-    auto d = Run(roster, Mask({11, 12, 13, 18}), st);
+    auto d = RunSweep(roster, Mask({11, 12, 13, 18}), st);
     ASSERT_EQ(d.outcome, DcFinalSweep::Outcome::Sweep);
     EXPECT_EQ(d.target, PLUGGER);
     EXPECT_EQ(d.reopen, std::vector<uint32>{PLUGGER});
@@ -121,12 +121,12 @@ TEST(DcFinalSweepTest, PerBossAttemptBudgetIsBounded)
     uint32 const mask = Mask({11, 13, 14, 18});
     for (uint32 i = 1; i <= DcFinalSweep::kMaxAttemptsPerBoss; ++i)
     {
-        auto d = Run(Roster(), mask, st, 1000 + i);
+        auto d = RunSweep(Roster(), mask, st, 1000 + i);
         ASSERT_EQ(d.outcome, DcFinalSweep::Outcome::Sweep);
         EXPECT_EQ(d.attempt, i);
     }
     // Skipped again after every sweep: the skip now stands.
-    auto spent = Run(Roster(), mask, st, 5000);
+    auto spent = RunSweep(Roster(), mask, st, 5000);
     EXPECT_EQ(spent.outcome, DcFinalSweep::Outcome::BudgetSpent);
     EXPECT_EQ(spent.missingMask, 1u << 12);
     EXPECT_EQ(st.attempts[PHALANX], DcFinalSweep::kMaxAttemptsPerBoss);
@@ -137,7 +137,7 @@ TEST(DcFinalSweepTest, SpentBossDoesNotBlockAnotherMissingBoss)
     DcFinalSweep::State st;
     st.attempts[RIBBLY] = DcFinalSweep::kMaxAttemptsPerBoss;
     st.startedMs = 1000;
-    auto d = Run(Roster(), Mask({11, 14, 18}), st, 2000);
+    auto d = RunSweep(Roster(), Mask({11, 14, 18}), st, 2000);
     ASSERT_EQ(d.outcome, DcFinalSweep::Outcome::Sweep);
     EXPECT_EQ(d.target, PHALANX);
 }
@@ -146,13 +146,13 @@ TEST(DcFinalSweepTest, TotalTimeCapStopsTheSweep)
 {
     DcFinalSweep::State st;
     uint32 const mask = Mask({11, 13, 14, 18});
-    ASSERT_EQ(Run(Roster(), mask, st, 1000).outcome, DcFinalSweep::Outcome::Sweep);
+    ASSERT_EQ(RunSweep(Roster(), mask, st, 1000).outcome, DcFinalSweep::Outcome::Sweep);
     // Just inside the cap: still sweeps (second attempt).
-    EXPECT_EQ(Run(Roster(), mask, st, 1000 + DcFinalSweep::kTotalCapMs - 1).outcome,
+    EXPECT_EQ(RunSweep(Roster(), mask, st, 1000 + DcFinalSweep::kTotalCapMs - 1).outcome,
               DcFinalSweep::Outcome::Sweep);
     DcFinalSweep::State st2;
-    ASSERT_EQ(Run(Roster(), mask, st2, 1000).outcome, DcFinalSweep::Outcome::Sweep);
-    auto capped = Run(Roster(), mask, st2, 1000 + DcFinalSweep::kTotalCapMs);
+    ASSERT_EQ(RunSweep(Roster(), mask, st2, 1000).outcome, DcFinalSweep::Outcome::Sweep);
+    auto capped = RunSweep(Roster(), mask, st2, 1000 + DcFinalSweep::kTotalCapMs);
     EXPECT_EQ(capped.outcome, DcFinalSweep::Outcome::TimeCapped);
     EXPECT_EQ(capped.missingMask, 1u << 12);
 }
@@ -162,15 +162,15 @@ TEST(DcFinalSweepTest, TimeCapSurvivesMillisecondClockWrap)
     DcFinalSweep::State st;
     uint32 const mask = Mask({11, 13, 14, 18});
     uint32 const start = 0xFFFFFFFFu - 1000u;
-    ASSERT_EQ(Run(Roster(), mask, st, start).outcome, DcFinalSweep::Outcome::Sweep);
-    EXPECT_EQ(Run(Roster(), mask, st, start + 5000u).outcome, DcFinalSweep::Outcome::Sweep);
+    ASSERT_EQ(RunSweep(Roster(), mask, st, start).outcome, DcFinalSweep::Outcome::Sweep);
+    EXPECT_EQ(RunSweep(Roster(), mask, st, start + 5000u).outcome, DcFinalSweep::Outcome::Sweep);
 }
 
 TEST(DcFinalSweepTest, CorpseIsNeverASweepTarget)
 {
     // Dead with the bit not flipped yet: transient, it dies into its bit on its own.
     DcFinalSweep::State st;
-    auto d = Run(Roster(), Mask({11, 13, 14, 18}), st, 1000, {PHALANX});
+    auto d = RunSweep(Roster(), Mask({11, 13, 14, 18}), st, 1000, {PHALANX});
     EXPECT_EQ(d.outcome, DcFinalSweep::Outcome::NothingMissing);
     EXPECT_EQ(d.missingMask, 0u);  // a corpse lends no bit to the log
     EXPECT_TRUE(st.attempts.empty());
@@ -183,7 +183,7 @@ TEST(DcFinalSweepTest, SkipByDesignBossIsNeverMissing)
     for (auto& b : roster)
         if (b.entry == PHALANX)
             b.skipByDesign = true;
-    EXPECT_EQ(Run(roster, Mask({11, 13, 14, 18}), st).outcome,
+    EXPECT_EQ(RunSweep(roster, Mask({11, 13, 14, 18}), st).outcome,
               DcFinalSweep::Outcome::NothingMissing);
 }
 
@@ -201,7 +201,7 @@ TEST(DcFinalSweepTest, InstanceDoneBossWithoutABitIsNotMissingAndIsKeptOutOfTheM
         roster, full, st, 1000, [](DungeonBossInfo const& b) { return b.entry == 777; },
         [](uint32) { return false; });
     EXPECT_EQ(done.outcome, DcFinalSweep::Outcome::NothingMissing);
-    auto open = Run(roster, full, st);
+    auto open = RunSweep(roster, full, st);
     ASSERT_EQ(open.outcome, DcFinalSweep::Outcome::Sweep);
     EXPECT_EQ(open.target, 777u);
     EXPECT_EQ(open.missingMask, 0u);
@@ -211,5 +211,5 @@ TEST(DcFinalSweepTest, ObjectivesAloneAreNeverTheMissingThing)
 {
     DcFinalSweep::State st;
     std::vector<DungeonBossInfo> roster{Boss(HURLEY, 11), Gate(ALE_RUN, 12, 12)};
-    EXPECT_EQ(Run(roster, Mask({11}), st).outcome, DcFinalSweep::Outcome::NothingMissing);
+    EXPECT_EQ(RunSweep(roster, Mask({11}), st).outcome, DcFinalSweep::Outcome::NothingMissing);
 }
