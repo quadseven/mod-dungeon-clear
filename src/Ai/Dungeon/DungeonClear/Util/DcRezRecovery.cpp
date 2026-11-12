@@ -85,7 +85,7 @@ namespace
         }
         return DcRezDecision::CanRezFromSpellbook(
             classCanRez, DcRezRecovery::KnownResurrectSpell(p) != nullptr,
-            HoldsResurrectOffer(p));
+            DcRezRecovery::HoldsResurrectOffer(p));
     }
 
     bool IsResurrectSpell(SpellInfo const* info)
