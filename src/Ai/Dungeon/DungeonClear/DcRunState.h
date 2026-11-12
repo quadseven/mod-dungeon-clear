@@ -214,6 +214,13 @@ struct DcRunState
     // scaled rest gate gives damage dealers no mana floor. 0 = no waiver.
     uint32 damageManaWaivedUntilMs = 0;
 
+    // === straggler waiver (leader-owned, mod-dungeon-clear#144) =====================
+    // Set by the between-pulls wait when its ceiling is reached on living members
+    // lagging within sight alone (DcPartyWaitDecision::Reason::LaggardOnly): until
+    // this getMSTime() the spread gate measures members against the tank within
+    // kRegroupMaxYards instead of the stock spread. 0 = no waiver.
+    uint32 stragglerWaivedUntilMs = 0;
+
     // === post-combat rez recovery (leader-owned, written cross-bot) ===============
     // Maintained by DcRezRecovery::Evaluate — called from the (alive) leader's
     // relaxed party-died trigger and from every bot's rez-party trigger, so the

@@ -997,6 +997,17 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
             DcPartyState::IsPartyReady(bot, waived, gate.maxSpread, gate.anchor, gate.maxTankGap);
     }
 
+    // Would the party be ready if the lagging members in sight were measured
+    // against the tank within kRegroupMaxYards instead of the stock spread? Asked
+    // only at the ceiling, and only when every stray is lagging rather than stuck
+    // (mod-dungeon-clear#144).
+    if (waitIn.timeoutMs && waitIn.waitedMs >= waitIn.timeoutMs && waitIn.regroupableStrays > 0 &&
+        waitIn.regroupableStrays == waitIn.strandedOutOfRange && !DcRezRecovery::IsPending(bot))
+    {
+        waitIn.onlyStragglersShort = DcPartyState::IsPartyReady(
+            bot, rest, DcPartyWaitDecision::kRegroupMaxYards, nullptr, DcPartyWaitDecision::kRegroupMaxYards);
+    }
+
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
 
     // REGROUP before any teleport: tell a lagging member (a healer 30yd back, live
@@ -1037,12 +1048,29 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     // clock starts over, so a later wait still gives them time to regenerate.
     if (verdict.outcome == DcPartyWaitDecision::Outcome::GoOn)
     {
-        DcPartyState::WaiveDamageMana(DcRun::Of(context), nowMs);
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] between-pulls wait going on after {} ticks / {}ms without "
-                 "the mana of members who cannot be held to it ({}); their floor is relaxed for {}s",
-                 bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
-                 DC_DAMAGE_MANA_WAIVER_MS / 1000);
+        if (verdict.reason == DcPartyWaitDecision::Reason::LaggardOnly)
+        {
+            // A living member in sight that the regroup did not bring in must not
+            // end the run (mod-dungeon-clear#144): the spread gate stops holding the
+            // tank for it for a while, follow-tank keeps trying as the tank moves,
+            // and a later wait gets its own regroup and its own ceiling.
+            DcPartyState::WaiveStragglers(DcRun::Of(context), nowMs);
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] between-pulls wait going on after {} ticks / {}ms without "
+                     "living members lagging in sight ({}); the spread gate measures them "
+                     "within {:.0f}yd of the tank for {}s",
+                     bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
+                     DcPartyWaitDecision::kRegroupMaxYards, DC_STRAGGLER_WAIVER_MS / 1000);
+        }
+        else
+        {
+            DcPartyState::WaiveDamageMana(DcRun::Of(context), nowMs);
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] between-pulls wait going on after {} ticks / {}ms without "
+                     "the mana of members who cannot be held to it ({}); their floor is relaxed for {}s",
+                     bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
+                     DC_DAMAGE_MANA_WAIVER_MS / 1000);
+        }
         appr.partyNotReadyTicks = 0;
         appr.partyNotReadySinceMs = 0;
         appr.lastYieldLogMs = 0;

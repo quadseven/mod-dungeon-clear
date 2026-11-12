@@ -517,6 +517,10 @@ constexpr uint32 DC_PARTY_YIELD_LOG_INTERVAL_MS = 30000;
 // enough for the next pack or two; when it lapses the ordinary floors return, so
 // a member who is still low gets a fresh wait to regenerate in.
 constexpr uint32 DC_DAMAGE_MANA_WAIVER_MS = 120000;
+// How long a lagging member in sight stops holding the spread gate once the
+// between-pulls wait goes on without it (mod-dungeon-clear#144). When it lapses the
+// stock spread returns and a later wait gets its own regroup and its own ceiling.
+constexpr uint32 DC_STRAGGLER_WAIVER_MS = 120000;
 
 // The at-boss valve (DcAtBossGate): how long the tank may hold at a live boss,
 // party ready and no loot pending, on gates the valve may override, before the

@@ -56,7 +56,7 @@ namespace DcPartyWaitDecision
         Regroup, // order the lagging members to follow the tank again and keep waiting (once per wait)
         Rescue,  // teleport the stranded out-of-range members to the tank and keep waiting (once per wait)
         EndRun,  // stop the clear and report `reason`
-        GoOn,    // stop waiting and pull: only damage dealers' mana was holding the party
+        GoOn,    // stop waiting and pull: only damage dealers' mana, or a lagging member in sight, was holding the party
     };
 
     enum class Reason
@@ -66,6 +66,7 @@ namespace DcPartyWaitDecision
         TooFewMembers,    // not enough living members left here to clear anything
         Timeout,          // the wait never became satisfiable
         DamageManaOnly,   // GoOn: the ceiling was reached on damage dealers' mana alone
+        LaggardOnly,       // GoOn: the ceiling was reached on living members lagging within sight alone
     };
 
     // The party has to keep a healer AND at least this many living members in the
@@ -127,6 +128,17 @@ namespace DcPartyWaitDecision
         // mana only makes a fight slower, so a wait held by nothing else is not a
         // reason to end the run (issue 102).
         bool onlyDamageManaShort = false;
+
+        // The party would be ready this tick if a member lagging within
+        // kRegroupMaxYards of the tank were not held to the spread gate: every
+        // out-of-range member is alive, on this map and inside sight range, and
+        // nothing else (health, a healer's or tank's mana, a resurrection) holds
+        // the wait. The regroup order is once per wait and a member that did not
+        // come in for it is not coming in for a longer wait either; ending the
+        // run left the whole living party inside with no controller (live,
+        // wow-dev 2026-11-12, two family runs in a row, a member 45 to 49 yards
+        // back, mod-dungeon-clear#144).
+        bool onlyStragglersShort = false;
     };
 
     // A lagging member farther than this from the tank is stuck rather than slow:
@@ -272,6 +284,11 @@ namespace DcPartyWaitDecision
         {
             if (in.onlyDamageManaShort)
                 return verdict(Outcome::GoOn, Reason::DamageManaOnly);
+            // A living member in sight that the regroup did not bring in: the tank
+            // goes on and the gate stops measuring that member for a while (the
+            // caller's straggler waiver); follow-tank keeps trying as the tank moves.
+            if (in.onlyStragglersShort)
+                return verdict(Outcome::GoOn, Reason::LaggardOnly);
             return verdict(Outcome::EndRun, Reason::Timeout);
         }
 
