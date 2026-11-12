@@ -19,6 +19,7 @@
 #include "Timer.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/DcChessConductor.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFinalSweep.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
@@ -74,6 +75,10 @@ struct DcRunState
 {
     // === run session — cleared by Reset() (dc on / dc off / death / all-cleared) ===
     bool        enabled = false;   // the run's master switch (leader-owned)
+
+    // Final-sweep budget (Util/DcFinalSweep.h): the sweeps spent per boss and the
+    // clock of the run's first one. Cleared with the run by Reset().
+    DcFinalSweep::State finalSweep;
     bool        paused  = false;   // soft-stop layered on `enabled`; see OnResume
     uint32      runInstanceId   = 0;    // instance that accepted `dc on`; 0 = none
     bool        corpseRunHold   = false; // released owner ghost; resume there after resurrection
