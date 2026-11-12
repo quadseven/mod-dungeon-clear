@@ -73,6 +73,7 @@ if (BUILD_TESTING)
         # Define our standalone test target
         add_executable(dungeon_clear_tests
             "${MOD_PATH}/t/TestDoorPolicy.cpp"
+            "${MOD_PATH}/t/test_key_hold.cpp"
             "${MOD_PATH}/t/TestCompletionLoot.cpp"
             "${MOD_PATH}/t/TestDungeonClearMath.cpp"
             "${MOD_PATH}/t/TestHealReposition.cpp"
@@ -231,9 +232,11 @@ if (BUILD_TESTING)
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         )
 
-        # Registered-owner sweep replay: compile the production bodies with SDK
-        # adapters. The check target always runs when dungeon_clear_tests builds,
-        # including incremental builds; no gtest name filter can skip it.
+        # Registered-owner sweep replay, including
+        # FourDeathsWithOneDungeonSurvivorEndWithinRecoveryBound: compile the
+        # production bodies with SDK adapters. The check target always runs when
+        # dungeon_clear_tests builds, including incremental builds; no gtest name
+        # filter can skip the bounded partial-wipe exit assertion.
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         set(DC_WATCHDOG_REPLAY "${CMAKE_CURRENT_BINARY_DIR}/dc_watchdog_replay.cpp")
         add_custom_command(

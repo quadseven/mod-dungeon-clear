@@ -167,6 +167,15 @@ public:
     static bool DamageManaWaived(DcRunState const& run, std::uint32_t nowMs);
     static void WaiveDamageMana(DcRunState& run, std::uint32_t nowMs);
 
+    // The straggler waiver (mod-dungeon-clear#144). When the between-pulls wait
+    // reaches its ceiling held only by living members lagging within sight of the
+    // tank, the run goes on instead of ending, and for DC_STRAGGLER_WAIVER_MS
+    // GetSpreadGate measures members against the tank within kRegroupMaxYards, so
+    // the lagging member neither holds the next pulls nor is left unbounded: a
+    // member past that range holds the gate as before.
+    static bool StragglerWaived(DcRunState const& run, std::uint32_t nowMs);
+    static void WaiveStragglers(DcRunState& run, std::uint32_t nowMs);
+
     // IsPartyReady / DescribePartyNotReady against a RestGate: the same walk,
     // with per-member floors when the gate is `scaled`. Every caller that got a
     // RestGate from GetRestGate should ask through these so the gate, the

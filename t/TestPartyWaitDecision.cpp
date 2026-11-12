@@ -467,6 +467,67 @@ TEST(DcPartyWaitTest, RegroupMemoryAllowsOneRegroupPerWait)
     EXPECT_FALSE(DcPartyWaitDecision::RescueFiredThisWait(mem, 9025u, 1000u));
 }
 
+// --- a lagging member never ends a living party's run (mod-dungeon-clear#144) --
+
+TEST(DcPartyWaitTest, AtTheCeilingALivingPartyWithOneLaggardGoesOnInsteadOfEnding)
+{
+    // Live, wow-dev 2026-11-12: two family runs in a row ended at the 180s ceiling
+    // with all five alive, one member 45 to 49 yards behind (a priest, then a
+    // shaman) after the one regroup order had not closed the gap. Ending the run
+    // left the party inside with no controller.
+    Inputs in = LaggingHealer();
+    in.waitedMs = 180000;
+    in.regroupAlreadyFired = true;
+    in.onlyStragglersShort = true;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::GoOn);
+    EXPECT_EQ(r.reason, Reason::LaggardOnly);
+}
+
+TEST(DcPartyWaitTest, BelowTheCeilingALaggardStillWaitsItsWholeClock)
+{
+    Inputs in = LaggingHealer();
+    in.waitedMs = 179999;
+    in.regroupAlreadyFired = true;
+    in.onlyStragglersShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, AMemberThatIsNotJustLaggingStillEndsTheRunAtTheCeiling)
+{
+    // Not set: a member beyond sight range (stuck), or something else (low health,
+    // a healer's mana) also holding the wait. The ceiling ends the run as before.
+    Inputs in = LaggingHealer();
+    in.waitedMs = 180000;
+    in.regroupAlreadyFired = true;
+    in.onlyStragglersShort = false;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, ALostHealerOutranksGoingOnWithALaggard)
+{
+    Inputs in = LaggingHealer();
+    in.waitedMs = 180000;
+    in.onlyStragglersShort = true;
+    in.presentHasHealer = false;
+    LeaveInstance(in, 1);
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, ZeroTimeoutNeverGoesOnForALaggardEither)
+{
+    Inputs in = LaggingHealer();
+    in.timeoutMs = 0;
+    in.waitedMs = 999999;
+    in.regroupAlreadyFired = true;
+    in.onlyStragglersShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
 // --- a wait held only by damage dealers' mana goes on (issue 102) -------------
 
 TEST(DcPartyWaitTest, AtTheCeilingDamageManaAloneGoesOnInsteadOfEnding)

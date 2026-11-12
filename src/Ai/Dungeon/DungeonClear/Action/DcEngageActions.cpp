@@ -141,6 +141,18 @@ namespace
     // against is 50yd+, so room-local is the right cut.
     constexpr float DC_DOOR_USE_RANGE = 25.0f;
 
+    // The hold for a key holder who has not reached the tank's side
+    // (DcDoorPolicy::ObserveKeyHold). A gap this long between two ticks of the
+    // hold means it ended and a later one began. The ceiling is the longest the
+    // party waits for the holder before the door takes the can't-open path (its
+    // own bounded exit, DoorPauseExitSeconds, then re-plans without the door); it
+    // sits well under the run watchdog's 300s. The log line is paced to once per
+    // log interval because the hold itself runs every tick (3271 lines in 9.5
+    // minutes, Blackrock Depths run 1842024).
+    constexpr uint32 DC_KEY_HOLD_REARM_MS = 10000;
+    constexpr uint32 DC_KEY_HOLD_CEILING_MS = 90000;
+    constexpr uint32 DC_KEY_HOLD_LOG_EVERY_MS = 30000;
+
     // Observation-gap re-arm for the Blocked-state watchdog (DcApproachState::
     // doorStall*). A stall older than this with no fresh observation is treated
     // as ended — the door opened or the run moved on — so the next stall on the
@@ -192,11 +204,15 @@ namespace
     //
     // `holdForOpener` (when given) comes back true for a keyed door nobody at the
     // bot's side can open yet but a party member who carries the key can: the
-    // caller holds for that member and never pauses the run for it.
-    Player* DoorOpenerFor(Player* bot, GameObject* go, bool* holdForOpener = nullptr)
+    // caller holds for that member and never pauses the run for it. `keyHolders`
+    // (when given) then lists those members, so the hold can call them in.
+    Player* DoorOpenerFor(Player* bot, GameObject* go, bool* holdForOpener = nullptr,
+                          std::vector<Player*>* keyHolders = nullptr)
     {
         if (holdForOpener)
             *holdForOpener = false;
+        if (keyHolders)
+            keyHolders->clear();
         if (!bot || !go)
             return nullptr;
         GameObjectTemplate const* info = go->GetGOInfo();
@@ -232,7 +248,7 @@ namespace
             return bot;
 
         return DcDoorOpener::PartyOpener(bot, go, slots, go->HasGameObjectFlag(GO_FLAG_LOCKED),
-                                         DC_DOOR_USE_RANGE, holdForOpener);
+                                         DC_DOOR_USE_RANGE, holdForOpener, keyHolders);
     }
 
     // Returns the stored sticky engage-trash target if it's still a valid pull
@@ -3076,11 +3092,14 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // the key (DoorOpenerFor). None means the door stays shut for this
         // party, whatever its lock asks.
         bool holdForOpener = false;
+        std::vector<Player*> keyHolders;
         Player* const opener = DC_ATTEMPT_DOOR_OPEN && door &&
                                        !DcEventDoorRegistry::IsScriptOnly(door->GetEntry())
-                                   ? DoorOpenerFor(bot, door, &holdForOpener)
+                                   ? DoorOpenerFor(bot, door, &holdForOpener, &keyHolders)
                                    : nullptr;
         bool const canOpen = opener != nullptr;
+        DcApproachState& holdAppr =
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
 
         // A party member who carries the key (or picks the lock) exists but is
         // not at the bot's side yet: the door is NOT one this party cannot open,
@@ -3088,14 +3107,54 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // paused at the Upper City's Shadowforge Gate with Oz, who held the key,
         // 50yd behind, and nothing ever resumed it. Hold; the next tick asks
         // again, and the opener clicks once it has caught up.
+        //
+        // The hold is BOUNDED (mod-dungeon-clear#140; 2026-11-11, run 1842024: Oz
+        // stood beside a corpse it could not loot and the hold ran 9.5 minutes
+        // until the run watchdog). Every PartyWaitRegroupSecs the holder's follow
+        // order is re-issued; at the ceiling the hold gives up and the door takes
+        // the can't-open path below, whose bounded exit re-plans without it.
         if (!canOpen && holdForOpener && door)
         {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] door-blocked: {} '{}' needs a key holder who is not at my "
-                     "side yet -> holding for it, not pausing",
-                     bot->GetName(), door->GetGUID().ToString(), door->GetName());
-            StallDungeonClearForDoor(botAI, openingReason);
-            return true;
+            DcDoorPolicy::KeyHoldVerdict const hold = DcDoorPolicy::ObserveKeyHold(
+                holdAppr.keyHold, door->GetGUID().GetRawValue(), getMSTime(),
+                DC_KEY_HOLD_REARM_MS, DcSettings::GetUInt(bot, "PartyWaitRegroupSecs") * 1000,
+                DC_KEY_HOLD_CEILING_MS, DC_KEY_HOLD_LOG_EVERY_MS);
+
+            if (hold.step == DcDoorPolicy::KeyHoldStep::GiveUp)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] door-blocked: {} '{}' still needs a key holder who is not at "
+                         "my side after {}s -> giving up the hold",
+                         bot->GetName(), door->GetGUID().ToString(), door->GetName(),
+                         hold.heldMs / 1000);
+                DcDoorPolicy::ClearKeyHold(holdAppr.keyHold);
+                // Falls through to the can't-open path.
+            }
+            else
+            {
+                if (hold.step == DcDoorPolicy::KeyHoldStep::Regroup)
+                {
+                    for (Player* holder : keyHolders)
+                        if (DcStrandedRecovery::RegroupMember(holder))
+                            LOG_INFO("playerbots.dungeonclear",
+                                     "[DC:{}] door-blocked: key holder {} is {:.0f}yd from me "
+                                     "after {}s -> follow order re-issued, no teleport",
+                                     bot->GetName(), holder->GetName(), bot->GetDistance(holder),
+                                     hold.heldMs / 1000);
+                }
+                if (hold.log)
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] door-blocked: {} '{}' needs a key holder who is not at my "
+                             "side yet -> holding for it, not pausing ({}s so far)",
+                             bot->GetName(), door->GetGUID().ToString(), door->GetName(),
+                             hold.heldMs / 1000);
+                StallDungeonClearForDoor(botAI, openingReason);
+                return true;
+            }
+        }
+        else if (canOpen)
+        {
+            DcDoorPolicy::ClearKeyHold(holdAppr.keyHold);
         }
         bool timedOut = false;
 

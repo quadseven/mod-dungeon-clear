@@ -65,6 +65,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyWaitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSameInstance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -449,6 +450,18 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
         }
     }
 
+    // STRAGGLER WAIVER (mod-dungeon-clear#144): the between-pulls wait went on
+    // without a living member lagging in sight. Measure against the tank, within
+    // sight range, so that member neither holds the gate nor can be left far behind
+    // unbounded. After the sealed-encounter clump above, which still binds.
+    if (StragglerWaived(DcRun::Of(context), getMSTime()))
+    {
+        gate.maxSpread = std::max(gate.maxSpread, DcPartyWaitDecision::kRegroupMaxYards);
+        gate.anchor = nullptr;
+        gate.maxTankGap = DcPartyWaitDecision::kRegroupMaxYards;
+        return gate;
+    }
+
     // Pull mode between maneuvers (Idle): hold-at-camp still pins the party at
     // the camp, so "caught up" must be measured against the camp, not the tank —
     // otherwise a camp standoff at/over PartyMaxSpread deadlocks the run (see
@@ -513,6 +526,18 @@ float DcPartyState::LeaderEffectiveMaxSpread(Player* bot)
     if (!leaderAI)
         return own;   // a real-player leader runs no DC gate to be inside of
     return GetSpreadGate(leader, leaderAI->GetAiObjectContext()).maxSpread;
+}
+
+bool DcPartyState::StragglerWaived(DcRunState const& run, std::uint32_t nowMs)
+{
+    return run.stragglerWaivedUntilMs != 0 &&
+           static_cast<int32>(run.stragglerWaivedUntilMs - nowMs) > 0;
+}
+
+void DcPartyState::WaiveStragglers(DcRunState& run, std::uint32_t nowMs)
+{
+    uint32 const until = nowMs + DC_STRAGGLER_WAIVER_MS;
+    run.stragglerWaivedUntilMs = until ? until : 1u;
 }
 
 bool DcPartyState::DamageManaWaived(DcRunState const& run, std::uint32_t nowMs)

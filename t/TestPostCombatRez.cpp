@@ -7,6 +7,7 @@
 
 #include "DcRezDecision.h"
 
+using DcRezDecision::CanRezFromSpellbook;
 using DcRezDecision::Decide;
 using DcRezDecision::Inputs;
 using DcRezDecision::MayReleaseSpirit;
@@ -777,4 +778,27 @@ TEST(DcRezDecisionTest, ABlockOverTheLeadersCorpseHoldsPastTheWait)
     EXPECT_EQ(lifted.outcome, Outcome::Hold);
     EXPECT_EQ(lifted.reason, Reason::Recovering);
     EXPECT_EQ(lifted.targetIdx, 0);
+}
+
+// A paladin that never learned Redemption was elected rezzer on class alone and was
+// refused its cast about 30 times ("no spell id for name") while the party held.
+TEST(DcRezDecisionTest, AStockRezClassWithNoResurrectSpellIsNotARezzer)
+{
+    EXPECT_FALSE(CanRezFromSpellbook(/*classCanRez*/ true, /*knowsResurrect*/ false,
+                                     /*holdsOffer*/ false));
+}
+
+TEST(DcRezDecisionTest, AStockRezClassThatKnowsAResurrectIsARezzer)
+{
+    EXPECT_TRUE(CanRezFromSpellbook(true, true, false));
+}
+
+TEST(DcRezDecisionTest, ACasterHoldingItsStandingOfferStaysARezzerAfterTheSpellGoesOnCooldown)
+{
+    EXPECT_TRUE(CanRezFromSpellbook(true, false, true));
+}
+
+TEST(DcRezDecisionTest, AClassThatCannotResurrectIsNeverARezzer)
+{
+    EXPECT_FALSE(CanRezFromSpellbook(false, true, true));
 }

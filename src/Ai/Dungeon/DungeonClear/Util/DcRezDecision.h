@@ -279,6 +279,18 @@ namespace DcRezDecision
                reason == Reason::Wipe;
     }
 
+    // May this member be elected rezzer? A class that can resurrect at all is not
+    // enough: the cast is by spell NAME against the member's own spellbook
+    // (playerbots' "spell id" value), so a paladin that never learned Redemption
+    // is elected, announced, and then refused every tick with "no spell id for
+    // name". The member must also KNOW a resurrect, or hold the standing offer it
+    // cast (a landed rez is accepted on the corpse's behalf a tick later, by which
+    // time a cooldown-gated spell no longer reads as known).
+    inline bool CanRezFromSpellbook(bool classCanRez, bool knowsResurrect, bool holdsOffer)
+    {
+        return classCanRez && (knowsResurrect || holdsOffer);
+    }
+
     inline Result Decide(Inputs const& in, std::vector<Member> const& members)
     {
         Result r;
