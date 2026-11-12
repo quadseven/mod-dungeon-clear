@@ -8,6 +8,8 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 
+#include <vector>
+
 class GameObject;
 class Player;
 
@@ -38,9 +40,14 @@ namespace DcDoorOpener
     // an alive party member carries the key or the lockpicking
     // (DcDoorPolicy::HoldForOpener): the caller holds for that member to arrive
     // instead of treating the door as one this party cannot open.
+    //
+    // `keyHolders`, when given, receives those members (alive, able to open it,
+    // not the bot, not in reach) when the hold is true, so the caller can call
+    // them in. Empty otherwise.
     Player* PartyOpener(Player* bot, GameObject* go,
                         DcDoorPolicy::LockSlot const (&slots)[DcDoorPolicy::LOCK_SLOT_COUNT],
-                        bool lockEnforced, float reach, bool* holdForOpener = nullptr);
+                        bool lockEnforced, float reach, bool* holdForOpener = nullptr,
+                        std::vector<Player*>* keyHolders = nullptr);
 }
 
 #endif

@@ -10,6 +10,7 @@
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Timer.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStalledFallbackDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
@@ -339,6 +340,12 @@ struct DcApproachState
     uint32 doorStallSinceMs    = 0;  // when that stall began (getMSTime)
     uint32 doorStallLastMs     = 0;  // last tick the stall was observed
 
+    // The hold for a key holder who is not at the tank's side yet (door-blocked,
+    // DcDoorPolicy::HoldForOpener): its clock, regroup count and log pacing. See
+    // DcDoorPolicy::ObserveKeyHold. Cleared when an opener is in reach, the door
+    // opens, or the ceiling gives the hold up.
+    DcDoorPolicy::KeyHoldClock keyHold;
+
     // The stalled fallback's give-up budget (DcStalledFallbackDecision.h): which
     // target it is walking at, whether it is closing, and the targets it has given
     // up on. Without it the fallback outranks Advance for as long as it has a
@@ -517,6 +524,7 @@ struct DcApproachState
         doorStallGuid.Clear();
         doorStallSinceMs    = 0;
         doorStallLastMs     = 0;
+        DcDoorPolicy::ClearKeyHold(keyHold);
     }
 
     // Reached engage range: clear the dead-end escalation counter and the
@@ -563,6 +571,7 @@ struct DcApproachState
         doorStallGuid.Clear();
         doorStallSinceMs = 0;
         doorStallLastMs  = 0;
+        DcDoorPolicy::ClearKeyHold(keyHold);
     }
 
     // The blocking-door value found no blocker: returns true (and drops the

@@ -845,3 +845,4 @@ TEST(DcDoorPolicyTest, SkipClearsOnlyADoorPause)
     EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, true));
     EXPECT_FALSE(DcDoorPolicy::SkipClearsPause(false, false));
 }
+
