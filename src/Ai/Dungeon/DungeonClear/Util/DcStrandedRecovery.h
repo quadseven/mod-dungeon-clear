@@ -66,6 +66,12 @@ namespace DcStrandedRecovery
     // sole survivor is routinely both the driver and the stray.
     void Recover(Player* bot);
 
+    // Re-issue one member's follow order (a bot that is alive, in the world and
+    // not riding a vehicle): the no-teleport regroup RegroupLaggards applies to
+    // each laggard, for a caller that already knows whom it wants back (the
+    // door-blocked hold's key holder). False when the member is not one.
+    bool RegroupMember(Player* member);
+
     // The regroup order of the between-pulls wait (DcPartyWaitDecision::Regroup),
     // for a member that lags but can come back. No teleport and no run-state
     // change: for every bot member out of the wait gate's range and within

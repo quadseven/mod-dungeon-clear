@@ -147,6 +147,22 @@ namespace
         return b;
     }
 
+    void ReissueFollow(Player* member, PlayerbotAI* memberAI)
+    {
+        // Release a pin DC itself applied (the healer's "stay" among them) and
+        // drop the stale follow: follow-tank refuses to re-issue a follow on a
+        // tank it already believes it follows, so a generator that was cleared
+        // under it (the camp hold does exactly that) left the member standing
+        // still for the whole wait. Emptying the record makes the next tick a
+        // fresh order.
+        DcFollowerLifecycle::RemoveFollowerPassive(member);
+        if (member->GetMotionMaster() &&
+            member->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            DcMovement::StopBot(member, DcMovement::Stop::Hold);
+        memberAI->GetAiObjectContext()->GetValue<ObjectGuid>(DcKey::FollowedTank)->Set(ObjectGuid::Empty);
+        DcFollowerLifecycle::UnmarkFollowing(member->GetGUID());
+    }
+
     struct Driver
     {
         Player* clockOwner = nullptr;  // whose tick runs this
@@ -398,6 +414,17 @@ namespace DcStrandedRecovery
                 (moved == 1 ? " stuck party member." : " stuck party members."));
     }
 
+    bool RegroupMember(Player* member)
+    {
+        if (!member || !member->IsInWorld() || !member->IsAlive() || member->GetVehicle())
+            return false;
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI)
+            return false;
+        ReissueFollow(member, memberAI);
+        return true;
+    }
+
     std::uint32_t RegroupLaggards(Player* tank, float maxSpread, Position const* spreadAnchor,
                                   float maxTankGap)
     {
@@ -427,18 +454,7 @@ namespace DcStrandedRecovery
             if (!stray || gap > DcPartyWaitDecision::kRegroupMaxYards)
                 continue;
 
-            // Release a pin DC itself applied (the healer's "stay" among them) and
-            // drop the stale follow: follow-tank refuses to re-issue a follow on a
-            // tank it already believes it follows, so a generator that was cleared
-            // under it (the camp hold does exactly that) left the member standing
-            // still for the whole wait. Emptying the record makes the next tick a
-            // fresh order.
-            DcFollowerLifecycle::RemoveFollowerPassive(member);
-            if (member->GetMotionMaster() &&
-                member->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
-                DcMovement::StopBot(member, DcMovement::Stop::Hold);
-            memberAI->GetAiObjectContext()->GetValue<ObjectGuid>(DcKey::FollowedTank)->Set(ObjectGuid::Empty);
-            DcFollowerLifecycle::UnmarkFollowing(member->GetGUID());
+            ReissueFollow(member, memberAI);
             ++ordered;
 
             LOG_INFO("playerbots.dungeonclear",

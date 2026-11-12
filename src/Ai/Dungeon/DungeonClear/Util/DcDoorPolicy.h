@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "SharedDefines.h"
@@ -303,6 +304,95 @@ namespace DcDoorPolicy
             if (c.alive && c.canOpen)
                 return true;
         return false;
+    }
+
+    // HOW LONG A PARTY HOLDS FOR A KEY HOLDER WHO HAS NOT ARRIVED. HoldForOpener
+    // says to wait, and nothing said for how long: Blackrock Depths, 2026-11-11
+    // (run 1842024, the Shadowforge Lock), the key holder stood still 13yd from a
+    // corpse it could not loot, never came within 25yd of the tank, and the hold
+    // repeated 3271 times in 9.5 minutes until the no-progress watchdog skipped
+    // the objective. The between-pulls wait has a ladder (regroup, rescue,
+    // ceiling); this hold had none, because it is not that wait and the rescue
+    // teleport is off by default.
+    //
+    // This clock gives it the same two rungs that need no teleport: a REGROUP
+    // every regroupEveryMs (the holder's follow order re-issued; idempotent, so it
+    // repeats rather than fires once) and a CEILING after which the hold gives up
+    // and the door takes the can't-open path, whose own bounded exit re-plans
+    // without it. It also paces the log line: the hold itself runs every tick.
+    enum class KeyHoldStep
+    {
+        Hold,     // keep holding, say nothing new
+        Regroup,  // re-issue the key holder's follow order, then keep holding
+        GiveUp,   // the ceiling passed: stop holding for this key holder
+    };
+
+    struct KeyHoldClock
+    {
+        bool armed = false;
+        std::uint64_t door = 0;       // the door held for (a GUID counter), identity only
+        std::uint32_t sinceMs = 0;    // when this hold began
+        std::uint32_t lastMs = 0;     // last tick the hold was observed
+        std::uint32_t regroups = 0;   // regroups already ordered in this hold
+        std::uint32_t loggedMs = 0;   // when the hold line was last written
+        bool logged = false;
+    };
+
+    struct KeyHoldVerdict
+    {
+        KeyHoldStep step = KeyHoldStep::Hold;
+        std::uint32_t heldMs = 0;
+        bool log = false;             // write the "holding" line this tick
+    };
+
+    // One observation of the hold. A new door, or a gap of rearmMs since the last
+    // observation (the hold ended and a later one began), starts a fresh clock.
+    // regroupEveryMs 0 turns the regroup off; ceilingMs 0 turns the ceiling off
+    // (the pre-bound behaviour); logEveryMs 0 logs every tick.
+    inline KeyHoldVerdict ObserveKeyHold(KeyHoldClock& c, std::uint64_t door, std::uint32_t nowMs,
+                                         std::uint32_t rearmMs, std::uint32_t regroupEveryMs,
+                                         std::uint32_t ceilingMs, std::uint32_t logEveryMs)
+    {
+        if (!c.armed || c.door != door || static_cast<std::uint32_t>(nowMs - c.lastMs) >= rearmMs)
+        {
+            c = KeyHoldClock();
+            c.armed = true;
+            c.door = door;
+            c.sinceMs = nowMs;
+        }
+        c.lastMs = nowMs;
+
+        KeyHoldVerdict v;
+        v.heldMs = static_cast<std::uint32_t>(nowMs - c.sinceMs);
+
+        if (!c.logged || logEveryMs == 0 ||
+            static_cast<std::uint32_t>(nowMs - c.loggedMs) >= logEveryMs)
+        {
+            c.logged = true;
+            c.loggedMs = nowMs;
+            v.log = true;
+        }
+
+        if (ceilingMs > 0 && v.heldMs >= ceilingMs)
+        {
+            v.step = KeyHoldStep::GiveUp;
+            return v;
+        }
+        if (regroupEveryMs > 0 &&
+            static_cast<std::uint64_t>(v.heldMs) >=
+                static_cast<std::uint64_t>(regroupEveryMs) * (c.regroups + 1u))
+        {
+            ++c.regroups;
+            v.step = KeyHoldStep::Regroup;
+        }
+        return v;
+    }
+
+    // The hold is over (the door opened, or this key holder was given up on): the
+    // next hold, for any door, starts from nothing.
+    inline void ClearKeyHold(KeyHoldClock& c)
+    {
+        c = KeyHoldClock();
     }
 }
 
