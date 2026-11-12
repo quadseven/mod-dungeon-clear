@@ -112,6 +112,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestDcZoneLine.cpp"
             "${MOD_PATH}/t/TestBossRoster.cpp"
             "${MOD_PATH}/t/TestBossOrdering.cpp"
+            "${MOD_PATH}/t/TestDcFinalSweep.cpp"
             "${MOD_PATH}/t/TestDifficultyGate.cpp"
             "${MOD_PATH}/t/TestRaidCore.cpp"
             "${MOD_PATH}/t/TestRaidScale.cpp"

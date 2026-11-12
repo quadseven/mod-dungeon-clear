@@ -19,6 +19,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcAnchorDone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossOrdering.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFinalSweep.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
@@ -204,6 +205,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     // clear sequential. The empty-result == all-cleared contract that
     // AllClearedTrigger relies on still holds: the list empties only once every
     // boss is completed, skipped, or a fresh corpse.
+    auto buildCands = [&]() {
     std::vector<DungeonBossInfo> cands;
     for (DungeonBossInfo const& info : bosses)
     {
@@ -248,6 +250,54 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             continue;  // corpse — transient, will flip to completed
 
         cands.push_back(info);
+    }
+    return cands;
+    };
+    std::vector<DungeonBossInfo> cands = buildCands();
+
+    // FINAL SWEEP (Util/DcFinalSweep.h). An empty candidate list reads "all
+    // cleared" - but a boss skipped mid-run (the stall watchdog's `dc skip`, or a
+    // wrong done signal that wrongly sent the party past it) can still lack its
+    // kill bit. Before declaring the run done or stalled, re-target a missing boss
+    // and the gate objectives that open it, bounded by the sweep's per-boss
+    // attempts and time cap. Leader-owned: only an enabled run owns the sets it
+    // reopens, so a follower's read-only recompute never mutates anything.
+    if (cands.empty() && DcRun::Of(context).enabled)
+    {
+        DcFinalSweep::Decision const sweep = DcFinalSweep::Decide(
+            bosses, completedMask, DcRun::Of(context).finalSweep, getMSTime(),
+            [&](DungeonBossInfo const& b) { return DcAnchorDoneByInstanceScript(b, inst); },
+            [&](uint32 entry) {
+                BossLiveState const st = LookupLive(liveness, entry);
+                return st.present && !st.alive;
+            });
+        if (sweep.outcome == DcFinalSweep::Outcome::Sweep)
+        {
+            auto& skippedMut = context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
+            auto& clearedMut = context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
+            for (uint32 const entry : sweep.reopen)
+            {
+                skippedMut.erase(entry);
+                clearedMut.erase(entry);
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] final sweep: no next target but the completed-encounter mask "
+                     "lacks bits {:#x} (mask={:#x}) -> re-targeting boss {} (attempt {}/{}, "
+                     "reopened {} entries)",
+                     bot->GetName(), sweep.missingMask, completedMask, sweep.target,
+                     sweep.attempt, DcFinalSweep::kMaxAttemptsPerBoss,
+                     static_cast<uint32>(sweep.reopen.size()));
+            cands = buildCands();
+        }
+        else if (sweep.outcome != DcFinalSweep::Outcome::NothingMissing)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] final sweep: mask lacks bits {:#x} (mask={:#x}) but the sweep is "
+                     "spent ({}) -> no next boss",
+                     bot->GetName(), sweep.missingMask, completedMask,
+                     sweep.outcome == DcFinalSweep::Outcome::TimeCapped ? "time cap"
+                                                                        : "attempts used");
+        }
     }
 
     uint32 const stickyEntry = AI_VALUE(uint32, DcKey::StickyBoss);
