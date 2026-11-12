@@ -67,6 +67,7 @@ namespace DcPartyWaitDecision
         Timeout,          // the wait never became satisfiable
         DamageManaOnly,   // GoOn: the ceiling was reached on damage dealers' mana alone
         LaggardOnly,       // GoOn: the ceiling was reached on living members lagging within sight alone
+        MixedHold,         // GoOn: the ceiling was reached on waivable mana plus members lagging in sight, together
     };
 
     // The party has to keep a healer AND at least this many living members in the
@@ -139,6 +140,16 @@ namespace DcPartyWaitDecision
         // wow-dev 2026-11-12, two family runs in a row, a member 45 to 49 yards
         // back, mod-dungeon-clear#144).
         bool onlyStragglersShort = false;
+
+        // The party would be ready this tick with BOTH waivers at once: damage
+        // dealers' (and no-drink members') mana floor waived AND every out-of-range
+        // member measured against the tank within kRegroupMaxYards. Neither single
+        // predicate above holds when the hold is a combination (live, wow-dev
+        // 2026-11-12, Blackrock Depths Emperor room: two damage dealers low on
+        // mana plus one member 24 yards out, all five alive and inside, gave up at
+        // 206 s). Same hard stops as the singles: a member beyond kRegroupMaxYards,
+        // a dead member, health, a healer's or tank's mana still hold the wait.
+        bool onlyMixedShort = false;
     };
 
     // A lagging member farther than this from the tank is stuck rather than slow:
@@ -289,6 +300,9 @@ namespace DcPartyWaitDecision
             // caller's straggler waiver); follow-tank keeps trying as the tank moves.
             if (in.onlyStragglersShort)
                 return verdict(Outcome::GoOn, Reason::LaggardOnly);
+            // Both at once: the caller applies both waivers and the wait starts over.
+            if (in.onlyMixedShort)
+                return verdict(Outcome::GoOn, Reason::MixedHold);
             return verdict(Outcome::EndRun, Reason::Timeout);
         }
 
