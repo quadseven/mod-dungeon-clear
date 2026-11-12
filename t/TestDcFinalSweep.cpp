@@ -172,6 +172,7 @@ TEST(DcFinalSweepTest, CorpseIsNeverASweepTarget)
     DcFinalSweep::State st;
     auto d = Run(Roster(), Mask({11, 13, 14, 18}), st, 1000, {PHALANX});
     EXPECT_EQ(d.outcome, DcFinalSweep::Outcome::NothingMissing);
+    EXPECT_EQ(d.missingMask, 0u);  // a corpse lends no bit to the log
     EXPECT_TRUE(st.attempts.empty());
 }
 

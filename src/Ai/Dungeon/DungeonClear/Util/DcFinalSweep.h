@@ -85,10 +85,10 @@ namespace DcFinalSweep
                 continue;
             if (AnchorDoneByEncounterMask(b, completedMask) || doneByInstance(b))
                 continue;
-            if (HasRealBit(b))
-                d.missingMask |= 1u << b.encounterIndex;
             if (isCorpse(b.entry))
                 continue;  // dies into its bit on its own; never walk at a corpse
+            if (HasRealBit(b))
+                d.missingMask |= 1u << b.encounterIndex;
             anyMissing = true;
             auto it = st.attempts.find(b.entry);
             if (it != st.attempts.end() && it->second >= kMaxAttemptsPerBoss)
