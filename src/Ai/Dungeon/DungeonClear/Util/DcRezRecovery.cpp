@@ -70,16 +70,22 @@ namespace
 
     bool IsRezClass(Player const* p)
     {
+        // The class says whether a resurrect is POSSIBLE; the spellbook says whether
+        // this member has one. The stock four were once accepted on class alone, and a
+        // paladin with no Redemption was elected and then refused its cast about 30
+        // times while the party held over the corpse (see CanRezFromSpellbook).
+        bool classCanRez = false;
         switch (p->getClass())
         {
             case CLASS_PRIEST:
             case CLASS_PALADIN:
             case CLASS_SHAMAN:
             case CLASS_DRUID:
-                return true;
+                classCanRez = true;
+                break;
             // The other six stock classes cannot know a spell with effect 18 or
-            // 113 (checked against Spell.dbc). Listing them keeps stock literally
-            // unchanged and keeps them off the scan and its lock.
+            // 113 (checked against Spell.dbc). Listing them keeps them off the scan
+            // and its lock.
             case CLASS_WARRIOR:
             case CLASS_ROGUE:
             case CLASS_HUNTER:
@@ -95,9 +101,12 @@ namespace
                 // death ends the run as NoRezzer. `default:` rather than a
                 // `>= MAX_CLASSES` test, since a fork that adds classes has
                 // usually raised MAX_CLASSES.
-                return DcRezRecovery::KnownResurrectSpell(p) != nullptr ||
-                       HoldsResurrectOffer(p);
+                classCanRez = true;
+                break;
         }
+        return DcRezDecision::CanRezFromSpellbook(
+            classCanRez, DcRezRecovery::KnownResurrectSpell(p) != nullptr,
+            HoldsResurrectOffer(p));
     }
 
     bool IsResurrectSpell(SpellInfo const* info)
