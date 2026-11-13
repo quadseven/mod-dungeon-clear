@@ -24,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLogThrottle.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRaidMuster.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
@@ -365,12 +366,32 @@ namespace DcAtBoss
                          "party ready and no loot pending -> engaging anyway",
                          bot->GetName(), v.heldMs, next.name, DcAtBossGate::Name(v.gate));
             else
+            {
+                // Who holds the party, when it is the party: a hold of twenty
+                // minutes (Blackrock Depths, run 1886163) logged partyReady=0 and
+                // nothing about who, so its cause was never read off the log.
+                std::string heldBy;
+                if (DcAtBossGate::HoldRunsPartyWait(v.gate, in.raid, in.partyReady))
+                {
+                    DcPartyState::SpreadGate const spread = DcPartyState::GetSpreadGate(bot, context);
+                    DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+                    heldBy = DcPartyState::DescribePartyNotReady(
+                        bot, rest, spread.maxSpread, spread.anchor, spread.maxTankGap);
+                    // Empty with the strict read down means the party is ready but
+                    // for tank-side loot (the hold's loose read says ready).
+                    if (heldBy.empty())
+                        heldBy = in.lootPending ? " held by: loot pending"
+                                                : " held by: resting or a pending resurrection";
+                    else
+                        heldBy = " held by: " + heldBy;
+                }
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] at-boss gate down at {}: '{}' [live={} partyReady={} "
-                         "loot={} valve={}/{} ms]",
+                         "loot={} valve={}/{} ms]{}",
                          bot->GetName(), next.name, DcAtBossGate::Name(v.gate),
                          in.liveBoss ? 1 : 0, in.partyReady ? 1 : 0, in.lootPending ? 1 : 0,
-                         v.heldMs, in.valveMs);
+                         v.heldMs, in.valveMs, heldBy);
+            }
             appr.atBossGateLogged = gate;
             appr.atBossGateLogMs = in.nowMs != 0 ? in.nowMs : 1u;
         }

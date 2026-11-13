@@ -47,6 +47,13 @@ namespace DcAtBossGate
         return !roomClearActive || atBossValveOpen;
     }
 
+    bool HoldRunsPartyWait(Gate g, bool raid, bool partyReady)
+    {
+        if (raid || partyReady)
+            return false;
+        return g == Gate::RoomTrash || g == Gate::PartyNotReady;
+    }
+
     Gate FirstClosed(Inputs const& in)
     {
         if (!in.driving)

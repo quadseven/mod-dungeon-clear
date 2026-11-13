@@ -716,6 +716,20 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                   AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
                   bot->IsInCombat() ? 1 : 0, valve, notReady.empty() ? "" : " - ", notReady);
     }
+    // A party that is not ready at the boss owes the between-pulls wait its
+    // ceiling. The wait lives below this hold in the ladder, so without this call a
+    // not-ready party at a boss with room trash up was parked here for good: the
+    // valve counts only while the party is ready and the room-clear give-up clock
+    // pauses while it is not (mod-dungeon-clear#154, the Emperor room, 20 minutes).
+    // The wait halts the tank itself, and returns Continue once the party is ready
+    // or a go-on has waived what held it; the park below then runs as before.
+    Map* const holdMap = bot->GetMap();
+    if (DcAtBossGate::HoldRunsPartyWait(verdict.gate, holdMap && holdMap->IsRaid(),
+                                        IsBetweenPullsReady(bot, context)))
+    {
+        if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+            return s;
+    }
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
     ClearStall(context);
     // Parked at the boss waiting for the at-boss pull - not navigating,
