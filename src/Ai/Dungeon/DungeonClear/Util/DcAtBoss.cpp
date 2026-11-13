@@ -377,8 +377,13 @@ namespace DcAtBoss
                     DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
                     heldBy = DcPartyState::DescribePartyNotReady(
                         bot, rest, spread.maxSpread, spread.anchor, spread.maxTankGap);
-                    heldBy = heldBy.empty() ? " held by: resting or a pending resurrection"
-                                            : " held by: " + heldBy;
+                    // Empty with the strict read down means the party is ready but
+                    // for tank-side loot (the hold's loose read says ready).
+                    if (heldBy.empty())
+                        heldBy = in.lootPending ? " held by: loot pending"
+                                                : " held by: resting or a pending resurrection";
+                    else
+                        heldBy = " held by: " + heldBy;
                 }
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] at-boss gate down at {}: '{}' [live={} partyReady={} "

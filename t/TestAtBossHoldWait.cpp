@@ -77,6 +77,18 @@ TEST(AtBossHoldWait, TheAtBossHoldCallsTheWaitThroughThePredicate)
     ASSERT_EQ(ask.size(), 1u);
     ASSERT_EQ(wait.size(), 1u);
     EXPECT_LT(ask[0], wait[0]);
+    // The branch is wired to return the wait's step: the predicate guards an if
+    // (not a bare call), the wait's result is compared against Continue, and a
+    // non-Continue result is returned from the hold before anything else runs.
+    std::string const guarded = body.substr(ask[0], wait[0] - ask[0]);
+    EXPECT_NE(guarded.find("verdict.gate"), std::string::npos);
+    EXPECT_NE(guarded.find("IsBetweenPullsReady"), std::string::npos);
+    std::size_t const stepAt = body.rfind("Step s", wait[0]);
+    ASSERT_NE(stepAt, std::string::npos);
+    std::string const branch = body.substr(stepAt, 120);
+    EXPECT_NE(branch.find("s != Step::Continue"), std::string::npos);
+    EXPECT_NE(branch.find("return s;"), std::string::npos);
+    EXPECT_NE(body.rfind("if (", ask[0]), std::string::npos);
     // ... and before the hold parks the tank for good.
     std::size_t const park = body.rfind("DcMovement::StopBot(bot, DcMovement::Stop::Hold);");
     ASSERT_NE(park, std::string::npos);
