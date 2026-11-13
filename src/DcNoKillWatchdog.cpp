@@ -11,8 +11,10 @@
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoKillDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
@@ -23,6 +25,8 @@
 
 #include "AiObjectContext.h"
 #include "Log.h"
+#include "Group.h"
+#include "Map.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -33,7 +37,7 @@ namespace
 {
     // The limit is minutes; a sweep every five seconds is plenty and keeps the
     // cost to a handful of compares per clearing tank.
-    constexpr uint32 DC_NO_KILL_SWEEP_MS = 5000;
+    constexpr uint32 DC_NO_KILL_SWEEP_MS = DcNoKillDecision::SWEEP_MS;
     uint32 g_noKillSweepAccumMs = 0;
 }
 
@@ -55,7 +59,7 @@ namespace DcNoKillWatchdog
         for (ObjectGuid guid : tanks)
         {
             Player* leader = ObjectAccessor::FindPlayer(guid);
-            if (!leader || !leader->IsInWorld())
+            if (!leader)
                 continue;
             // Not gated on the tank being alive, like DcCombatPurge: a wipe the
             // party never recovers from is a stall too, and the rez recovery has
@@ -65,6 +69,11 @@ namespace DcNoKillWatchdog
                 continue;
 
             DcRunState& run = DcRun::Of(leaderAI);
+            if (!leader->IsInWorld())
+            {
+                run.partialWipe = {};
+                continue;
+            }
             if (!run.enabled)
                 continue;
 
@@ -81,26 +90,52 @@ namespace DcNoKillWatchdog
             // is the human's, a raid encounter is the playerbots strategy's fight,
             // and Karazhan's chess game is ten quiet minutes by design.
             in.held = run.paused || DcBossStandDown::IsActive(leader) || DcKarazhan::ChessIsOn(leader);
-            // Any boss still on the roster counts, on whatever map the tank stands:
-            // a tank that has left the instance (a corpse run that never came
-            // back) is a stalled run too. No next boss with a roster means the
-            // dungeon is cleared, and DungeonClearAllClearedTrigger owns that
-            // ending (it reads the same value), so the kernel leaves it alone.
+            // AI-REVIEW 2026-11-11 [Codex/in-process/runtime-trace] DC121-REV-002:
+            // Readiness may skip corpses; this sweep is independent of that gate.
+            // Inspect this registered owner's group without resolving a living
+            // leader on the survivor's map. Released owners have no next boss
+            // value, but their enabled run is still this exact AI's context.
+            DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(leader);
+            in.rosterAlive = presence.rosterAlive;
+            in.rosterDead = presence.rosterDead;
+            // AI-REVIEW 2026-11-11 [Codex/in-process/call-path-review] DC121-REV-012:
+            // Registered-owner settings survive death and leader-resolution changes.
+            in.recoveryGraceMs = DcNoKillDecision::RecoveryGraceMs(
+                DcSettings::GetUInt(leader->GetGUID(), "PostCombatRezTimeoutSecs"));
+            Player* const survivor = presence.soleLivingMember;
+            Group* const group = leader->GetGroup();
+            // AI-REVIEW 2026-11-11 [Claude Code/independent-review] DC121-REV-010:
+            // Unknown/offline slots cannot be used as evidence of a partial wipe.
+            in.rosterComplete = group && group->GetMembersCount() ==
+                presence.rosterAlive + presence.rosterDead;
+            Map* const survivorMap = survivor ? survivor->GetMap() : nullptr;
+            in.dungeonParty = group && !group->isRaidGroup() && survivorMap &&
+                              survivorMap->IsDungeon() && !survivorMap->IsRaid();
+            // AI-REVIEW 2026-11-11 [Codex/in-process/runtime-trace] DC121-REV-006:
+            // A successful cooldown-gated cast leaves a pending offer; preserve
+            // that recovery even after the caster's spell becomes unavailable.
+            in.survivorCanResurrect = survivor &&
+                (DcRezRecovery::KnownResurrectSpell(survivor) ||
+                 DcRezRecovery::HoldsResurrectOffer(survivor));
+            // AI-REVIEW 2026-11-11 [Codex/in-process/comment-analyzer] DC121-REV-007:
+            // Next boss may be unavailable while the owner is outside a dungeon;
+            // absence alone is not evidence of a completed run. The ordinary
+            // no-kill clock needs a known remaining boss. Partial-wipe viability
+            // instead uses this registered owner's enabled context independently.
             if (next.has_value())
                 in.nextBoss = next->name;
 
             DcNoKillDecision::Result const verdict =
-                DcNoKillDecision::Tick(run.killProgress.stampMs, in);
+                DcNoKillDecision::Tick(run.killProgress.stampMs, run.partialWipe, in);
             if (!verdict.end)
                 continue;
 
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] no-kill watchdog: no boss or objective completed for {}s "
-                     "(limit {}s) with {} still ahead",
-                     leader->GetName(), (now - run.killProgress.stampMs) / 1000,
-                     in.limitMs / 1000, in.nextBoss);
-
-            Player* const owner = DcLeaderSignal::FindRunOwner(leader);
+            LOG_INFO("playerbots.dungeonclear", "[DC:{}] run watchdog ended: {}",
+                     leader->GetName(), verdict.reason);
+            // AI-REVIEW 2026-11-11 [Claude Code/independent-review] DC121-REV-011:
+            // Only the partial-wipe verdict targets the exact registered context.
+            // Preserve the existing ordinary no-kill resolution and fallback.
+            Player* const owner = verdict.partialWipe ? nullptr : DcLeaderSignal::FindRunOwner(leader);
             PlayerbotAI* const ownerAI = owner ? GET_PLAYERBOT_AI(owner) : nullptr;
             DcActionShared::DisableDungeonClear(ownerAI ? ownerAI : leaderAI, verdict.reason);
         }

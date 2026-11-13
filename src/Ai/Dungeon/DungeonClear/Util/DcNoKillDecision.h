@@ -41,18 +41,44 @@
 // Header-only and engine-free, like DcStrandedDecision.
 namespace DcNoKillDecision
 {
+    constexpr std::uint32_t SWEEP_MS = 5000;
+    constexpr std::uint32_t MAX_OBSERVATION_GAP_MS = 2 * SWEEP_MS;
+
+    struct PartialWipeState
+    {
+        std::uint32_t sinceMs = 0;
+        std::uint32_t lastObservedMs = 0;
+        bool armed = false;
+    };
+
+    // Reuse the existing resurrection budget, but leave a sweep margin below
+    // the five-minute exit bound. Clamp seconds before multiplication.
+    inline std::uint32_t RecoveryGraceMs(std::uint32_t configuredSeconds)
+    {
+        return (configuredSeconds == 0 ? 90u :
+                configuredSeconds > 240u ? 240u : configuredSeconds) * 1000u;
+    }
+
     struct Inputs
     {
         std::uint32_t nowMs = 0;
         std::uint32_t limitMs = 0;   // NoKillTimeoutSecs * 1000; 0 = off
         bool          killed = false; // a boss or objective completed this tick
         bool          held = false;   // paused / raid boss stand-down / chess: an intentional hold
+        // Whole known roster, independent of a released owner's current map.
+        std::uint32_t rosterAlive = 0;
+        std::uint32_t rosterDead = 0;
+        bool rosterComplete = false; // every canonical group slot is observed in world
+        std::uint32_t recoveryGraceMs = RecoveryGraceMs(90);
+        bool dungeonParty = false;
+        bool survivorCanResurrect = false;  // ready spell or pending offer from this survivor
         std::string   nextBoss;       // the boss still ahead; empty = none left (or unknown)
     };
 
     struct Result
     {
         bool        end = false;  // stop the run now
+        bool partialWipe = false; // exact registered context, not ordinary owner resolution
         std::string reason;       // why, for DisableDungeonClear
     };
 
@@ -65,13 +91,36 @@ namespace DcNoKillDecision
                " min before " + nextBoss + ".";
     }
 
-    // One tick. `killStampMs` is the clock (DcRunState::killProgress.stampMs;
-    // 0 = unarmed). A kill, an intentional hold, or an unarmed clock re-stamps it
-    // to now and never ends the run. Otherwise the run ends once the quiet time
-    // is MORE than the limit with a boss still ahead.
-    inline Result Tick(std::uint32_t& killStampMs, Inputs const& in)
+    // AI-REVIEW 2026-11-11 [Claude Code/independent-review] DC121-REV-009:
+    // A complete partial-wipe observation first grants the existing recovery
+    // window. Recovery, unknown members, holds or an observation gap rearm it.
+    // Pending grace owns this tick, so an older no-kill clock cannot cut it short.
+    inline Result Tick(std::uint32_t& killStampMs, PartialWipeState& partial,
+                       Inputs const& in)
     {
         Result r;
+        bool const candidate = !in.killed && !in.held && in.rosterComplete &&
+            in.dungeonParty && in.rosterAlive == 1 && in.rosterDead > 0 &&
+            !in.survivorCanResurrect;
+        if (candidate)
+        {
+            if (!partial.armed || in.nowMs - partial.lastObservedMs >= MAX_OBSERVATION_GAP_MS)
+            {
+                partial = {in.nowMs, in.nowMs, true};
+                return r;
+            }
+            partial.lastObservedMs = in.nowMs;
+            if (in.nowMs - partial.sinceMs < in.recoveryGraceMs)
+                return r;
+            r.end = true;
+            r.partialWipe = true;
+            r.reason = "Dungeon clear stopped: partial wipe (1 alive, " +
+                       std::to_string(in.rosterDead) + " dead in the group; recovery grace " +
+                       std::to_string(in.recoveryGraceMs / 1000u) +
+                       "s elapsed without a ready resurrector).";
+            return r;
+        }
+        partial = {};
         if (in.killed || in.held || killStampMs == 0)
         {
             killStampMs = in.nowMs ? in.nowMs : 1u;  // never 0, which means unarmed
