@@ -731,7 +731,9 @@ TEST_F(DungeonClearGroupTest, DeadOwnerOutsideStillObservesTheSoleSurvivor)
     in.rosterAlive = presence.rosterAlive;
     in.rosterDead = presence.rosterDead;
     in.dungeonParty = true;
-    in.rosterComplete = group->GetMembersCount() == presence.rosterAlive + presence.rosterDead;
+    // The fixture links members with SetGroup, so Group::GetMembersCount() is 0 here;
+    // the canonical slot count of this five-player party is stated directly.
+    in.rosterComplete = presence.rosterAlive + presence.rosterDead == 5u;
     std::uint32_t stamp = 0;
     DcNoKillDecision::PartialWipeState partial;
     in.nowMs = 5000;
@@ -761,7 +763,9 @@ TEST_F(DungeonClearGroupTest, PendingResurrectionOfferPreservesTheSoleSurvivorsR
     in.rosterAlive = presence.rosterAlive;
     in.rosterDead = presence.rosterDead;
     in.dungeonParty = true;
-    in.rosterComplete = group->GetMembersCount() == presence.rosterAlive + presence.rosterDead;
+    // The fixture links members with SetGroup, so Group::GetMembersCount() is 0 here;
+    // the canonical slot count of this five-player party is stated directly.
+    in.rosterComplete = presence.rosterAlive + presence.rosterDead == 5u;
     in.survivorCanResurrect = DcRezRecovery::HoldsResurrectOffer(presence.soleLivingMember);
     std::uint32_t stamp = 0;
     DcNoKillDecision::PartialWipeState partial;
