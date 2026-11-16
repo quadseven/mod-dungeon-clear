@@ -1443,14 +1443,22 @@ void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t)
                           "Hurley's Kegs", DcBlackrockDepths::KEG_X, DcBlackrockDepths::KEG_Y,
                           DcBlackrockDepths::KEG_Z, /*arriveRadius*/ 8.0f, /*gateEntry*/ 0,
                           /*hook*/ 0, DcBlackrockDepths::EVENT_HURLEY_KEGS),
-            MakeObjective(OBJ(DcBlackrockDepths::OBJ_RIBBLY), /*encounterIndex*/ 12, 230,
+            // encounterIndex is the REAL DBC kill-bit of the boss the gate
+            // unlocks (doneWithBossBit reads the mask at it): Ribbly is bit 13,
+            // Phalanx bit 12. The clear-path slot is the orderOverride, the
+            // swapped slot the roster reorder gives that boss (Ribbly 12, Phalanx
+            // 13). Keyed the other way round, Ribbly's death (bit 13) read as
+            // "Rocknot's ale run done", so the party never ran it and Phalanx
+            // stayed unattackable (run 1871125: bit 12 never credited).
+            MakeObjective(OBJ(DcBlackrockDepths::OBJ_RIBBLY), /*encounterIndex*/ 13, 230,
                           "Ribbly's Challenge", 878.47f, -167.73f, -49.68f, /*arriveRadius*/ 10.0f,
-                          /*gateEntry*/ 0, /*hook*/ 0, DcBlackrockDepths::EVENT_RIBBLY),
-            MakeObjective(OBJ(DcBlackrockDepths::OBJ_ROCKNOT), /*encounterIndex*/ 13, 230,
+                          /*gateEntry*/ 0, /*hook*/ 0, DcBlackrockDepths::EVENT_RIBBLY,
+                          /*orderOverride*/ 12),
+            MakeObjective(OBJ(DcBlackrockDepths::OBJ_ROCKNOT), /*encounterIndex*/ 12, 230,
                           "Rocknot's Ale Run", DcBlackrockDepths::ROCKNOT_HOLD_X,
                           DcBlackrockDepths::ROCKNOT_HOLD_Y, DcBlackrockDepths::ROCKNOT_HOLD_Z,
                           /*arriveRadius*/ 8.0f, /*gateEntry*/ 0, /*hook*/ 0,
-                          DcBlackrockDepths::EVENT_ROCKNOT),
+                          DcBlackrockDepths::EVENT_ROCKNOT, /*orderOverride*/ 13),
             // --- Blackrock Depths — the Tomb of the Seven --------------------
             // Shares Anger'rel's index 16 — he is the encounter's credit and the
             // FIRST of seven to die, so the objective (latching only on the

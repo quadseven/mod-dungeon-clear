@@ -716,6 +716,20 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                   AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
                   bot->IsInCombat() ? 1 : 0, valve, notReady.empty() ? "" : " - ", notReady);
     }
+    // A party that is not ready at the boss owes the between-pulls wait its
+    // ceiling. The wait lives below this hold in the ladder, so without this call a
+    // not-ready party at a boss with room trash up was parked here for good: the
+    // valve counts only while the party is ready and the room-clear give-up clock
+    // pauses while it is not (mod-dungeon-clear#154, the Emperor room, 20 minutes).
+    // The wait halts the tank itself, and returns Continue once the party is ready
+    // or a go-on has waived what held it; the park below then runs as before.
+    Map* const holdMap = bot->GetMap();
+    if (DcAtBossGate::HoldRunsPartyWait(verdict.gate, holdMap && holdMap->IsRaid(),
+                                        IsBetweenPullsReady(bot, context)))
+    {
+        if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+            return s;
+    }
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
     ClearStall(context);
     // Parked at the boss waiting for the at-boss pull - not navigating,
@@ -1008,6 +1022,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
             bot, rest, DcPartyWaitDecision::kRegroupMaxYards, nullptr, DcPartyWaitDecision::kRegroupMaxYards);
     }
 
+    // Would it be ready with BOTH waivers at once? A hold that is a combination
+    // (damage dealers' mana plus a member lagging in sight) fails each single
+    // predicate above and so ended the run at the ceiling (live, wow-dev
+    // 2026-11-12, Blackrock Depths Emperor room, 206 s). Same preconditions as
+    // the two singles, asked only when neither alone would have gone on.
+    if (waitIn.timeoutMs && waitIn.waitedMs >= waitIn.timeoutMs && (rest.scaled || rest.ordered) &&
+        !rest.waiveDamageMana && waitIn.regroupableStrays > 0 &&
+        waitIn.regroupableStrays == waitIn.strandedOutOfRange && !waitIn.onlyDamageManaShort &&
+        !waitIn.onlyStragglersShort && !DcRezRecovery::IsPending(bot))
+    {
+        DcPartyState::RestGate waived = rest;
+        waived.waiveDamageMana = true;
+        waitIn.onlyMixedShort = DcPartyState::IsPartyReady(
+            bot, waived, DcPartyWaitDecision::kRegroupMaxYards, nullptr, DcPartyWaitDecision::kRegroupMaxYards);
+    }
+
     DcPartyWaitDecision::Result const verdict = DcPartyWaitDecision::Decide(waitIn);
 
     // REGROUP before any teleport: tell a lagging member (a healer 30yd back, live
@@ -1061,6 +1091,20 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
                      "within {:.0f}yd of the tank for {}s",
                      bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
                      DcPartyWaitDecision::kRegroupMaxYards, DC_STRAGGLER_WAIVER_MS / 1000);
+        }
+        else if (verdict.reason == DcPartyWaitDecision::Reason::MixedHold)
+        {
+            // Both waivers, each for its own window; a later wait gets its own
+            // regroup and its own ceiling.
+            DcPartyState::WaiveDamageMana(DcRun::Of(context), nowMs);
+            DcPartyState::WaiveStragglers(DcRun::Of(context), nowMs);
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] between-pulls wait going on after {} ticks / {}ms held only by waivable "
+                     "mana and members lagging in sight ({}); mana floor relaxed for {}s, spread "
+                     "measured within {:.0f}yd of the tank for {}s",
+                     bot->GetName(), appr.partyNotReadyTicks, waitIn.waitedMs, why,
+                     DC_DAMAGE_MANA_WAIVER_MS / 1000, DcPartyWaitDecision::kRegroupMaxYards,
+                     DC_STRAGGLER_WAIVER_MS / 1000);
         }
         else
         {

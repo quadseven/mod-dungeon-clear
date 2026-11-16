@@ -99,6 +99,21 @@ namespace DcAtBossGate
     bool PullStandsDownAtBoss(bool atBossEngage, bool roomClearActive, bool pullbackBoss,
                               bool atBossValveOpen);
 
+    // Does the at-boss hold owe the between-pulls wait its ceiling?
+    //
+    // The wait's regroup, rescue, go-on and ceiling (DcPartyWaitDecision) run in
+    // the advance ladder AFTER the at-boss hold, and the hold parks the tank and
+    // returns first. At a dungeon boss with the party not ready and either room
+    // trash up or readiness as the gate down, nothing else bounds the hold: the
+    // valve counts only while the party is ready, and the room-clear give-up clock
+    // pauses while it is not. Live, Blackrock Depths, 2026-11-12, run 1886163: the
+    // Emperor's room held "room trash, partyReady=0" for twenty minutes with all
+    // five members alive, until the stuck-run watchdog walked the party out.
+    // So at those two gates, on a dungeon map, a party that is not ready runs the
+    // wait from the hold. Raids have their own muster clock; every other gate (a
+    // door, route anchors, a pull, an encounter script) is not a readiness wait.
+    bool HoldRunsPartyWait(Gate g, bool raid, bool partyReady);
+
     struct Inputs
     {
         bool driving = false;

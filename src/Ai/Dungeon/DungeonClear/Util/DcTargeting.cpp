@@ -1255,6 +1255,7 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
     context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenDueEvents)->Get().clear();
     context->GetValue<uint32>(DcKey::StickyBoss)->Set(0u);
     DcRun::Of(context).selectedBossEntry = 0u;
+    DcRun::Of(context).finalSweep = DcFinalSweep::State{};
     context->GetValue<uint32>(DcKey::RunInstance)->Set(instanceId);
     return true;
 }

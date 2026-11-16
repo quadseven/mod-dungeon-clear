@@ -585,3 +585,77 @@ TEST(DcPartyWaitTest, ZeroTimeoutNeverGoesOnEither)
     in.onlyDamageManaShort = true;
     EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
 }
+
+// --- a mixed hold goes on at the ceiling (mod-dungeon-clear mixed hold) -------
+
+TEST(DcPartyWaitTest, AtTheCeilingAMixedManaAndLaggardHoldGoesOnInsteadOfEnding)
+{
+    // Live, wow-dev 2026-11-12, Blackrock Depths Emperor room: the wait gave up at
+    // 206 s with all five alive and inside, held by two damage dealers' mana and
+    // one member 24 yards out (Zrog and Oz low mana, Uzza out of range). Neither
+    // single go-on applies to a combination, so the ceiling ended the run.
+    Inputs in = Healthy();
+    in.waitedMs = 206000;
+    in.regroupAlreadyFired = true;
+    in.strandedOutOfRange = 1;
+    in.regroupableStrays = 1;
+    in.onlyDamageManaShort = false;
+    in.onlyStragglersShort = false;
+    in.onlyMixedShort = true;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::GoOn);
+    EXPECT_EQ(r.reason, Reason::MixedHold);
+}
+
+TEST(DcPartyWaitTest, BelowTheCeilingAMixedHoldStillWaits)
+{
+    Inputs in = Healthy();
+    in.waitedMs = 179999;
+    in.onlyMixedShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}
+
+TEST(DcPartyWaitTest, AMixedHoldWithAnythingElseStillEndsTheRunAtTheCeiling)
+{
+    // The caller leaves onlyMixedShort false when a member is beyond sight range,
+    // dead, hurt, or a healer or tank is short of mana: the ceiling ends the run.
+    Inputs in = Healthy();
+    in.waitedMs = 206000;
+    in.onlyMixedShort = false;
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::Timeout);
+}
+
+TEST(DcPartyWaitTest, TheSingleGoOnsKeepTheirOwnReasonWhenTheMixedOneIsAlsoSet)
+{
+    Inputs in = Healthy();
+    in.waitedMs = 180000;
+    in.onlyMixedShort = true;
+    in.onlyDamageManaShort = true;
+    EXPECT_EQ(Decide(in).reason, Reason::DamageManaOnly);
+    in.onlyDamageManaShort = false;
+    in.onlyStragglersShort = true;
+    EXPECT_EQ(Decide(in).reason, Reason::LaggardOnly);
+}
+
+TEST(DcPartyWaitTest, ALostHealerOutranksAMixedGoOn)
+{
+    Inputs in = Healthy();
+    in.waitedMs = 206000;
+    in.onlyMixedShort = true;
+    in.presentHasHealer = false;
+    LeaveInstance(in, 1);
+    auto const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, ZeroTimeoutNeverGoesOnForAMixedHoldEither)
+{
+    Inputs in = Healthy();
+    in.timeoutMs = 0;
+    in.waitedMs = 3600000;
+    in.onlyMixedShort = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+}

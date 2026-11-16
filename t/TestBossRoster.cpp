@@ -571,6 +571,39 @@ TEST(BossRosterRegistryTest, BlackrockDepthsObjectivesReadDoneAfterAReEnable)
     EXPECT_EQ(viaBit, 4) << "kegs, Ribbly, Rocknot, the Lock";
 }
 
+// Run 1871125: the Grim Guzzler gates must key their done signal on the REAL kill
+// bit of the boss they unlock (Ribbly 13, Phalanx 12), not on the swapped clear
+// slot. Ribbly dying (bit 13 alone) must not read Rocknot's ale run done, or the
+// party skips the run that makes Phalanx attackable and bit 12 is never credited.
+TEST(BossRosterRegistryTest, BlackrockDepthsGuzzlerGatesKeyOnTheirBossKillBit)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(9537, 11, "Hurley Blackbreath", 230),
+        Boss(9502, 12, "Phalanx", 230),
+        Boss(9543, 13, "Ribbly Screwspigot", 230),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
+    DungeonBossInfo const* ribblyGate = nullptr;
+    DungeonBossInfo const* rocknotGate = nullptr;
+    for (DungeonBossInfo const& b : out)
+    {
+        if (b.entry == BossRosterRegistry::ObjectiveEntry(DcBlackrockDepths::OBJ_RIBBLY))
+            ribblyGate = &b;
+        if (b.entry == BossRosterRegistry::ObjectiveEntry(DcBlackrockDepths::OBJ_ROCKNOT))
+            rocknotGate = &b;
+    }
+    ASSERT_NE(ribblyGate, nullptr);
+    ASSERT_NE(rocknotGate, nullptr);
+    uint32 const ribblyDead = 1u << 13, phalanxDead = 1u << 12;
+    EXPECT_FALSE(AnchorDoneByEncounterMask(*rocknotGate, ribblyDead)) << "Ribbly's death is not the ale run";
+    EXPECT_TRUE(AnchorDoneByEncounterMask(*rocknotGate, phalanxDead));
+    EXPECT_TRUE(AnchorDoneByEncounterMask(*ribblyGate, ribblyDead));
+    EXPECT_FALSE(AnchorDoneByEncounterMask(*ribblyGate, phalanxDead));
+    // The clear order is unchanged: each gate sorts at its boss's slot.
+    EXPECT_EQ(BossOrderKey(*ribblyGate), 12u);
+    EXPECT_EQ(BossOrderKey(*rocknotGate), 13u);
+}
+
 // Deadmines: the Defias Cannon objective shares Mr. Smite's bit (3); the
 // objective-before-boss tie-break must order it after Gilnid (bit 2) and before
 // Mr. Smite, so the tank opens the Iron Clad Door before heading to the ship.
