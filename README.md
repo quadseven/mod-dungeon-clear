@@ -26,6 +26,10 @@ While enabled, the tank bot handles a run end to end:
 - **Death recovery**: when a member dies and a living Priest, Paladin, Shaman, or
   Druid remains, the run holds while they resurrect the fallen and resumes once
   everyone is back up, instead of ending on the first death (`DungeonClear.PostCombatRez`).
+  A fully observed one-survivor dungeon party gets the configured resurrection
+  recovery grace (90 seconds by default, capped at 240) before the run watchdog
+  stops it. Recovery, unknown members, offers, holds and missed observations reset
+  that grace; full wipes retain their existing recovery path.
   The run still ends on a full wipe, with no living resurrector, or on timeout.
 
 **Heroic difficulty** is supported: the tank pulls more carefully, several

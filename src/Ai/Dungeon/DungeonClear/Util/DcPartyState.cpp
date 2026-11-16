@@ -827,11 +827,16 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
     {
         ++out.presentAlive;
         ++out.rosterAlive;
+        out.soleLivingMember = bot;
         if (PlayerbotAI::IsHeal(bot))
         {
             out.presentHasHealer = true;
             out.rosterHasHealer = true;
         }
+    }
+    else if (bot->IsInWorld())
+    {
+        ++out.rosterDead;
     }
 
     Group* group = bot->GetGroup();
@@ -848,10 +853,20 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
         Player* member = ref->GetSource();
         if (!member || member == bot)
             continue;
-        if (!member->IsInWorld() || !member->IsAlive())
+        if (!member->IsInWorld())
             continue;
+        if (!member->IsAlive())
+        {
+            // AI-REVIEW 2026-11-11 [deepseek-v4.1-flash (opencode-go)] DC121-E1:
+            // Corpse presence is separate from the unchanged living roster.
+            // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-003:
+            // Released ghosts remain known dead; offline members stay unknown.
+            ++out.rosterDead;
+            continue;
+        }
 
         ++out.rosterAlive;
+        out.soleLivingMember = out.rosterAlive == 1 ? member : nullptr;
         bool const heals = PlayerbotAI::IsHeal(member);
         if (heals)
             out.rosterHasHealer = true;

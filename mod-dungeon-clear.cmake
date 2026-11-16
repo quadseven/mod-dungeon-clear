@@ -233,6 +233,42 @@ if (BUILD_TESTING)
         set_target_properties(dungeon_clear_tests PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
         )
+
+        # Registered-owner sweep replay, including
+        # FourDeathsWithOneDungeonSurvivorEndWithinRecoveryBound: compile the
+        # production bodies with SDK adapters. The check target always runs when
+        # dungeon_clear_tests builds, including incremental builds; no gtest name
+        # filter can skip the bounded partial-wipe exit assertion.
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        set(DC_WATCHDOG_REPLAY "${CMAKE_CURRENT_BINARY_DIR}/dc_watchdog_replay.cpp")
+        add_custom_command(
+            OUTPUT "${DC_WATCHDOG_REPLAY}"
+            COMMAND "${Python3_EXECUTABLE}" "${MOD_PATH}/tools/generate_watchdog_replay.py"
+                    "${DC_WATCHDOG_REPLAY}"
+            DEPENDS
+                "${MOD_PATH}/tools/generate_watchdog_replay.py"
+                "${MOD_PATH}/t/fixtures/watchdog_replay/prefix.cpp"
+                "${MOD_PATH}/t/fixtures/watchdog_replay/tests.cpp"
+                "${MOD_PATH}/src/DcNoKillWatchdog.cpp"
+                "${MOD_PATH}/src/Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.cpp"
+                "${MOD_PATH}/src/Ai/Dungeon/DungeonClear/Util/DcPartyState.cpp"
+                "${MOD_PATH}/src/Ai/Dungeon/DungeonClear/Util/DcRezRecovery.cpp"
+            VERBATIM
+        )
+        add_executable(dungeon_clear_watchdog_tests "${DC_WATCHDOG_REPLAY}")
+        target_compile_features(dungeon_clear_watchdog_tests PRIVATE cxx_std_17)
+        target_include_directories(dungeon_clear_watchdog_tests PRIVATE
+            "${MOD_PATH}/t/fixtures/watchdog_replay"
+            "${MOD_PATH}/src/Ai/Dungeon/DungeonClear/Util"
+        )
+        target_link_libraries(dungeon_clear_watchdog_tests PRIVATE gtest_main)
+        add_custom_target(dungeon_clear_watchdog_check
+            COMMAND "$<TARGET_FILE:dungeon_clear_watchdog_tests>" "--gtest_filter=*"
+            DEPENDS dungeon_clear_watchdog_tests
+            VERBATIM
+        )
+        add_dependencies(dungeon_clear_tests dungeon_clear_watchdog_check)
+        # End registered-owner sweep replay.
     endfunction()
 
     # Defer execution to the root directory's configuration end, after googletest has been fetched by the core

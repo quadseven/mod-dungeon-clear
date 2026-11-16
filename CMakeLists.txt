@@ -1072,3 +1072,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (Run-level no-kill watchdog, mod-dungeon-clear#96: a run with no boss or
 #    objective completed for NoKillTimeoutSecs before its last boss ends with
 #    "no kill for N min before <boss>" instead of waiting for an outside cap.)
+
+# Test-only watchdog replay fixtures under t/fixtures/watchdog_replay are compiled
+# through mod-dungeon-clear.cmake; never collected as runtime module sources.

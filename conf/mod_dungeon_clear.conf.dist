@@ -323,11 +323,18 @@ DungeonClear.PostCombatRez = 1
 
 #
 #    DungeonClear.PostCombatRezTimeoutSecs
-#        Post-combat rez only. Seconds of OUT-OF-COMBAT time the recovery may
+#        Seconds of OUT-OF-COMBAT time post-combat resurrection recovery may
 #        take before the run gives up and disables (combat freezes the clock —
 #        an add pull mid-recovery never burns the budget). Generous by default:
 #        the budget must also cover the rezzer drinking back enough mana to
 #        afford the cast, and a prompted human finding the corpse.
+#
+#        Also supplies the run watchdog recovery grace when exactly one living
+#        member and known corpses fill every group slot in a non-raid dungeon.
+#        That grace counts continuous five-second observations, including combat:
+#        0 uses the 90-second default and positive values are capped at 240 seconds.
+#        Recovery, a resurrection offer, an unknown member, a hold or missed
+#        observations restart the grace. A world stall makes no timing guarantee.
 #
 #        Default: 90
 #
