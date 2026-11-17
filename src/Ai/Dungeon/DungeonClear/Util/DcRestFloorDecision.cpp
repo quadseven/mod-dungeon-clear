@@ -5,6 +5,8 @@
 
 #include "DcRestFloorDecision.h"
 
+#include "DungeonClearTuning.h"
+
 #include <algorithm>
 
 namespace DcRestFloorDecision
@@ -91,6 +93,11 @@ namespace DcRestFloorDecision
         // a no-drink hunter, paladin or shaman at low mana, issue 102).
         if (m.usesMana && m.manaWaived && m.role == Role::Damage)
             out.mp = 0.0f;
+        // A damage dealer with no drink is waited on for a short bound only: it
+        // cannot regain the mana by standing still before the ceiling, and its
+        // mana only slows a fight (mod-dungeon-clear#113).
+        if (NoDrinkWaitBoundReached(m))
+            out.mp = 0.0f;
         // A no-drink healer, after the same whole-ceiling wait, may pull from a
         // bounded low bar rather than end the run (mod-dungeon-clear#134). It
         // still needs the bar: below it the wait ends the run as before.
@@ -98,6 +105,12 @@ namespace DcRestFloorDecision
             risk != Risk::LowLevel)
             out.mp = std::min(out.mp, kNoDrinkHealerWaivedFloor);
         return out;
+    }
+
+    bool NoDrinkWaitBoundReached(Member const& m)
+    {
+        return m.usesMana && !m.canDrink && m.role == Role::Damage &&
+               m.waitedMs >= DC_NO_DRINK_DAMAGE_WAIT_MS;
     }
 
     bool GatesOnMana(Power currentPower, bool druid, Role role)
