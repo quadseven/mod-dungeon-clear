@@ -15,6 +15,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRunWing.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 
+#include "DcSourceScan.h"
+
 // The run wing (Blackrock Spire LBRS / UBRS, Blackrock Depths Detention Block /
 // Upper City): the wing layout data, the resolver's order and latch rules, the
 // fallback at the shared portal, the wing filter and the terminal-boss rule. All
@@ -231,6 +233,127 @@ TEST(DcRunWingTest, HigherSourcesWinAndLowerOnesNeverFlipALatch)
     // A new instance starts clean: the old latch no longer holds.
     EXPECT_FALSE(DcRunWing::Holds(chosen, 8));
     EXPECT_TRUE(ShouldReplace(chosen, 8, Source::Fallback));
+}
+
+// The latch is the party's, not one member's (#116). It used to live in the run
+// state of whichever bot the leader election named when the command arrived, so
+// a bare `dc on` issued after that election moved read an empty latch and wrote
+// a Fallback one over a wing the party had chosen Explicitly: a Blackrock Depths
+// run latched to the Upper City fell back to the Detention Block on every
+// re-arm, 17 known bosses down to 9. The store takes no member at all, so the
+// same three calls a bare `dc on` makes (drop the fallback, read, latch the
+// fallback) give one answer whoever issues them.
+TEST(DcRunWingTest, ABareDcOnKeepsThePartysExplicitWingWhoeverIssuesIt)
+{
+    using DcRunWing::Latch;
+    using DcRunWing::Source;
+    constexpr uint64 kParty = 0x1F50000000000010ull;
+    constexpr uint32 kInstance = 91;
+
+    DcRunWing::LatchStore store;
+    // `dc on brd-uc`, issued through the run owner.
+    EXPECT_TRUE(store.Put(kParty, kInstance, "brd-uc", Source::Explicit));
+
+    // A bare `dc on`, issued through any other member of the same party.
+    store.DropFallback(kParty, kInstance);
+    Latch const kept = store.Get(kParty, kInstance);
+    ASSERT_TRUE(DcRunWing::Holds(kept, kInstance));
+    EXPECT_EQ(kept.token, "brd-uc");
+    EXPECT_EQ(kept.source, Source::Explicit);
+
+    // The fallback where the party stands (the Detention Block) is refused and
+    // nothing is written over the choice.
+    Latch prior;
+    EXPECT_FALSE(store.Put(kParty, kInstance, "brd-db", Source::Fallback, &prior));
+    EXPECT_EQ(prior.token, "brd-uc");
+    EXPECT_EQ(store.Get(kParty, kInstance).token, "brd-uc");
+    EXPECT_EQ(store.Get(kParty, kInstance).source, Source::Explicit);
+
+    // The same holds for a wing the dungeon finder chose.
+    constexpr uint32 kLfgInstance = 92;
+    EXPECT_TRUE(store.Put(kParty, kLfgInstance, "brd-uc", Source::Lfg));
+    store.DropFallback(kParty, kLfgInstance);
+    EXPECT_FALSE(store.Put(kParty, kLfgInstance, "brd-db", Source::Fallback));
+    EXPECT_EQ(store.Get(kParty, kLfgInstance).token, "brd-uc");
+}
+
+// The game side reaches the latch only through the party store. Reading it
+// through one member's run state (DcRun::Of on whoever the election names) is
+// the defect above, so the resolver's source must not do it.
+TEST(DcRunWingTest, TheResolverNeverReadsTheLatchThroughOneMembersRunState)
+{
+    std::string const src = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai" / "Dungeon" / "DungeonClear" / "Util" / "DcRunWing.cpp"));
+    ASSERT_NE(src.find("DcRunWing::Resolve"), std::string::npos) << "DcRunWing.cpp was not read";
+    EXPECT_EQ(src.find("DcRun::Of("), std::string::npos)
+        << "the run wing latch is the party's: use the LatchStore, not a member's DcRunState";
+}
+
+TEST(DcRunWingTest, ABareDcOnReplacesOnlyAFallbackLatch)
+{
+    using DcRunWing::Source;
+    constexpr uint64 kParty = 7;
+
+    DcRunWing::LatchStore store;
+    EXPECT_TRUE(store.Put(kParty, 91, "brd-uc", Source::Fallback));
+    // A bare `dc on` re-reads where the party stands: the older fallback goes.
+    store.DropFallback(kParty, 91);
+    EXPECT_FALSE(DcRunWing::Holds(store.Get(kParty, 91), 91));
+    EXPECT_TRUE(store.Put(kParty, 91, "brd-db", Source::Fallback));
+    EXPECT_EQ(store.Get(kParty, 91).token, "brd-db");
+
+    // An explicit choice replaces a fallback, and a second explicit one the first.
+    EXPECT_TRUE(store.Put(kParty, 91, "brd-uc", Source::Explicit));
+    EXPECT_TRUE(store.Put(kParty, 91, "brd-db", Source::Explicit));
+    EXPECT_EQ(store.Get(kParty, 91).token, "brd-db");
+
+    // A lower source naming the wing already latched is a no-op that still
+    // reports the wing as the run's; the latch keeps its higher source.
+    EXPECT_TRUE(store.Put(kParty, 91, "brd-db", Source::Fallback));
+    EXPECT_EQ(store.Get(kParty, 91).source, Source::Explicit);
+
+    // Nothing is latched from no source or for no wing.
+    EXPECT_FALSE(store.Put(kParty, 93, "brd-db", Source::None));
+    EXPECT_FALSE(store.Put(kParty, 93, "", Source::Explicit));
+    EXPECT_FALSE(DcRunWing::Holds(store.Get(kParty, 93), 93));
+}
+
+TEST(DcRunWingTest, LatchesAreKeptPerPartyAndPerInstance)
+{
+    using DcRunWing::Source;
+
+    DcRunWing::LatchStore store;
+    EXPECT_TRUE(store.Put(1, 91, "brd-uc", Source::Explicit));
+    // Another party in its own copy, and the same party in a new instance, both
+    // start clean.
+    EXPECT_FALSE(DcRunWing::Holds(store.Get(2, 91), 91));
+    EXPECT_FALSE(DcRunWing::Holds(store.Get(1, 92), 92));
+    EXPECT_TRUE(store.Put(2, 91, "brd-db", Source::Fallback));
+    EXPECT_EQ(store.Get(1, 91).token, "brd-uc");
+    EXPECT_EQ(store.Get(2, 91).token, "brd-db");
+    // Dropping one party's fallback leaves the other party's latch alone.
+    store.DropFallback(2, 91);
+    EXPECT_EQ(store.Get(1, 91).token, "brd-uc");
+    EXPECT_EQ(store.Size(), 1u);
+}
+
+TEST(DcRunWingTest, TheLatchStoreIsBoundedAndDropsTheEntryWrittenLongestAgo)
+{
+    using DcRunWing::LatchStore;
+    using DcRunWing::Source;
+
+    LatchStore store;
+    for (uint32 i = 0; i < LatchStore::kMaxEntries; ++i)
+        EXPECT_TRUE(store.Put(1000 + i, 5, "lbrs", Source::Explicit));
+    EXPECT_EQ(store.Size(), LatchStore::kMaxEntries);
+
+    // Party 1000 writes again, so party 1001 is now the one written longest ago.
+    EXPECT_TRUE(store.Put(1000, 5, "ubrs", Source::Explicit));
+    EXPECT_TRUE(store.Put(9999, 5, "lbrs", Source::Explicit));
+    EXPECT_EQ(store.Size(), LatchStore::kMaxEntries);
+    EXPECT_EQ(store.Get(1000, 5).token, "ubrs");
+    EXPECT_FALSE(DcRunWing::Holds(store.Get(1001, 5), 5));
+    EXPECT_EQ(store.Get(9999, 5).token, "lbrs");
 }
 
 TEST(DcRunWingTest, FallbackAtThePortalIsLbrs)

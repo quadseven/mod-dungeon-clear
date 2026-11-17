@@ -7,7 +7,10 @@
 #define _PLAYERBOT_DCRUNWING_H
 
 #include <cstddef>
+#include <map>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Define.h"
@@ -21,9 +24,13 @@ struct DungeonWingLayout;
 // see DungeonWingRegistry) this run clears. Proximity can't pick it there: LBRS
 // and UBRS share one portal, and the nearest bosses to it are UBRS's.
 //
-// The choice is a latch on the run owner's DcRunState, keyed by instance id, so
-// the whole party reads one answer (followers resolve the owner, like rez
-// recovery) and a new instance starts clean. Resolution order, first hit wins:
+// The choice is a latch held for the PARTY, keyed by (party, instance id), so
+// the whole party reads one answer whichever member asks, and a new instance
+// starts clean. It used to live in the DcRunState of whichever bot the leader
+// election named at that moment; a bare `dc on` issued after that election
+// moved (the leader tank died, or its AI was rebuilt) found no latch on the new
+// holder and wrote a Fallback one, dropping a wing the party had chosen
+// Explicitly. Resolution order, first hit wins:
 //
 //   1. Explicit — a test run sets it from its row; `.dc on <wing>` / `.dc wing
 //      <wing>` set it by hand.
@@ -73,6 +80,44 @@ namespace DcRunWing
         return !Holds(latch, instanceId) || incoming >= latch.source;
     }
 
+    // The party's latches, one per (party, instance id). `party` is the group's
+    // GUID, or the bot's own for a bot in no group; no member's identity enters
+    // the key, so who issues a command never changes which latch it reads.
+    // Thread-safe: maps update on worker threads and each party reads its own
+    // entry. Bounded: past kMaxEntries the entry written longest ago is dropped
+    // (a party that returns to it re-latches from where it stands).
+    class LatchStore
+    {
+    public:
+        static constexpr std::size_t kMaxEntries = 512;
+
+        // The latch standing for (party, instanceId); an empty Latch when none.
+        Latch Get(uint64 party, uint32 instanceId) const;
+
+        // Latch `token` from `source` when ShouldReplace allows it. Returns
+        // whether the latch now names `token`. `prior`, when given, receives the
+        // latch that stood before the call.
+        bool Put(uint64 party, uint32 instanceId, std::string const& token, Source source,
+                 Latch* prior = nullptr);
+
+        // Drop a Fallback latch for (party, instanceId); an Explicit or Lfg one
+        // stays.
+        void DropFallback(uint64 party, uint32 instanceId);
+
+        std::size_t Size() const;
+
+    private:
+        struct Entry
+        {
+            Latch latch;
+            uint64 seq = 0;
+        };
+
+        mutable std::mutex _mutex;
+        std::map<std::pair<uint64, uint32>, Entry> _entries;
+        uint64 _nextSeq = 0;
+    };
+
     // The fallback wing token: `regionWing` (the wing whose region the party
     // stands in, or nullptr) when it names one of the layout's wings, else the
     // layout's defaultWing, else the first wing's token.
@@ -99,7 +144,7 @@ namespace DcRunWing
     // ---- game side ----------------------------------------------------------
 
     // The run wing for `bot`'s instance on an Explicit-select map; nullptr on
-    // every other map. Latches a fallback on the owner when the run is enabled.
+    // every other map. Latches a fallback for the party when the run is enabled.
     DungeonWing const* Resolve(Player* bot);
 
     // The wing to scope nav fences by: Resolve()'s token, "" off Explicit maps
@@ -112,7 +157,7 @@ namespace DcRunWing
     // Rez recovery picks the entrance row by it.
     std::string ActiveWingToken(Player* bot);
 
-    // Latch `wing` from `source` on `bot`'s run-state holder for its instance, if
+    // Latch `wing` from `source` for `bot`'s party in its instance, if
     // ShouldReplace allows, and refresh every party bot's boss list so the new
     // wing takes effect this tick. Returns whether the latch now names `wing`.
     bool Set(Player* bot, DungeonWing const& wing, Source source);
