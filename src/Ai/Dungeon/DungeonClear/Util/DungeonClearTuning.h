@@ -517,6 +517,15 @@ constexpr uint32 DC_PARTY_YIELD_LOG_INTERVAL_MS = 30000;
 // enough for the next pack or two; when it lapses the ordinary floors return, so
 // a member who is still low gets a fresh wait to regenerate in.
 constexpr uint32 DC_DAMAGE_MANA_WAIVER_MS = 120000;
+
+// How long the between-pulls wait holds the party for a DAMAGE dealer that has
+// mana to regain but no drink to regain it with. Natural regeneration will not
+// reach the floor inside PartyWaitTimeoutSecs, and a damage dealer short of mana
+// makes a fight slower, not a wipe, so past this bound the member stops counting
+// toward the mana hold for the rest of that wait (mod-dungeon-clear#113). A
+// healer or a tank is not bounded this way, and a member holding a drink is
+// still waited for while it drinks.
+constexpr uint32 DC_NO_DRINK_DAMAGE_WAIT_MS = 20000;
 // How long a lagging member in sight stops holding the spread gate once the
 // between-pulls wait goes on without it (mod-dungeon-clear#144). When it lapses the
 // stock spread returns and a later wait gets its own regroup and its own ceiling.

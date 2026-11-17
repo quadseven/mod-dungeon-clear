@@ -969,7 +969,11 @@ bool DungeonClearNeedsDrinkTrigger::IsActive()
     // form). See DcPartyState::GatesOnMana.
     if (!DcPartyState::GatesOnMana(bot))
         return false;
-    return bot->GetPowerPct(POWER_MANA) < static_cast<float>(target);
+    if (bot->GetPowerPct(POWER_MANA) >= static_cast<float>(target))
+        return false;
+    // No drink to use: the member would only spin on a drink action that cannot
+    // run. The gate bounds its wait instead (mod-dungeon-clear#113).
+    return DcPartyState::HasUsableDrink(bot);
 }
 
 bool DungeonClearNeedsEatTrigger::IsActive()

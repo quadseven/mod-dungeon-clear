@@ -6,6 +6,10 @@
 #include "gtest/gtest.h"
 
 #include "DcRestFloorDecision.h"
+#include "DcSourceScan.h"
+#include "DungeonClearTuning.h"
+
+#include <string>
 
 using namespace DcRestFloorDecision;
 
@@ -668,4 +672,106 @@ TEST(DcRestFloorTest, TheHealerWaiverNeverTouchesAHealerThatCanDrink)
     p.manaWaived = true;
     p.ordered = true;
     EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
+}
+
+// ---- the no-drink damage dealer's wait bound (mod-dungeon-clear#113) ---------------
+
+namespace
+{
+    Member NoDrinkMage(std::uint32_t waitedMs, bool ordered)
+    {
+        Member m = Mage();
+        m.canDrink = false;
+        m.ordered = ordered;
+        m.waitedMs = waitedMs;
+        return m;
+    }
+}
+
+TEST(DcRestFloorTest, ANoDrinkDamageDealerHoldsTheGateUntilTheBoundThenStops)
+{
+    for (bool ordered : {false, true})
+    {
+        Member m = NoDrinkMage(DC_NO_DRINK_DAMAGE_WAIT_MS - 1, ordered);
+        EXPECT_FALSE(NoDrinkWaitBoundReached(m));
+        EXPECT_GT(FloorsFor(m, kHp, kMp, Risk::Hard).mp, 0.0f);
+
+        m.waitedMs = DC_NO_DRINK_DAMAGE_WAIT_MS;
+        EXPECT_TRUE(NoDrinkWaitBoundReached(m));
+        EXPECT_FLOAT_EQ(0.0f, FloorsFor(m, kHp, kMp, Risk::Hard).mp);
+        // Health is never waived.
+        EXPECT_FLOAT_EQ(kHp, FloorsFor(m, kHp, kMp, Risk::Hard).hp);
+    }
+}
+
+TEST(DcRestFloorTest, TheNoDrinkBoundIsTwentySeconds)
+{
+    EXPECT_EQ(20000u, DC_NO_DRINK_DAMAGE_WAIT_MS);
+}
+
+TEST(DcRestFloorTest, ANoDrinkHealerOrTankKeepsTodaysBehaviorPastTheBound)
+{
+    for (bool ordered : {false, true})
+    {
+        Member h = Priest();
+        h.canDrink = false;
+        h.ordered = ordered;
+        h.waitedMs = 10 * DC_NO_DRINK_DAMAGE_WAIT_MS;
+        EXPECT_FALSE(NoDrinkWaitBoundReached(h));
+        Member same = h;
+        same.waitedMs = 0;
+        EXPECT_FLOAT_EQ(FloorsFor(same, kHp, kMp, Risk::Hard).mp, FloorsFor(h, kHp, kMp, Risk::Hard).mp);
+
+        Member t;
+        t.role = Role::Tank;
+        t.usesMana = true;
+        t.canDrink = false;
+        t.ordered = ordered;
+        t.waitedMs = 10 * DC_NO_DRINK_DAMAGE_WAIT_MS;
+        EXPECT_FALSE(NoDrinkWaitBoundReached(t));
+        EXPECT_GT(FloorsFor(t, kHp, kMp, Risk::Hard).mp, 0.0f);
+    }
+}
+
+TEST(DcRestFloorTest, ADamageDealerHoldingADrinkIsWaitedForPastTheBound)
+{
+    for (bool ordered : {false, true})
+    {
+        Member m = Mage();
+        m.ordered = ordered;
+        m.waitedMs = 10 * DC_NO_DRINK_DAMAGE_WAIT_MS;
+        EXPECT_FALSE(NoDrinkWaitBoundReached(m));
+        EXPECT_FLOAT_EQ(kMp, FloorsFor(m, kHp, kMp, Risk::Hard).mp);
+    }
+}
+
+TEST(DcRestFloorTest, AMemberWhoDoesNotUseManaIsNeverBoundedByTheDrinkWait)
+{
+    Member r = Rogue();
+    r.canDrink = false;
+    r.waitedMs = 10 * DC_NO_DRINK_DAMAGE_WAIT_MS;
+    EXPECT_FALSE(NoDrinkWaitBoundReached(r));
+}
+
+// The call sites: the pure kernel above is only worth something if the trigger and
+// the gate actually consult it.
+TEST(DcRestFloorTest, TheNeedsDrinkTriggerAsksForAUsableDrink)
+{
+    std::string const code = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.cpp"));
+    std::size_t const begin = code.find("DungeonClearNeedsDrinkTrigger::IsActive()");
+    ASSERT_NE(begin, std::string::npos);
+    std::size_t const end = code.find("DungeonClearNeedsEatTrigger::IsActive()", begin);
+    ASSERT_NE(end, std::string::npos);
+    EXPECT_FALSE(DcSourceScan::CallOffsets(code.substr(begin, end - begin),
+                                           "DcPartyState::HasUsableDrink").empty());
+}
+
+TEST(DcRestFloorTest, TheRestGateCarriesTheWaitClockAndTheReasonNamesNoDrink)
+{
+    std::string const code = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Util/DcPartyState.cpp"));
+    EXPECT_NE(code.find("gate.waitedMs"), std::string::npos);
+    EXPECT_NE(code.find("m.waitedMs = waitedMs"), std::string::npos);
+    EXPECT_NE(code.find("\"low mana, no drink\""), std::string::npos);
 }

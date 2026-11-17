@@ -156,7 +156,15 @@ public:
         // but for a member with no usable drink (DcRestFloorDecision::Member::
         // ordered). Never set with `scaled`, nor for the raid muster's push.
         bool ordered = false;
+        // How long the current between-pulls wait has run (0 when not waiting).
+        // The no-drink damage dealer's bound reads it (mod-dungeon-clear#113).
+        std::uint32_t waitedMs = 0;
     };
+
+    // Whether `member` holds a drink it is old enough to use. A member with no
+    // PlayerbotAI is a real player, whose client drinks, so the answer is yes.
+    // Shared by the gate's floors and the needs-drink trigger so both agree.
+    static bool HasUsableDrink(Player* member);
     static RestGate GetRestGate(Player* bot, AiObjectContext* context);
 
     // The damage-mana waiver (issue 102). When the between-pulls wait reaches its

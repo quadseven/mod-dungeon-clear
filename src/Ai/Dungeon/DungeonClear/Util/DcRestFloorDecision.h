@@ -6,6 +6,7 @@
 #ifndef _DC_REST_FLOOR_DECISION_H
 #define _DC_REST_FLOOR_DECISION_H
 
+#include <cstdint>
 #include <vector>
 
 // Pure decision kernel: how much HP and mana one member must have before the
@@ -148,6 +149,10 @@ namespace DcRestFloorDecision
         // cannot drink, which is bounded the same as under the scaled gate (an
         // order cannot make standing still regenerate mana).
         bool ordered = false;
+        // How long the current between-pulls wait has run (0 = not waiting). A
+        // damage dealer with no drink stops holding the mana gate once this
+        // reaches DC_NO_DRINK_DAMAGE_WAIT_MS (mod-dungeon-clear#113).
+        std::uint32_t waitedMs = 0;
     };
 
     struct Floors
@@ -174,6 +179,12 @@ namespace DcRestFloorDecision
     };
 
     bool GatesOnMana(Power currentPower, bool druid, Role role);
+
+    // Whether this member's mana no longer holds the gate: a damage dealer that
+    // uses mana, has no usable drink, and has already been waited on for the
+    // no-drink bound. Healers and tanks are never bounded this way, and a damage
+    // dealer holding a drink keeps today's behavior.
+    bool NoDrinkWaitBoundReached(Member const& m);
 
     // Risk of the next fight. `nextBossLevel` 0 means unknown. A party whose
     // lowest member is under kLowLevelParty is LowLevel unless it is Easy.
