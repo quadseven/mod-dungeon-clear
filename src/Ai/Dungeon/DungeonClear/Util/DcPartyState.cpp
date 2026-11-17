@@ -71,6 +71,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 
@@ -162,29 +163,23 @@ float DcPartyState::HealerManaPct(Player* bot)
 
 namespace
 {
+    // (HasUsableDrink is DcPartyState::HasUsableDrink, shared with the needs-drink trigger.)
     // Whether `member` holds a drink it is old enough to use. A member with no
     // PlayerbotAI is a real player: their client drinks, so assume yes. The
     // playerbots "drink" inventory qualifier walks spell category 59 items and
     // keeps only the ones CanUseItem accepts, which is exactly the property that
     // matters: a level 35 mage holding level 55 water (RequiredLevel 55) has
     // nothing in this list and can never drink it.
-    bool HasUsableDrink(Player* member)
-    {
-        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
-        if (!memberAI)
-            return true;
-        return !memberAI->GetAiObjectContext()
-                    ->GetValue<std::vector<Item*>>("inventory items", "drink")->Get().empty();
-    }
 
     // The floors one member is held to under a scaled gate. The drink probe runs
     // only when the member is short of the STOCK mana floor, so a healthy party
     // pays nothing for it.
     DcRestFloorDecision::Floors ScaledFloors(Player* member, float minHpPct, float minMpPct,
                                              DcRestFloorDecision::Risk risk, bool waiveDamageMana,
-                                             bool ordered)
+                                             bool ordered, std::uint32_t waitedMs)
     {
         DcRestFloorDecision::Member m;
+        m.waitedMs = waitedMs;
         m.role = DcPartyState::RoleOf(member);
         m.manaWaived = waiveDamageMana;
         m.ordered = ordered;
@@ -194,7 +189,7 @@ namespace
         {
             float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
             if (mpPct < minMpPct)
-                m.canDrink = HasUsableDrink(member);
+                m.canDrink = DcPartyState::HasUsableDrink(member);
         }
         return DcRestFloorDecision::FloorsFor(m, minHpPct, minMpPct, risk);
     }
@@ -238,14 +233,14 @@ namespace
     bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                         Position const* spreadAnchor, float maxTankGap,
                         DcRestFloorDecision::Risk const* risk, bool waiveDamageMana,
-                        bool ordered);
+                        bool ordered, std::uint32_t waitedMs);
 }
 
 bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                                 Position const* spreadAnchor, float maxTankGap)
 {
     return PartyReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap, nullptr,
-                          false, false);
+                          false, false, 0);
 }
 
 bool DcPartyState::IsPartyReady(Player* bot, RestGate const& rest, float maxSpread,
@@ -253,14 +248,15 @@ bool DcPartyState::IsPartyReady(Player* bot, RestGate const& rest, float maxSpre
 {
     return PartyReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
                           (rest.scaled || rest.ordered) ? &rest.risk : nullptr, rest.waiveDamageMana,
-                          rest.ordered);
+                          rest.ordered, rest.waitedMs);
 }
 
 namespace
 {
 bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                     Position const* spreadAnchor, float maxTankGap,
-                    DcRestFloorDecision::Risk const* risk, bool waiveDamageMana, bool ordered)
+                    DcRestFloorDecision::Risk const* risk, bool waiveDamageMana, bool ordered,
+                    std::uint32_t waitedMs)
 {
     if (!bot)
         return false;
@@ -289,7 +285,7 @@ bool PartyReadyImpl(Player* bot, float minHpPct, float minMpPct, float maxSpread
         if (risk)
         {
             DcRestFloorDecision::Floors const f = ScaledFloors(member, minHpPct, minMpPct, *risk,
-                                                                   waiveDamageMana, ordered);
+                                                                   waiveDamageMana, ordered, waitedMs);
             hpFloor = f.hp;
             mpFloor = f.mp;
         }
@@ -552,6 +548,15 @@ void DcPartyState::WaiveDamageMana(DcRunState& run, std::uint32_t nowMs)
     run.damageManaWaivedUntilMs = until ? until : 1u;
 }
 
+bool DcPartyState::HasUsableDrink(Player* member)
+{
+    PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+    if (!memberAI)
+        return true;
+    return !memberAI->GetAiObjectContext()
+                ->GetValue<std::vector<Item*>>("inventory items", "drink")->Get().empty();
+}
+
 DcPartyState::RestGate DcPartyState::GetRestGate(Player* bot, AiObjectContext* context)
 {
     RestGate gate;  // 0/0 — spread-only readiness
@@ -595,6 +600,13 @@ DcPartyState::RestGate DcPartyState::GetRestGate(Player* bot, AiObjectContext* c
 
     gate.minHp = RestMinHpPct(bot);
     gate.minMp = RestMinMpPct(bot);
+    // How long the current between-pulls wait has run: the clock the no-drink
+    // damage dealer's bound reads (mod-dungeon-clear#113).
+    {
+        uint32 const since =
+            context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().partyNotReadySinceMs;
+        gate.waitedMs = since ? getMSTimeDiff(since, getMSTime()) : 0;
+    }
 
     // RISK SCALING (DcRestFloorDecision). Only the STOCK floors are scaled. A
     // RestHealthPct / RestManaPct the operator set is an order and is held
@@ -812,7 +824,8 @@ namespace
     std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
                                      float maxSpread, Position const* spreadAnchor,
                                      float maxTankGap, DcRestFloorDecision::Risk const* risk,
-                                     bool waiveDamageMana, bool ordered);
+                                     bool waiveDamageMana, bool ordered,
+                                     std::uint32_t waitedMs);
 }
 
 DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
@@ -905,7 +918,7 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float maxTankGap)
 {
     return DescribeNotReadyImpl(bot, minHpPct, minMpPct, maxSpread, spreadAnchor, maxTankGap,
-                                nullptr, false, false);
+                                nullptr, false, false, 0);
 }
 
 std::string DcPartyState::DescribePartyNotReady(Player* bot, RestGate const& rest,
@@ -914,7 +927,7 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot, RestGate const& res
 {
     return DescribeNotReadyImpl(bot, rest.minHp, rest.minMp, maxSpread, spreadAnchor, maxTankGap,
                                 (rest.scaled || rest.ordered) ? &rest.risk : nullptr, rest.waiveDamageMana,
-                                rest.ordered);
+                                rest.ordered, rest.waitedMs);
 }
 
 namespace
@@ -922,7 +935,7 @@ namespace
 std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
                                  float maxSpread, Position const* spreadAnchor,
                                  float maxTankGap, DcRestFloorDecision::Risk const* risk,
-                                 bool waiveDamageMana, bool ordered)
+                                 bool waiveDamageMana, bool ordered, std::uint32_t waitedMs)
 {
     if (!bot)
         return "";
@@ -962,7 +975,8 @@ std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
             if (risk)
             {
                 DcRestFloorDecision::Floors const f =
-                    ScaledFloors(member, minHpPct, minMpPct, *risk, waiveDamageMana, ordered);
+                    ScaledFloors(member, minHpPct, minMpPct, *risk, waiveDamageMana, ordered,
+                                 waitedMs);
                 hpFloor = f.hp;
                 mpFloor = f.mp;
             }
@@ -976,7 +990,8 @@ std::string DescribeNotReadyImpl(Player* bot, float minHpPct, float minMpPct,
                     float const mpPct =
                         100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
                     if (mpPct < mpFloor)
-                        reason = "low mana";
+                        reason = DcPartyState::HasUsableDrink(member) ? "low mana"
+                                                                      : "low mana, no drink";
                 }
             }
         }
