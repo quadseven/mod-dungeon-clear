@@ -10,16 +10,17 @@
 #include <optional>
 #include <unordered_set>
 
+#include "AiObjectContext.h"
 #include "Group.h"
 #include "Log.h"
 #include "Map.h"
 #include "Player.h"
+#include "PlayerbotAI.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcNavPenaltyRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
-#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 char const* DcRunWing::SourceName(Source source)
 {
@@ -31,6 +32,53 @@ char const* DcRunWing::SourceName(Source source)
         case Source::None:     break;
     }
     return "none";
+}
+
+DcRunWing::Latch DcRunWing::LatchStore::Get(uint64 party, uint32 instanceId) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _entries.find(std::make_pair(party, instanceId));
+    return it != _entries.end() ? it->second.latch : Latch{};
+}
+
+bool DcRunWing::LatchStore::Put(uint64 party, uint32 instanceId, std::string const& token,
+                                Source source, Latch* prior)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::pair<uint64, uint32> const key(party, instanceId);
+    auto it = _entries.find(key);
+    Latch const current = it != _entries.end() ? it->second.latch : Latch{};
+    if (prior)
+        *prior = current;
+    if (token.empty() || source == Source::None)
+        return false;
+    if (!ShouldReplace(current, instanceId, source))
+        return current.token == token;
+
+    _entries[key] = Entry{Latch{instanceId, token, source}, ++_nextSeq};
+    if (_entries.size() > kMaxEntries)
+    {
+        auto oldest = _entries.begin();
+        for (auto e = _entries.begin(); e != _entries.end(); ++e)
+            if (e->second.seq < oldest->second.seq)
+                oldest = e;
+        _entries.erase(oldest);
+    }
+    return true;
+}
+
+void DcRunWing::LatchStore::DropFallback(uint64 party, uint32 instanceId)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _entries.find(std::make_pair(party, instanceId));
+    if (it != _entries.end() && it->second.latch.source == Source::Fallback)
+        _entries.erase(it);
+}
+
+std::size_t DcRunWing::LatchStore::Size() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _entries.size();
 }
 
 std::string DcRunWing::ResolveFallback(DungeonWingLayout const& layout, char const* regionWing)
@@ -114,17 +162,27 @@ namespace
         return layout;
     }
 
-    // Whose DcRunState carries the latch: the run owner while a clear runs, the
-    // leader tank before one starts (the member `dc on` will enable), else the
-    // bot itself. Never a human — the latch lives in a bot's AI context.
-    Player* LatchHolder(Player* bot)
+    // Every party's latch, for the life of the process.
+    DcRunWing::LatchStore g_latches;
+
+    // The latch key's party half: the group, or the bot itself in no group. No
+    // member's identity enters it, so every member of a party reads one latch.
+    uint64 PartyKey(Player* bot)
+    {
+        Group* group = bot->GetGroup();
+        return group ? group->GetGUID().GetRawValue() : bot->GetGUID().GetRawValue();
+    }
+
+    // Where the party is, for the fallback's region read: the run owner while a
+    // clear runs, the leader tank before one starts, else the bot itself.
+    Player* PartyAnchor(Player* bot)
     {
         if (Player* owner = DcLeaderSignal::FindRunOwner(bot))
             return owner;
         if (Player* leader = DcLeaderSignal::FindLeaderTank(bot))
             if (GET_PLAYERBOT_AI(leader))
                 return leader;
-        return GET_PLAYERBOT_AI(bot) ? bot : nullptr;
+        return bot;
     }
 
     // Every party bot on the map re-derives its boss list (5s-cached) and next
@@ -159,33 +217,30 @@ DungeonWing const* DcRunWing::Resolve(Player* bot)
         return nullptr;
 
     uint32 const instanceId = bot->GetMap()->GetInstanceId();
-    Player* holder = LatchHolder(bot);
-    PlayerbotAI* holderAI = holder ? GET_PLAYERBOT_AI(holder) : nullptr;
-    if (holderAI)
-    {
-        Latch const& latch = DcRun::Of(holderAI).runWing;
-        if (Holds(latch, instanceId))
-            if (DungeonWing const* wing = DungeonWingRegistry::FindWing(*layout, latch.token))
-                return wing;
-    }
+    uint64 const party = PartyKey(bot);
+    Latch const latch = g_latches.Get(party, instanceId);
+    if (Holds(latch, instanceId))
+        if (DungeonWing const* wing = DungeonWingRegistry::FindWing(*layout, latch.token))
+            return wing;
 
     // Fallback: the wing whose region the party stands in, judged from the
-    // holder (the leader — where the party is) when there is one.
-    Player* where = holder && holder->GetMapId() == bot->GetMapId() ? holder : bot;
+    // anchor (the leader, where the party is) when it is on this map.
+    Player* const anchor = PartyAnchor(bot);
+    Player* where = anchor->GetMapId() == bot->GetMapId() ? anchor : bot;
     char const* region = DcNavPenaltyRegistry::WingRegionAt(
         bot->GetMapId(), where->GetPositionX(), where->GetPositionY(), where->GetPositionZ());
     DungeonWing const* wing = DungeonWingRegistry::FindWing(*layout, ResolveFallback(*layout, region));
     if (!wing)
         wing = &layout->wings.front();
 
-    if (holderAI && DcRun::Of(holderAI).enabled)
-    {
-        DcRun::Of(holderAI).runWing = Latch{instanceId, wing->token, Source::Fallback};
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] run wing '{}' ({}) latched for instance {} from fallback ({})",
-                 holder->GetName(), wing->token, wing->name, instanceId,
-                 region ? std::string("standing in ") + region : std::string("default"));
-    }
+    // Only while a clear runs: before `dc on` the fallback is recomputed from
+    // where the party stands, and `dc on` itself latches it.
+    if (Player* owner = DcLeaderSignal::FindRunOwner(bot))
+        if (g_latches.Put(party, instanceId, wing->token, Source::Fallback))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] run wing '{}' ({}) latched for instance {} from fallback ({})",
+                     owner->GetName(), wing->token, wing->name, instanceId,
+                     region ? std::string("standing in ") + region : std::string("default"));
     return wing;
 }
 
@@ -221,40 +276,32 @@ bool DcRunWing::Set(Player* bot, DungeonWing const& wing, Source source)
 {
     if (!ExplicitLayout(bot))
         return false;
-    Player* holder = LatchHolder(bot);
-    PlayerbotAI* holderAI = holder ? GET_PLAYERBOT_AI(holder) : nullptr;
-    if (!holderAI)
-        return false;
 
     uint32 const instanceId = bot->GetMap()->GetInstanceId();
-    Latch& latch = DcRun::Of(holderAI).runWing;
-    if (!ShouldReplace(latch, instanceId, source))
+    Latch prior;
+    if (!g_latches.Put(PartyKey(bot), instanceId, wing.token, source, &prior))
     {
-        if (latch.token == wing.token)
-            return true;
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] run wing '{}' from {} ignored — '{}' already latched from {}",
-                 holder->GetName(), wing.token, SourceName(source), latch.token,
-                 SourceName(latch.source));
+                 bot->GetName(), wing.token, SourceName(source), prior.token,
+                 SourceName(prior.source));
         return false;
     }
+    // A lower source asking for the wing already latched changes nothing.
+    if (!ShouldReplace(prior, instanceId, source))
+        return true;
 
-    bool const changed = !Holds(latch, instanceId) || latch.token != wing.token;
-    latch = Latch{instanceId, wing.token, source};
+    bool const changed = !Holds(prior, instanceId) || prior.token != wing.token;
     LOG_INFO("playerbots.dungeonclear", "[DC:{}] run wing '{}' ({}) latched for instance {} from {}",
-             holder->GetName(), wing.token, wing.name, instanceId, SourceName(source));
+             bot->GetName(), wing.token, wing.name, instanceId, SourceName(source));
     if (changed)
-        RefreshPartyBossLists(holder);
+        RefreshPartyBossLists(bot);
     return true;
 }
 
 void DcRunWing::ClearFallback(Player* bot)
 {
-    Player* holder = LatchHolder(bot);
-    PlayerbotAI* holderAI = holder ? GET_PLAYERBOT_AI(holder) : nullptr;
-    if (!holderAI)
+    if (!bot || !bot->GetMap())
         return;
-    Latch& latch = DcRun::Of(holderAI).runWing;
-    if (latch.source == Source::Fallback || !Holds(latch, bot->GetMap() ? bot->GetMap()->GetInstanceId() : 0))
-        latch = Latch{};
+    g_latches.DropFallback(PartyKey(bot), bot->GetMap()->GetInstanceId());
 }
