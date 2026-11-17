@@ -824,3 +824,29 @@ TEST(DcRestFloorTest, TheRestGateCarriesTheWaitClockAndTheReasonNamesNoDrink)
     EXPECT_NE(code.find("m.waitedMs = waitedMs"), std::string::npos);
     EXPECT_NE(code.find("\"low mana, no drink\""), std::string::npos);
 }
+
+// The planner end of #156: the pure rule above is only worth something if the
+// planner feeds it a boss found among the counted mobs and uses its verdict.
+TEST(DcRestFloorTest, ThePullPlannerFeedsTheDrinkHoldABossFromTheCountedMobs)
+{
+    std::string const code = DcSourceScan::StripComments(DcSourceScan::ReadFile(
+        DcSourceScan::ModuleSrc() / "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.cpp"));
+    std::size_t const flag = code.find("bool bossChained = false;");
+    ASSERT_NE(flag, std::string::npos);
+    std::size_t const call = code.find("HoldDryPartyFromChainedBoss", flag);
+    ASSERT_NE(call, std::string::npos);
+    // The flag is set from the counted set, by the dungeon-boss check, before the hold runs.
+    std::string const scan = code.substr(flag, call - flag);
+    EXPECT_NE(scan.find("for (std::size_t i : counted)"), std::string::npos);
+    EXPECT_FALSE(DcSourceScan::CallOffsets(scan, "DcTargeting::IsDungeonBossEntry").empty());
+    EXPECT_NE(scan.find("bossChained = true;"), std::string::npos);
+    // The hold is given the size verdict, the flag and the readiness, and its result is the size.
+    auto const calls = DcSourceScan::CallOffsets(code, "DcRestFloorDecision::HoldDryPartyFromChainedBoss");
+    ASSERT_EQ(1u, calls.size());
+    auto const args = DcSourceScan::CallArgs(code, calls[0]);
+    ASSERT_EQ(3u, args.size());
+    EXPECT_EQ("rawSize", args[0]);
+    EXPECT_EQ("bossChained", args[1]);
+    EXPECT_EQ("ready", args[2]);
+    EXPECT_NE(code.find("PullSize const size =", flag), std::string::npos);
+}
