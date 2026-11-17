@@ -211,6 +211,7 @@ namespace DcRestFloorDecision
         bool gateNotReady = false;         // the between-pulls gate is not green
         unsigned membersDown = 0;          // dead same-map members
         float lowestManaPct = 100.0f;      // lowest mana among mana users
+        float lowestDamageManaPct = 100.0f;  // lowest mana among damage dealers that use mana
     };
 
     constexpr float kHealerManaLow   = 30.0f;
@@ -315,6 +316,22 @@ namespace DcRestFloorDecision
     // with no clock would plant the tank in front of the pack for good (Emperor
     // Dagran Thaurissan's 32-strong Senator pack, live: 5 minutes still, then a
     // `dc skip` skipped the Emperor himself).
+    // A damage dealer's mana floor is waivable (the between-pulls wait goes on
+    // without it), but a pull that brings a dungeon boss into the fight through
+    // chain range is not a pull a dry damage dealer can carry: four of five died
+    // in one pull of the Blackrock Depths Stilgiss room with Fineous Darkvire in
+    // chain range and the mage at 12 percent (mod-dungeon-clear#156). Below this
+    // mana percent such a pull waits for the drink instead.
+    constexpr float kDryChainDamageMana = 40.0f;
+
+    // `bossChained`: a dungeon boss other than the target is among the mobs the
+    // pull would bring. Returns Wait for a FacePull or SetUp verdict when the
+    // boss is chained and a damage dealer is under kDryChainDamageMana; the
+    // caller's wait budget then bounds the hold, as it does for any Wait, and the
+    // pull goes ahead as a set-up pull once the budget runs out. TooBig and Wait
+    // are never loosened.
+    PullSize HoldDryPartyFromChainedBoss(PullSize size, bool bossChained, Readiness const& r);
+
     bool PullSizeHolds(PullSize size, bool waitExpired, bool roomClearGaveUp = false);
 }
 

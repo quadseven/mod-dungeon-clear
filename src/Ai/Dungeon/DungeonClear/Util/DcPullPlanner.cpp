@@ -600,10 +600,13 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
                 // Mana only for a member whose mana is a reason to wait: never a
                 // warrior's or rogue's, never a druid tank's (DcPartyState::GatesOnMana).
                 if (DcPartyState::GatesOnMana(m))
-                    ready.lowestManaPct = std::min(
-                        ready.lowestManaPct,
-                        100.0f * float(m->GetPower(POWER_MANA)) /
-                            float(m->GetMaxPower(POWER_MANA)));
+                {
+                    float const mpPct = 100.0f * float(m->GetPower(POWER_MANA)) /
+                                        float(m->GetMaxPower(POWER_MANA));
+                    ready.lowestManaPct = std::min(ready.lowestManaPct, mpPct);
+                    if (DcPartyState::RoleOf(m) == DcRestFloorDecision::Role::Damage)
+                        ready.lowestDamageManaPct = std::min(ready.lowestDamageManaPct, mpPct);
+                }
             }
         }
         ready.healerManaPct = healerMp < 0.0f ? 100.0f : healerMp;
@@ -627,13 +630,31 @@ bool DcPullPlanner::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target,
     // ceiling sizes forty bodies, and by PullOversizeHold (off on heroic).
     bool const sizeGate = DcSettings::GetBool(bot, "PullOversizeHold") &&
                           !(bot->GetMap() && bot->GetMap()->IsRaid());
-    DcRestFloorDecision::PullSize const size = sizeGate
+    DcRestFloorDecision::PullSize const rawSize = sizeGate
         ? DcRestFloorDecision::ClassifyPullSize(
               weightThirds, tagThirds, fragileCeilingThirds, ready,
               DcSettings::GetUInt(bot, "PullOversizeNeverPct"))
         : (DcRestFloorDecision::ShouldSetUp(weightThirds, fragileCeilingThirds, ready)
                ? DcRestFloorDecision::PullSize::SetUp
                : DcRestFloorDecision::PullSize::FacePull);
+    // A dungeon boss other than the target among the mobs this pull would bring
+    // is a fight a dry damage dealer cannot carry, waiver or not
+    // (mod-dungeon-clear#156: Fineous Darkvire in chain range of the Stilgiss room).
+    bool bossChained = false;
+    for (std::size_t i : counted)
+    {
+        if (i == targetIdx || i >= hostiles.size())
+            continue;
+        Unit* u = hostiles[i];
+        if (u->IsAlive() &&
+            DcTargeting::IsDungeonBossEntry(botAI->GetAiObjectContext(), u->GetEntry()))
+        {
+            bossChained = true;
+            break;
+        }
+    }
+    DcRestFloorDecision::PullSize const size =
+        DcRestFloorDecision::HoldDryPartyFromChainedBoss(rawSize, bossChained, ready);
     bool const advanced = size != DcRestFloorDecision::PullSize::FacePull;
 
     // Patrol-wait detail (only when the caller asks for it AND a lone patroller is

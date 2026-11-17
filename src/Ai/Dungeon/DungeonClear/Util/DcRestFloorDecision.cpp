@@ -205,6 +205,15 @@ namespace DcRestFloorDecision
         return PullSize::SetUp;
     }
 
+    PullSize HoldDryPartyFromChainedBoss(PullSize size, bool bossChained, Readiness const& r)
+    {
+        if (!bossChained || r.lowestDamageManaPct >= kDryChainDamageMana)
+            return size;
+        if (size == PullSize::FacePull || size == PullSize::SetUp)
+            return PullSize::Wait;
+        return size;
+    }
+
     bool PullSizeHolds(PullSize size, bool waitExpired, bool roomClearGaveUp)
     {
         if (roomClearGaveUp)
