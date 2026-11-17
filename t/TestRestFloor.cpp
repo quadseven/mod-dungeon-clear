@@ -850,3 +850,27 @@ TEST(DcRestFloorTest, ThePullPlannerFeedsTheDrinkHoldABossFromTheCountedMobs)
     EXPECT_EQ("ready", args[2]);
     EXPECT_NE(code.find("PullSize const size =", flag), std::string::npos);
 }
+
+// The whole decision the planner makes for the Stilgiss room, from the real size
+// classifier to the hold: a small pack the party would otherwise face-pull, a mage
+// at 12 percent, Fineous in chain range. Without HoldDryPartyFromChainedBoss the
+// party pulls; with it the party waits for the drink.
+TEST(DcRestFloorTest, TheStilgissRoomWithADryMageWaitsForTheDrinkEndToEnd)
+{
+    Readiness r = DryMage();
+    PullSize const raw = ClassifyPullSize(/*weight*/ 6, /*tag*/ 6, /*ceiling*/ 12, r, kNeverWholePct);
+    EXPECT_NE(PullSize::TooBig, raw);
+
+    PullSize const chained = HoldDryPartyFromChainedBoss(raw, /*bossChained*/ true, r);
+    EXPECT_EQ(PullSize::Wait, chained);
+    EXPECT_TRUE(PullSizeHolds(chained, /*waitExpired*/ false));
+
+    // The same pack with no boss in chain range is left to the classifier.
+    EXPECT_EQ(raw, HoldDryPartyFromChainedBoss(raw, /*bossChained*/ false, r));
+
+    // Once the mage has drunk to the damage-mana floor the party pulls the room.
+    r.lowestManaPct = kDryChainDamageMana;
+    r.lowestDamageManaPct = kDryChainDamageMana;
+    PullSize const fed = ClassifyPullSize(6, 6, 12, r, kNeverWholePct);
+    EXPECT_EQ(fed, HoldDryPartyFromChainedBoss(fed, /*bossChained*/ true, r));
+}
