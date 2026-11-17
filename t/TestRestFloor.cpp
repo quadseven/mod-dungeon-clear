@@ -669,3 +669,52 @@ TEST(DcRestFloorTest, TheHealerWaiverNeverTouchesAHealerThatCanDrink)
     p.ordered = true;
     EXPECT_FLOAT_EQ(kMp, FloorsFor(p, kHp, kMp, Risk::Hard).mp);
 }
+
+// ---- a dry damage dealer does not pull a boss into chain range (#156) ------------
+
+namespace
+{
+    Readiness DryMage()
+    {
+        Readiness r;
+        r.lowestManaPct = 12.0f;
+        r.lowestDamageManaPct = 12.0f;
+        return r;
+    }
+}
+
+TEST(DcRestFloorTest, ADryDamageDealerWaitsWhenABossIsInChainRange)
+{
+    // The Stilgiss room: the mage at 12 percent, Fineous within chain range.
+    EXPECT_EQ(PullSize::Wait, HoldDryPartyFromChainedBoss(PullSize::FacePull, true, DryMage()));
+    EXPECT_EQ(PullSize::Wait, HoldDryPartyFromChainedBoss(PullSize::SetUp, true, DryMage()));
+}
+
+TEST(DcRestFloorTest, TheDrinkHoldIsBoundedByTheWaitBudget)
+{
+    PullSize const held = HoldDryPartyFromChainedBoss(PullSize::FacePull, true, DryMage());
+    EXPECT_TRUE(PullSizeHolds(held, /*waitExpired*/ false));
+    EXPECT_FALSE(PullSizeHolds(held, /*waitExpired*/ true));
+}
+
+TEST(DcRestFloorTest, NoBossInChainRangeLeavesTheVerdictAlone)
+{
+    EXPECT_EQ(PullSize::FacePull, HoldDryPartyFromChainedBoss(PullSize::FacePull, false, DryMage()));
+    EXPECT_EQ(PullSize::SetUp, HoldDryPartyFromChainedBoss(PullSize::SetUp, false, DryMage()));
+}
+
+TEST(DcRestFloorTest, AFedDamageDealerPullsTheChainedBossRoom)
+{
+    Readiness r = DryMage();
+    r.lowestDamageManaPct = kDryChainDamageMana;
+    EXPECT_EQ(PullSize::FacePull, HoldDryPartyFromChainedBoss(PullSize::FacePull, true, r));
+    // No mana-using damage dealer at all reads 100.
+    EXPECT_EQ(PullSize::FacePull,
+              HoldDryPartyFromChainedBoss(PullSize::FacePull, true, Readiness{}));
+}
+
+TEST(DcRestFloorTest, TheDrinkHoldNeverLoosensAStricterVerdict)
+{
+    EXPECT_EQ(PullSize::TooBig, HoldDryPartyFromChainedBoss(PullSize::TooBig, true, DryMage()));
+    EXPECT_EQ(PullSize::Wait, HoldDryPartyFromChainedBoss(PullSize::Wait, true, DryMage()));
+}
