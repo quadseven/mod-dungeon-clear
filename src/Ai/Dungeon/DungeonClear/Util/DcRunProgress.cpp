@@ -37,26 +37,17 @@ namespace DcRunProgress
         if (!ctx)
             return false;
 
-        bool killed = false;
-
         uint32 encounterMask = mark.mask;
         if (InstanceScript* inst = DcTargeting::GetInstanceScript(leader))
             encounterMask = inst->GetCompletedEncounterMask();
-        if (encounterMask != mark.mask)
-        {
-            mark.mask = encounterMask;
-            killed = true;
-        }
 
         std::size_t const anchors =
             ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().size();
-        if (static_cast<uint32>(anchors) != mark.anchors)
-        {
-            mark.anchors = static_cast<uint32>(anchors);
-            killed = true;
-        }
 
-        return killed;
+        // Growth only (see Gained): `dc on` after a wipe clears the anchors and
+        // they latch again, which is a re-arm, not a kill.
+        return Gained(mark, leader->GetInstanceId(), encounterMask,
+                      static_cast<uint32>(anchors));
     }
 
     bool Detect(Player* leader, PlayerbotAI* leaderAI, Mark& mark)
