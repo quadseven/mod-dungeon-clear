@@ -83,6 +83,13 @@ namespace DcPartyWaitDecision
         std::uint32_t waitedMs = 0;       // how long this uninterrupted wait has run
         std::uint32_t timeoutMs = 0;      // DungeonClear.PartyWaitTimeoutSecs * 1000; 0 = no ceiling
         std::uint32_t strandedTimeoutMs = 0; // StrandedRecoveryNoProgressSecs * 1000; 0 = disabled
+        // How long a viability loss (lost healer, or too few members) may last
+        // before it ends the run: PartyWaitAbsentGraceSecs * 1000; 0 = no grace,
+        // the viability loss ends the run on the first tick that sees it. A
+        // healer who is only briefly out of the instance - dead at the entrance
+        // and running back, a teleport or map read in flight - gets this long
+        // to come back before the run is thrown away.
+        std::uint32_t absentGraceMs = 0;
 
         // Living members sharing the LEADER'S OWN Map (the leader included).
         // "Same Map object", never "same map id" - see DcSameInstance.h.
@@ -177,6 +184,22 @@ namespace DcPartyWaitDecision
         return TimeoutStopReason(repeated, waitedSecs, bossName, why);
     }
 
+    // The LostHealer stop line. It names who left and, when the caller knows
+    // it, why: the state the absent healer was seen in (for example alive on
+    // another map). A stop that only says the healer is gone sends the next
+    // diagnosis back to the start; one that names the state points at the
+    // teleport, hearth or map check that took the healer out.
+    inline std::string LostHealerStopReason(std::string const& absentNames,
+                                            std::string const& absentWhy)
+    {
+        std::string out = "Dungeon clear stopped: the party's healer is no longer in the "
+                          "instance (" + absentNames + " left the run";
+        if (!absentWhy.empty())
+            out += ": " + absentWhy;
+        out += ").";
+        return out;
+    }
+
     inline Result Decide(Inputs const& in)
     {
         auto const verdict = [](Outcome o, Reason r)
@@ -193,12 +216,21 @@ namespace DcPartyWaitDecision
         //    this rung gets to cancel.
         if (in.presentAlive < in.rosterAlive)
         {
-            if (in.presentAlive < kMinViableMembers)
-                return verdict(Outcome::EndRun, Reason::TooFewMembers);
+            bool const tooFew = in.presentAlive < kMinViableMembers;
             // Only a party that HAD a healer can have lost one. A deliberate
             // healer-less comp keeps running exactly as it did before.
-            if (in.rosterHasHealer && !in.presentHasHealer)
-                return verdict(Outcome::EndRun, Reason::LostHealer);
+            bool const lostHealer = in.rosterHasHealer && !in.presentHasHealer;
+            if (tooFew || lostHealer)
+            {
+                // Grace: a viability loss that has not lasted absentGraceMs yet
+                // is a wait, not an ending. The healer may only be running back
+                // from the entrance or caught in a teleport; if it is back
+                // before the grace ends the wait simply becomes ready again,
+                // and if it is still gone the loss ends the run below.
+                if (in.absentGraceMs == 0 || in.waitedMs >= in.absentGraceMs)
+                    return verdict(Outcome::EndRun,
+                                   tooFew ? Reason::TooFewMembers : Reason::LostHealer);
+            }
         }
 
         // 2. Rescue once the stranded clock has elapsed. Do this before the

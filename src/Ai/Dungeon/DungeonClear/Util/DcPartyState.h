@@ -247,6 +247,11 @@ public:
         bool presentHasHealer = false;
         bool rosterHasHealer  = false;
         std::string absentNames;       // comma-joined, capped; "" when nobody is absent
+        // Why the absent healer is absent, as seen by this walk: an absent
+        // member here is alive and in the world, just not on the leader's Map,
+        // so this reads "alive on another map". "" when no healer is absent.
+        // The LostHealer stop line names it (issue #162).
+        std::string absentHealerWhy;
     };
     static PartyPresence GetPartyPresence(Player* bot);
 

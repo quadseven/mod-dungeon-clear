@@ -901,6 +901,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     DcPartyWaitDecision::Inputs waitIn;
     waitIn.waitedMs = getMSTimeDiff(appr.partyNotReadySinceMs, nowMs);
     waitIn.timeoutMs = DcSettings::GetUInt(bot, "PartyWaitTimeoutSecs") * 1000;
+    waitIn.absentGraceMs = DcSettings::GetUInt(bot, "PartyWaitAbsentGraceSecs") * 1000;
     waitIn.strandedTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
     waitIn.presentAlive = presence.presentAlive;
     waitIn.presentHasHealer = presence.presentHasHealer;
@@ -943,8 +944,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         switch (verdict.reason)
         {
             case DcPartyWaitDecision::Reason::LostHealer:
-                stopReason = "Dungeon clear stopped: the party's healer is no longer in the "
-                             "instance (" + presence.absentNames + " left the run).";
+                stopReason = DcPartyWaitDecision::LostHealerStopReason(
+                    presence.absentNames, presence.absentHealerWhy);
                 break;
             case DcPartyWaitDecision::Reason::TooFewMembers:
                 stopReason = "Dungeon clear stopped: too few members left in the instance to "
