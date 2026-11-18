@@ -46,7 +46,36 @@ namespace DcRunProgress
         std::uint32_t anchors    = 0;      // cleared-anchor count last seen
         std::uint32_t bossEntry  = 0;      // anchor entry `bestDist` is keyed to (re-arm on change)
         float         bestDist   = -1.0f;  // closest tank approach to that anchor (<0 = unset)
+        std::uint32_t anchorsMax = 0;      // most cleared anchors seen in this instance (high-water)
+        std::uint32_t instance   = 0;      // instance id the two above were read in
     };
+
+    // Signals 1 and 2 as an EDGE, engine-free so it is unit-tested: a boss bit
+    // in `mask` that the mark had not seen, or a cleared-anchor count above the
+    // instance's high-water mark. Writes what it saw into `mark`. A change that
+    // is not growth is NOT a kill: the run is re-armed after every wipe with
+    // `dc on`, which clears the anchor set, and the objectives then latch again.
+    // Reading that drop and those re-latches as kills re-stamped the no-kill
+    // clock after every wipe (guild run 6257: six wipes, one boss, never ended).
+    // A new instance id is a new copy of the dungeon: the high-water restarts.
+    inline bool Gained(Mark& mark, std::uint32_t instanceId, std::uint32_t mask,
+                       std::uint32_t anchors)
+    {
+        if (mark.instance != instanceId)
+        {
+            mark.instance = instanceId;
+            mark.anchorsMax = 0;
+        }
+        bool gained = (mask & ~mark.mask) != 0;
+        mark.mask = mask;
+        if (anchors > mark.anchorsMax)
+        {
+            mark.anchorsMax = anchors;
+            gained = true;
+        }
+        mark.anchors = anchors;
+        return gained;
+    }
 
     // Did the run show a sign of life this tick? Updates `mark` in place with
     // whatever it saw. Reads the leader's own AI context, so call it on the
