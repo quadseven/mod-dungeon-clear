@@ -194,7 +194,7 @@ TEST(DcPartyWaitTest, TooFewMembersAlsoWaitsOutTheGrace)
 
 TEST(DcPartyWaitTest, ZeroGraceKeepsTheImmediateStop)
 {
-    // No grace configured: today's behaviour, byte for byte.
+    // No grace configured: today's behavior, byte for byte.
     Inputs in = Healthy();
     in.absentGraceMs = 0;
     in.waitedMs = 0;
@@ -215,7 +215,7 @@ TEST(DcPartyWaitTest, LostHealerStopLineNamesWhyTheHealerLeft)
     // No why known: the old line, unchanged.
     std::string const bare = DcPartyWaitDecision::LostHealerStopReason("Healer", "");
     EXPECT_EQ(bare, "Dungeon clear stopped: the party's healer is no longer in the "
-                    "instance (Uzza left the run).");
+                    "instance (Healer left the run).");
 }
 
 TEST(DcPartyWaitTest, ViabilityIsJudgedBeforeTheClock)
