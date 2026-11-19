@@ -184,11 +184,7 @@ namespace DcPartyWaitDecision
         return TimeoutStopReason(repeated, waitedSecs, bossName, why);
     }
 
-    // The LostHealer stop line. It names who left and, when the caller knows
-    // it, why: the state the absent healer was seen in (for example alive on
-    // another map). A stop that only says the healer is gone sends the next
-    // diagnosis back to the start; one that names the state points at the
-    // teleport, hearth or map check that took the healer out.
+    // The LostHealer stop line names who left and, when known, why.
     inline std::string LostHealerStopReason(std::string const& absentNames,
                                             std::string const& absentWhy)
     {

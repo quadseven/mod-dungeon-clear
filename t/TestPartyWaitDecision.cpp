@@ -143,6 +143,25 @@ TEST(DcPartyWaitTest, AHealerBackWithinTheGraceResumesTheRun)
     EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
 }
 
+// Dire Maul East regression: before Zevrim Thornhoof has been killed, the
+// healer briefly leaves the instance and returns during the regroup grace.
+// The old immediate viability stop ended these runs on the first absent tick.
+TEST(DcPartyWaitTest, DireMaulEastHealerReturnsBeforeZevrimAndRunContinues)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;
+    in.waitedMs = 3000;  // first between-pulls observation, before Zevrim
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    in.waitedMs = 12000;  // healer returned before the grace expired
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
+}
+
 TEST(DcPartyWaitTest, AHealerStillGoneWhenTheGraceEndsEndsTheRun)
 {
     Inputs in = Healthy();
