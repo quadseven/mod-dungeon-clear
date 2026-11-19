@@ -120,6 +120,104 @@ TEST(DcPartyWaitTest, DroppingToASingleMemberEndsTheRun)
     EXPECT_EQ(r.reason, Reason::TooFewMembers);
 }
 
+// --- the absent grace: a brief healer absence is a wait, not an ending ------
+// Issue #162: five Dire Maul East runs stopped 4 to 11 minutes in, before the
+// first boss, on this line, because the viability rung fired on the FIRST tick
+// that saw the healer out of the instance. A healer running back from the
+// entrance, or caught in a teleport, never got the chance to return.
+
+TEST(DcPartyWaitTest, AHealerBackWithinTheGraceResumesTheRun)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;   // the healer is out of the instance
+    in.waitedMs = 3000;            // well inside the grace
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    // The healer comes back inside before the grace ends: the run resumes
+    // (the wait just becomes an ordinary wait again, then ready).
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
+}
+
+// Dire Maul East regression: before Zevrim Thornhoof has been killed, the
+// healer briefly leaves the instance and returns during the regroup grace.
+// The old immediate viability stop ended these runs on the first absent tick.
+TEST(DcPartyWaitTest, DireMaulEastHealerReturnsBeforeZevrimAndRunContinues)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;
+    in.waitedMs = 3000;  // first between-pulls observation, before Zevrim
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    in.waitedMs = 12000;  // healer returned before the grace expired
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
+}
+
+TEST(DcPartyWaitTest, AHealerStillGoneWhenTheGraceEndsEndsTheRun)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;
+    in.waitedMs = 59999;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.waitedMs = 60000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, TooFewMembersAlsoWaitsOutTheGrace)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 4);          // only the tank is left, briefly
+    in.presentHasHealer = false;
+    in.waitedMs = 3000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.waitedMs = 60000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::TooFewMembers);
+}
+
+TEST(DcPartyWaitTest, ZeroGraceKeepsTheImmediateStop)
+{
+    // No grace configured: today's behavior, byte for byte.
+    Inputs in = Healthy();
+    in.absentGraceMs = 0;
+    in.waitedMs = 0;
+    LeaveInstance(in, 1);
+    in.presentHasHealer = false;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+    EXPECT_EQ(Decide(in).reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, LostHealerStopLineNamesWhyTheHealerLeft)
+{
+    std::string const r = DcPartyWaitDecision::LostHealerStopReason(
+        "Healer", "alive on another map");
+    EXPECT_NE(r.find("the party's healer is no longer in the instance"), std::string::npos);
+    EXPECT_NE(r.find("Healer left the run"), std::string::npos);
+    EXPECT_NE(r.find("alive on another map"), std::string::npos);
+
+    // No why known: the old line, unchanged.
+    std::string const bare = DcPartyWaitDecision::LostHealerStopReason("Healer", "");
+    EXPECT_EQ(bare, "Dungeon clear stopped: the party's healer is no longer in the "
+                    "instance (Healer left the run).");
+}
+
 TEST(DcPartyWaitTest, ViabilityIsJudgedBeforeTheClock)
 {
     // An unviable party stops NOW, not in three minutes. Every one of those

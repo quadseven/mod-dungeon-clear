@@ -409,6 +409,23 @@ DungeonClear.UnreachableCombatPurgeSecs = 60
 DungeonClear.PartyWaitTimeoutSecs = 180
 
 #
+#    DungeonClear.PartyWaitAbsentGraceSecs
+#        Grace for a lost healer (or a party below two members) in the
+#        between-pulls wait, in seconds. The viability check used to end the
+#        run on the first tick that saw the healer out of the instance, so a
+#        healer running back from the entrance, or caught in a teleport, lost
+#        the whole run before the first boss. Within this grace the wait
+#        simply waits; a healer back inside resumes the run, and one still
+#        gone when the grace lapses ends it, with the stop line naming the
+#        state the healer was seen in.
+#            0 = no grace (the first tick that sees the loss ends the run)
+#
+#        Default: 60 (1 minute)
+#
+
+DungeonClear.PartyWaitAbsentGraceSecs = 60
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

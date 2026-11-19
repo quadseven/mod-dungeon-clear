@@ -775,6 +775,8 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
             continue;
         }
 
+        if (heals && out.absentHealerWhy.empty())
+            out.absentHealerWhy = "alive on another map";
         if (absent.size() < MAX_NAMED)
             absent.push_back(member->GetName());
         else
