@@ -545,14 +545,82 @@ TEST(DcPartialWipeWatchdog, HoldsRecoveryAndUnknownDeathsKeepTheRun)
     in.rosterComplete = true;
     in.rosterAlive = 0;  // full wipe recovery retains ownership
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
-    in.rosterAlive = 2;
-    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
     in.rosterAlive = 4;  // a dead owner outside with four living inside
     in.rosterDead = 1;
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
     in.rosterAlive = 1;
     in.rosterDead = 0;  // deliberate solo or unknown/offline members
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+}
+
+// Two alive and three dead with no resurrector among the living used to hold
+// for hours: the stop needed exactly one survivor. It must end after the grace.
+TEST(DcPartialWipeWatchdog, SeveralSurvivorsWithoutAResurrectorEndAndReleaseTheGroup)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 2;
+    in.rosterDead = 3;
+    in.dungeonParty = true;
+    in.rosterComplete = true;
+    std::uint32_t stamp = 0;
+    DcNoKillDecision::PartialWipeState partial;
+    in.nowMs = 5000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    DcNoKillDecision::Result verdict;
+    for (in.nowMs = 10000; in.nowMs <= 95000; in.nowMs += 5000)
+        verdict = DcNoKillDecision::Tick(stamp, partial, in);
+    EXPECT_TRUE(verdict.end);
+    EXPECT_TRUE(verdict.partialWipe);
+    EXPECT_EQ(verdict.reason,
+              "Dungeon clear stopped: partial wipe (2 alive, 3 dead in the group; recovery grace 90s elapsed without a ready resurrector).");
+}
+
+TEST(DcPartialWipeWatchdog, RevivalRearmsTheGraceWithSeveralSurvivors)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 2;
+    in.rosterDead = 3;
+    in.dungeonParty = true;
+    in.rosterComplete = true;
+    std::uint32_t stamp = 0;
+    DcNoKillDecision::PartialWipeState partial;
+    in.nowMs = 5000;
+    DcNoKillDecision::Tick(stamp, partial, in);
+    in.nowMs = 80000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.rosterAlive = 3;  // one raised, 3 alive / 2 dead is no longer a wipe
+    in.rosterDead = 2;
+    in.nowMs = 82000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.rosterAlive = 2;  // a second raise within a still-wiped roster
+    in.rosterDead = 2;
+    in.nowMs = 85000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    for (in.nowMs = 90000; in.nowMs <= 170000; in.nowMs += 5000)  // first grace would end at 95000
+        EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    DcNoKillDecision::Result verdict;
+    for (in.nowMs = 175000; in.nowMs <= 190000; in.nowMs += 5000)
+        verdict = DcNoKillDecision::Tick(stamp, partial, in);
+    EXPECT_TRUE(verdict.end);
+}
+
+TEST(DcPartialWipeWatchdog, SeveralSurvivorsKeepTheRunWhenOneCanResurrectOrOutnumberTheDead)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 2;
+    in.rosterDead = 3;
+    in.dungeonParty = true;
+    in.rosterComplete = true;
+    in.survivorCanResurrect = true;  // a living healer can raise them
+    std::uint32_t stamp = 0;
+    DcNoKillDecision::PartialWipeState partial;
+    for (in.nowMs = 5000; in.nowMs <= 200000; in.nowMs += 5000)
+        EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.survivorCanResurrect = false;
+    in.rosterAlive = 3;  // the living still outnumber the dead: the run carries on
+    in.rosterDead = 2;
+    for (in.nowMs = 300000; in.nowMs <= 400000; in.nowMs += 5000)
+        EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
 }
 
 TEST(DcPartialWipeWatchdog, CompletedObjectiveKeepsTheExistingKillPriority)

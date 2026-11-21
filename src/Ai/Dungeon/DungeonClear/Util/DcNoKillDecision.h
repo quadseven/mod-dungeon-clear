@@ -49,6 +49,7 @@ namespace DcNoKillDecision
         std::uint32_t sinceMs = 0;
         std::uint32_t lastObservedMs = 0;
         bool armed = false;
+        std::uint32_t lastDead = 0;  // a fall below this is a revival: the grace rearms
     };
 
     // Reuse the existing resurrection budget, but leave a sweep margin below
@@ -71,7 +72,7 @@ namespace DcNoKillDecision
         bool rosterComplete = false; // every canonical group slot is observed in world
         std::uint32_t recoveryGraceMs = RecoveryGraceMs(90);
         bool dungeonParty = false;
-        bool survivorCanResurrect = false;  // ready spell or pending offer from this survivor
+        bool survivorCanResurrect = false;  // ready spell or pending offer from ANY living member
         std::string   nextBoss;       // the boss still ahead; empty = none left (or unknown)
     };
 
@@ -92,6 +93,11 @@ namespace DcNoKillDecision
     }
 
     // AI-REVIEW 2026-11-11 [Claude Code/independent-review] DC121-REV-009:
+    // A partial wipe is any complete roster where the dead are at least as many
+    // as the living and no living member can resurrect: the survivors cannot
+    // clear on, and nobody inside can recover the dead, so the run ends and the
+    // group recovers outside. (Was: exactly one living member, so two alive and
+    // three dead held for hours.)
     // A complete partial-wipe observation first grants the existing recovery
     // window. Recovery, unknown members, holds or an observation gap rearm it.
     // Pending grace owns this tick, so an older no-kill clock cannot cut it short.
@@ -100,21 +106,28 @@ namespace DcNoKillDecision
     {
         Result r;
         bool const candidate = !in.killed && !in.held && in.rosterComplete &&
-            in.dungeonParty && in.rosterAlive == 1 && in.rosterDead > 0 &&
-            !in.survivorCanResurrect;
+            in.dungeonParty && in.rosterAlive >= 1 && in.rosterDead > 0 &&
+            in.rosterDead >= in.rosterAlive && !in.survivorCanResurrect;
         if (candidate)
         {
             if (!partial.armed || in.nowMs - partial.lastObservedMs >= MAX_OBSERVATION_GAP_MS)
             {
-                partial = {in.nowMs, in.nowMs, true};
+                partial = {in.nowMs, in.nowMs, true, in.rosterDead};
                 return r;
             }
             partial.lastObservedMs = in.nowMs;
+            if (in.rosterDead < partial.lastDead)
+            {
+                // Someone was raised: the recovery is working, so grant a fresh grace.
+                partial = {in.nowMs, in.nowMs, true, in.rosterDead};
+                return r;
+            }
+            partial.lastDead = in.rosterDead;
             if (in.nowMs - partial.sinceMs < in.recoveryGraceMs)
                 return r;
             r.end = true;
             r.partialWipe = true;
-            r.reason = "Dungeon clear stopped: partial wipe (1 alive, " +
+            r.reason = "Dungeon clear stopped: partial wipe (" + std::to_string(in.rosterAlive) + " alive, " +
                        std::to_string(in.rosterDead) + " dead in the group; recovery grace " +
                        std::to_string(in.recoveryGraceMs / 1000u) +
                        "s elapsed without a ready resurrector).";
