@@ -575,7 +575,7 @@ TEST(DcPartialWipeWatchdog, SeveralSurvivorsWithoutAResurrectorEndAndReleaseTheG
               "Dungeon clear stopped: partial wipe (2 alive, 3 dead in the group; recovery grace 90s elapsed without a ready resurrector).");
 }
 
-TEST(DcPartialWipeWatchdog, ARevivalRearmsTheGraceWithSeveralSurvivors)
+TEST(DcPartialWipeWatchdog, RevivalRearmsTheGraceWithSeveralSurvivors)
 {
     DcNoKillDecision::Inputs in;
     in.rosterAlive = 2;
@@ -588,16 +588,20 @@ TEST(DcPartialWipeWatchdog, ARevivalRearmsTheGraceWithSeveralSurvivors)
     DcNoKillDecision::Tick(stamp, partial, in);
     in.nowMs = 80000;
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
-    in.rosterAlive = 3;  // one raised
+    in.rosterAlive = 3;  // one raised, 3 alive / 2 dead is no longer a wipe
+    in.rosterDead = 2;
+    in.nowMs = 82000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.rosterAlive = 2;  // a second raise within a still-wiped roster
     in.rosterDead = 2;
     in.nowMs = 85000;
     EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
-    in.rosterAlive = 2;  // and down again
-    in.rosterDead = 3;
-    in.nowMs = 100000;   // old grace would have ended here
-    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
-    in.nowMs = 180000;
-    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    for (in.nowMs = 90000; in.nowMs <= 170000; in.nowMs += 5000)  // first grace would end at 95000
+        EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    DcNoKillDecision::Result verdict;
+    for (in.nowMs = 175000; in.nowMs <= 190000; in.nowMs += 5000)
+        verdict = DcNoKillDecision::Tick(stamp, partial, in);
+    EXPECT_TRUE(verdict.end);
 }
 
 TEST(DcPartialWipeWatchdog, SeveralSurvivorsKeepTheRunWhenOneCanResurrectOrOutnumberTheDead)
