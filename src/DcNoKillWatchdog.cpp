@@ -108,15 +108,40 @@ namespace DcNoKillWatchdog
             // Unknown/offline slots cannot be used as evidence of a partial wipe.
             in.rosterComplete = group && group->GetMembersCount() ==
                 presence.rosterAlive + presence.rosterDead;
-            Map* const survivorMap = survivor ? survivor->GetMap() : nullptr;
+            // Any living member's map: with several alive there is no sole survivor.
+            Player* living = survivor;
+            if (!living && group)
+                for (GroupReference* ref = group->GetFirstMember(); ref && !living; ref = ref->next())
+                {
+                    Player* m = ref->GetSource();
+                    if (m && m->IsInWorld() && m->IsAlive())
+                        living = m;
+                }
+            Map* const survivorMap = living ? living->GetMap() : nullptr;
             in.dungeonParty = group && !group->isRaidGroup() && survivorMap &&
                               survivorMap->IsDungeon() && !survivorMap->IsRaid();
             // AI-REVIEW 2026-11-11 [Codex/in-process/runtime-trace] DC121-REV-006:
             // A successful cooldown-gated cast leaves a pending offer; preserve
             // that recovery even after the caster's spell becomes unavailable.
-            in.survivorCanResurrect = survivor &&
-                (DcRezRecovery::KnownResurrectSpell(survivor) ||
-                 DcRezRecovery::HoldsResurrectOffer(survivor));
+            // Any living member that can resurrect keeps the recovery alive, not
+            // only a sole survivor: two alive and three dead still ends when
+            // neither alive member can raise anyone.
+            auto canRez = [](Player* m)
+            {
+                return m && (DcRezRecovery::KnownResurrectSpell(m) ||
+                             DcRezRecovery::HoldsResurrectOffer(m));
+            };
+            in.survivorCanResurrect = canRez(survivor);
+            if (!in.survivorCanResurrect && group && presence.rosterAlive > 1)
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* m = ref->GetSource();
+                    if (m && m->IsInWorld() && m->IsAlive() && canRez(m))
+                    {
+                        in.survivorCanResurrect = true;
+                        break;
+                    }
+                }
             // AI-REVIEW 2026-11-11 [Codex/in-process/comment-analyzer] DC121-REV-007:
             // Next boss may be unavailable while the owner is outside a dungeon;
             // absence alone is not evidence of a completed run. The ordinary
