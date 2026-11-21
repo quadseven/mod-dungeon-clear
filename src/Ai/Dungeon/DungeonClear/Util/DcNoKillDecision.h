@@ -49,6 +49,7 @@ namespace DcNoKillDecision
         std::uint32_t sinceMs = 0;
         std::uint32_t lastObservedMs = 0;
         bool armed = false;
+        std::uint32_t lastDead = 0;  // a fall below this is a revival: the grace rearms
     };
 
     // Reuse the existing resurrection budget, but leave a sweep margin below
@@ -111,10 +112,17 @@ namespace DcNoKillDecision
         {
             if (!partial.armed || in.nowMs - partial.lastObservedMs >= MAX_OBSERVATION_GAP_MS)
             {
-                partial = {in.nowMs, in.nowMs, true};
+                partial = {in.nowMs, in.nowMs, true, in.rosterDead};
                 return r;
             }
             partial.lastObservedMs = in.nowMs;
+            if (in.rosterDead < partial.lastDead)
+            {
+                // Someone was raised: the recovery is working, so grant a fresh grace.
+                partial = {in.nowMs, in.nowMs, true, in.rosterDead};
+                return r;
+            }
+            partial.lastDead = in.rosterDead;
             if (in.nowMs - partial.sinceMs < in.recoveryGraceMs)
                 return r;
             r.end = true;

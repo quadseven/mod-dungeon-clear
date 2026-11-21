@@ -575,6 +575,31 @@ TEST(DcPartialWipeWatchdog, SeveralSurvivorsWithoutAResurrectorEndAndReleaseTheG
               "Dungeon clear stopped: partial wipe (2 alive, 3 dead in the group; recovery grace 90s elapsed without a ready resurrector).");
 }
 
+TEST(DcPartialWipeWatchdog, ARevivalRearmsTheGraceWithSeveralSurvivors)
+{
+    DcNoKillDecision::Inputs in;
+    in.rosterAlive = 2;
+    in.rosterDead = 3;
+    in.dungeonParty = true;
+    in.rosterComplete = true;
+    std::uint32_t stamp = 0;
+    DcNoKillDecision::PartialWipeState partial;
+    in.nowMs = 5000;
+    DcNoKillDecision::Tick(stamp, partial, in);
+    in.nowMs = 80000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.rosterAlive = 3;  // one raised
+    in.rosterDead = 2;
+    in.nowMs = 85000;
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.rosterAlive = 2;  // and down again
+    in.rosterDead = 3;
+    in.nowMs = 100000;   // old grace would have ended here
+    EXPECT_FALSE(DcNoKillDecision::Tick(stamp, partial, in).end);
+    in.nowMs = 180000;
+    EXPECT_TRUE(DcNoKillDecision::Tick(stamp, partial, in).end);
+}
+
 TEST(DcPartialWipeWatchdog, SeveralSurvivorsKeepTheRunWhenOneCanResurrectOrOutnumberTheDead)
 {
     DcNoKillDecision::Inputs in;
