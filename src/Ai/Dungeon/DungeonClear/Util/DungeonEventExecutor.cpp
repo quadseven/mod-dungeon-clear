@@ -1048,9 +1048,21 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 // rather than waiting forever for an NPC that will never come (a
                 // freed ZulFarrak helper the party let die). The wide rescan
                 // separates "dead/gone" (skip) from "still walking in" (approach).
-                if (step.skipIfMissing &&
-                    !bot->FindNearestCreature(step.creatureEntry, DC_EVENT_CREATURE_SCAN,
-                                              /*alive*/ true))
+                bool const inScan = step.skipIfMissing &&
+                    bot->FindNearestCreature(step.creatureEntry, DC_EVENT_CREATURE_SCAN,
+                                             /*alive*/ true);
+                uint32 doneState = 0;
+                bool doneLive = false;
+                if (step.skipIfMissing && step.skipDoneBossSlot >= 0)
+                {
+                    if (InstanceScript* inst = DcTargeting::GetInstanceScript(bot))
+                        doneState = inst->GetBossState(static_cast<uint32>(step.skipDoneBossSlot));
+                    doneLive = step.skipDoneEntry != 0 &&
+                        bot->FindNearestCreature(step.skipDoneEntry, DC_EVENT_CREATURE_SCAN,
+                                                 /*alive*/ true);
+                }
+                if (DecideGossipSkipWhenMissing(step.skipIfMissing, inScan,
+                                                step.skipDoneBossSlot, doneState, doneLive))
                 {
                     LOG_DEBUG("playerbots.dungeonclear",
                               "[dungeon-clear] {} event-step Gossip target {} gone — skipping",

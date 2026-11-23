@@ -105,6 +105,11 @@ void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out)
     // Majordomo to click — skip to the spawn wait, which the live (or fought)
     // Ragnaros satisfies via the objective's gateEntry.
     gossip.skipIfMissing = true;
+    // "Missing" must mean already summoned, not "farther than the rescan": Majordomo
+    // only reaches this spot after his outro, ~370yd from his battle spawn. Skip only
+    // when Ragnaros' boss slot is past NOT_STARTED or a live Ragnaros is in the scan.
+    gossip.skipDoneBossSlot = 9;
+    gossip.skipDoneEntry = kRagnaros;
     ev.steps.push_back(gossip);
 
     EventStep waitSpawn;
