@@ -320,6 +320,13 @@ struct EventStep
     // "still walking in / just outside the gossip search radius" (keep approaching).
     bool   skipIfMissing{false};
 
+    // Gossip only, refines skipIfMissing. When skipDoneBossSlot >= 0 the "NPC is
+    // missing" answer is no longer taken from distance: the step skips only if that
+    // boss slot is past NOT_STARTED, or a live skipDoneEntry (if non-zero) is in the
+    // scan. Otherwise it keeps Running (the NPC may not have arrived yet).
+    int32  skipDoneBossSlot{-1};
+    uint32 skipDoneEntry{0};
+
     // UseGameObject only. Deliver the click as a REPORT-USE
     // (CMSG_GAMEOBJ_REPORT_USE -> GameObjectAI::GossipHello(player, /*reportUse*/
     // true)) instead of GameObject::Use().
@@ -521,6 +528,21 @@ inline BossStateGateVerdict DecideBossStateGate(uint32 state, uint32 clearMask,
     if (state < 32 && (restartMask & DcBossStateBit(state)))
         return BossStateGateVerdict::Restart;
     return BossStateGateVerdict::Hold;
+}
+
+// Gossip step, target not found in the approach radius (pure). Legacy steps
+// (skipDoneBossSlot < 0) skip when the NPC is absent from the wide rescan. Steps
+// that name a done-slot skip only when the event already happened: boss state past
+// NOT_STARTED (0), or a live done-entry creature in the scan.
+inline bool DecideGossipSkipWhenMissing(bool skipIfMissing, bool npcInWideScan,
+                                        int32 skipDoneBossSlot, uint32 bossState,
+                                        bool doneEntryLive)
+{
+    if (!skipIfMissing)
+        return false;
+    if (skipDoneBossSlot < 0)
+        return !npcInWideScan;
+    return bossState != 0 || doneEntryLive;
 }
 
 // Every creature entry an EventStep's spawn gate accepts: creatureEntry followed

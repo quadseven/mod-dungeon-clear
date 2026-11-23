@@ -78,6 +78,8 @@ TEST(DcMoltenCoreTest, SummonRagnarosEventShape)
     EXPECT_EQ(gossip.gossipOption, 0);
     // Re-entry with Ragnaros already summoned has no gossip Majordomo — skip.
     EXPECT_TRUE(gossip.skipIfMissing);
+    EXPECT_EQ(gossip.skipDoneBossSlot, 9);
+    EXPECT_EQ(gossip.skipDoneEntry, 11502u);
 
     EventStep const& wait = ev->steps[2];
     EXPECT_EQ(wait.kind, EventStepKind::WaitForSpawn);
@@ -85,4 +87,17 @@ TEST(DcMoltenCoreTest, SummonRagnarosEventShape)
     EXPECT_TRUE(wait.wantAlive);
     // Must outlast the ~48s scripted intro.
     EXPECT_GE(wait.timeoutMs, 60000u);
+}
+
+TEST(DcMoltenCoreTest, GossipSkipWaitsForMajordomoUnlessRagnarosSummoned)
+{
+    // Majordomo not in scan, Ragnaros not summoned: keep waiting.
+    EXPECT_FALSE(DecideGossipSkipWhenMissing(true, false, 9, 0, false));
+    // Slot done or Ragnaros live: skip.
+    EXPECT_TRUE(DecideGossipSkipWhenMissing(true, false, 9, 3, false));
+    EXPECT_TRUE(DecideGossipSkipWhenMissing(true, false, 9, 0, true));
+    // Legacy rows (Zul'Farrak helper, Old Hillsbrad) keep distance-based skipping.
+    EXPECT_TRUE(DecideGossipSkipWhenMissing(true, false, -1, 0, false));
+    EXPECT_FALSE(DecideGossipSkipWhenMissing(true, true, -1, 0, false));
+    EXPECT_FALSE(DecideGossipSkipWhenMissing(false, false, -1, 0, false));
 }
