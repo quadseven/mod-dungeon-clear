@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 
+#include "DcPartyWaitDecision.h"
 #include "DcRestFloorDecision.h"
 
 class AiObjectContext;
@@ -285,6 +286,11 @@ public:
         bool presentHasHealer = false;
         bool rosterHasHealer  = false;
         std::string absentNames;       // comma-joined, capped; "" when nobody is absent
+        // What the walk can see of why a healer is out: claimed by a queue fill, a
+        // hearthstone or teleport in flight, or dead and released. Unknown when
+        // nothing shows. Set on any healer, in the instance or not, so the tracker
+        // also learns a cause from the tick BEFORE the healer left. Issue #162.
+        DcPartyWaitDecision::LeftCause healerCause = DcPartyWaitDecision::LeftCause::Unknown;
     };
     static PartyPresence GetPartyPresence(Player* bot);
 

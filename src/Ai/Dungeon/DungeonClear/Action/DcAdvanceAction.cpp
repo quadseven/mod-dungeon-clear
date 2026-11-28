@@ -875,6 +875,24 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         return Step::ReturnFalse;
     }
 
+    // One look at who is in the instance, every tick of the between-pulls gate and
+    // not only once a wait has run its debounce: the grace for a lost healer is
+    // measured from when the healer LEFT, so the clock has to start on the tick that
+    // first sees the loss, even while the party is still ready and walking (issue
+    // #162). The tracker lives in the wait memory, which survives a stop.
+    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(bot);
+    auto& memory = botAI->GetAiObjectContext()
+                       ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
+    {
+        DcPartyWaitDecision::Inputs lossIn;
+        lossIn.presentAlive = presence.presentAlive;
+        lossIn.presentHasHealer = presence.presentHasHealer;
+        lossIn.rosterAlive = presence.rosterAlive;
+        lossIn.rosterHasHealer = presence.rosterHasHealer;
+        DcPartyWaitDecision::ObserveAbsence(memory.absence, DcPartyWaitDecision::IsViabilityLoss(lossIn),
+                                            presence.healerCause, getMSTime());
+    }
+
     if (IsBetweenPullsReady(bot, context))
     {
         appr.partyNotReadyTicks = 0;
@@ -969,10 +987,13 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     // DisableDungeonClear is the same funnel `dc off`, the wipe bailout and the
     // rez-recovery timeout use, so the addon, the status panel and the test
     // harness all learn about this the way they learn about every other ending.
-    DcPartyState::PartyPresence const presence = DcPartyState::GetPartyPresence(bot);
     DcPartyWaitDecision::Inputs waitIn;
     waitIn.waitedMs = getMSTimeDiff(appr.partyNotReadySinceMs, nowMs);
     waitIn.timeoutMs = DcSettings::GetUInt(bot, "PartyWaitTimeoutSecs") * 1000;
+    waitIn.absentGraceMs = DcSettings::GetUInt(bot, "PartyWaitAbsentGraceSecs") * 1000;
+    // From when the loss began, never from when the wait began: a healer that leaves
+    // after the party has already waited past the grace still gets all of it.
+    waitIn.absentMs = DcPartyWaitDecision::AbsentForMs(memory.absence, nowMs);
     waitIn.strandedTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
     waitIn.presentAlive = presence.presentAlive;
     waitIn.presentHasHealer = presence.presentHasHealer;
@@ -990,8 +1011,6 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         bot, gate.maxSpread, gate.anchor, gate.maxTankGap, DcPartyWaitDecision::kRegroupMaxYards);
     // The rescue record lives beside the timeout memory, outside the approach
     // state that DisableDungeonClear wipes. See DcPartyWaitDecision::TimeoutMemory.
-    auto& memory = botAI->GetAiObjectContext()
-                       ->GetValue<DcPartyWaitDecision::TimeoutMemory&>(DcKey::PartyWaitMemory)->Get();
     uint32 const bossEntry = st.next ? st.next->entry : 0;
     waitIn.rescueAlreadyFired =
         DcPartyWaitDecision::RescueFiredThisWait(memory, bossEntry, appr.partyNotReadySinceMs);
@@ -1128,8 +1147,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
         switch (verdict.reason)
         {
             case DcPartyWaitDecision::Reason::LostHealer:
-                stopReason = "Dungeon clear stopped: the party's healer is no longer in the "
-                             "instance (" + presence.absentNames + " left the run).";
+                stopReason = DcPartyWaitDecision::LostHealerStopReason(
+                    presence.absentNames, memory.absence.cause);
                 break;
             case DcPartyWaitDecision::Reason::TooFewMembers:
                 stopReason = "Dungeon clear stopped: too few members left in the instance to "

@@ -237,6 +237,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     // rather intervene by hand than have a run end itself.
     // See Util/DcPartyWaitDecision.h.
     { "PartyWaitTimeoutSecs",          DcType::UInt, 180,   0, 3600,  true  },
+    // Grace for a viability loss in that same wait: how long the party may be
+    // without its healer (or below the viable floor) before the loss ends the
+    // run, counted from when the loss began, not from when the wait began. A
+    // healer who died at the entrance and is running back, or who is caught in a
+    // teleport, is back inside this window; one who is truly gone still ends the
+    // run when it lapses. 0 = no grace (the first tick that sees the loss ends
+    // the run). See Util/DcPartyWaitDecision.h, issue #162.
+    { "PartyWaitAbsentGraceSecs",      DcType::UInt,  60,   0, 3600,  true  },
 
     // Regroup rung of the between-pulls wait. After this many seconds of one
     // uninterrupted wait that is held only by bot members who are out of range but

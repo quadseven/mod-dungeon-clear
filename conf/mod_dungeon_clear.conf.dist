@@ -452,6 +452,25 @@ DungeonClear.UnreachableCombatPurgeSecs = 60
 DungeonClear.PartyWaitTimeoutSecs = 180
 
 #
+#    DungeonClear.PartyWaitAbsentGraceSecs
+#        Grace for a lost healer (or a party below two members) in the
+#        between-pulls wait, in seconds, counted from when the healer left the
+#        instance (not from when the wait began). The viability check used to
+#        end the run on the first tick that saw the healer out of the instance,
+#        so a healer running back from the entrance, or caught in a teleport,
+#        lost the whole run before the first boss. Within this grace the wait
+#        simply waits; a healer back inside resumes the run, and one still gone
+#        when the grace lapses ends it, with the stop line naming what took the
+#        healer out (a queue fill's claim, a hearthstone or teleport, or a death
+#        and release) when that is known.
+#            0 = no grace (the first tick that sees the loss ends the run)
+#
+#        Default: 60 (1 minute)
+#
+
+DungeonClear.PartyWaitAbsentGraceSecs = 60
+
+#
 #    DungeonClear.PartyWaitRegroupSecs
 #        Regroup rung of the between-pulls wait, in seconds. When one wait has run
 #        this long and is held only by bot members who are out of range but able
