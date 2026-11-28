@@ -88,6 +88,17 @@ namespace DcPartyWaitDecision
         std::uint32_t waitedMs = 0;       // how long this uninterrupted wait has run
         std::uint32_t timeoutMs = 0;      // DungeonClear.PartyWaitTimeoutSecs * 1000; 0 = no ceiling
         std::uint32_t strandedTimeoutMs = 0; // StrandedRecoveryNoProgressSecs * 1000; 0 = disabled
+        // Grace for a viability loss (lost healer, or too few members):
+        // PartyWaitAbsentGraceSecs * 1000; 0 = no grace, the loss ends the run on
+        // the first tick that sees it. A healer who is only briefly out of the
+        // instance (dead at the entrance and running back, a teleport in flight)
+        // gets this long to come back before the run is thrown away.
+        std::uint32_t absentGraceMs = 0;
+        // How long the CURRENT viability loss has lasted, from AbsenceTracker
+        // (AbsentForMs), NOT how long the party has been waiting: a healer who
+        // leaves after the party already waited past the grace still gets all of
+        // it. 0 when no loss is being tracked.
+        std::uint32_t absentMs = 0;
 
         // Living members sharing the LEADER'S OWN Map (the leader included).
         // "Same Map object", never "same map id" - see DcSameInstance.h.
@@ -162,6 +173,132 @@ namespace DcPartyWaitDecision
         Reason  reason  = Reason::StillWaiting;
     };
 
+    // The party has lost something it cannot clear without: the roster shrank,
+    // and what is left is below the viable floor or has lost the healer the roster
+    // had. Only a party that HAD a healer can have lost one; a deliberate
+    // healer-less comp is never a loss.
+    inline bool IsViabilityLoss(Inputs const& in)
+    {
+        if (in.presentAlive >= in.rosterAlive)
+            return false;
+        return in.presentAlive < kMinViableMembers ||
+               (in.rosterHasHealer && !in.presentHasHealer);
+    }
+
+    // What took the healer out of the instance, as far as the code can see it.
+    enum class LeftCause : std::uint8_t
+    {
+        Unknown,          // nothing known: the stop line stays bare
+        Claimed,          // drawn away by a queue fill's claim on the character
+        Hearth,           // casting a hearthstone
+        Teleport,         // a teleport in flight or a teleport spell being cast
+        DiedAndReleased,  // died and released, so it came back outside at a graveyard
+    };
+
+    // What one look at the healer shows. Plain booleans so the decision stays pure.
+    struct HealerSample
+    {
+        bool claimedByFill = false;
+        bool castingHearth = false;
+        bool teleporting = false;     // IsBeingTeleported or casting a teleport spell
+        bool deadOrGhost = false;
+    };
+
+    // The most specific known cause wins: a claim explains a teleport, and a cast
+    // hearth explains the teleport it starts.
+    inline LeftCause ClassifyLeftCause(HealerSample const& s)
+    {
+        if (s.claimedByFill)
+            return LeftCause::Claimed;
+        if (s.castingHearth)
+            return LeftCause::Hearth;
+        if (s.teleporting)
+            return LeftCause::Teleport;
+        if (s.deadOrGhost)
+            return LeftCause::DiedAndReleased;
+        return LeftCause::Unknown;
+    }
+
+    inline char const* LeftCauseText(LeftCause c)
+    {
+        switch (c)
+        {
+            case LeftCause::Claimed:         return "claimed away by a queue fill";
+            case LeftCause::Hearth:          return "cast a hearthstone";
+            case LeftCause::Teleport:        return "was teleported out";
+            case LeftCause::DiedAndReleased: return "died and released to a graveyard";
+            case LeftCause::Unknown:         break;
+        }
+        return "";
+    }
+
+    // A cause seen this long before the loss began still counts as its reason (a
+    // death, then a run back, then a graveyard resurrection spans minutes).
+    inline constexpr std::uint32_t kCauseFreshMs = 300000;
+
+    // Tracks when the CURRENT viability loss began and what caused it. Lives in
+    // TimeoutMemory so it outlives the approach state a stop wipes.
+    struct AbsenceTracker
+    {
+        std::uint32_t sinceMs = 0;      // 0 = no loss in progress
+        LeftCause cause = LeftCause::Unknown;
+        LeftCause lastSeen = LeftCause::Unknown;  // latest cause seen, loss or not
+        std::uint32_t lastSeenMs = 0;   // 0 = none
+    };
+
+    // Feed it one look per tick. `lossNow` is IsViabilityLoss for this tick and
+    // `causeNow` is the healer's classification this tick (Unknown when nothing
+    // shows). The clock starts on the first tick of a loss and resets the moment
+    // the loss is gone, so a healer that returns and leaves again gets a fresh
+    // grace and one that returns is never charged for its earlier absence.
+    inline void ObserveAbsence(AbsenceTracker& t, bool lossNow, LeftCause causeNow,
+                               std::uint32_t nowMs)
+    {
+        if (causeNow != LeftCause::Unknown)
+        {
+            t.lastSeen = causeNow;
+            t.lastSeenMs = nowMs ? nowMs : 1u;
+        }
+        else if (t.lastSeenMs != 0 && nowMs - t.lastSeenMs > kCauseFreshMs)
+        {
+            t.lastSeen = LeftCause::Unknown;
+            t.lastSeenMs = 0;
+        }
+
+        if (!lossNow)
+        {
+            t.sinceMs = 0;
+            t.cause = LeftCause::Unknown;
+            return;
+        }
+        if (t.sinceMs == 0)
+        {
+            t.sinceMs = nowMs ? nowMs : 1u;
+            t.cause = t.lastSeen;
+        }
+        else if (causeNow != LeftCause::Unknown)
+        {
+            t.cause = causeNow;
+        }
+    }
+
+    // How long the loss in progress has lasted; 0 when none is tracked.
+    inline std::uint32_t AbsentForMs(AbsenceTracker const& t, std::uint32_t nowMs)
+    {
+        return t.sinceMs == 0 ? 0u : nowMs - t.sinceMs;
+    }
+
+    // The LostHealer stop line: who left and, when known, why.
+    inline std::string LostHealerStopReason(std::string const& absentNames, LeftCause cause)
+    {
+        std::string out = "Dungeon clear stopped: the party's healer is no longer in the "
+                          "instance (" + absentNames + " left the run";
+        if (cause != LeftCause::Unknown)
+            out += std::string(": ") + LeftCauseText(cause);
+        out += ").";
+        return out;
+    }
+
     // Memory of the last party-wait timeout, so a second identical stop (same
     // boss, same members waited on) can be told from the first. It lives in its
     // own per-bot value (DcKey::PartyWaitMemory), NOT on DcApproachState: the
@@ -180,6 +317,9 @@ namespace DcPartyWaitDecision
         // The wait that last spent its regroup order, same shape as the rescue's.
         std::uint32_t regroupBossEntry = 0;
         std::uint32_t regroupWaitStartMs = 0;  // 0 = no regroup remembered
+
+        // When the current viability loss began and what caused it (issue #162).
+        AbsenceTracker absence;
     };
 
     // True when the wait that started at waitStartMs, at this boss, has already
@@ -259,14 +399,15 @@ namespace DcPartyWaitDecision
         //    all present and merely not ready yet is an ordinary wait, however
         //    small it is - a two-member run that STARTED as two is not something
         //    this rung gets to cancel.
-        if (in.presentAlive < in.rosterAlive)
+        if (IsViabilityLoss(in))
         {
-            if (in.presentAlive < kMinViableMembers)
-                return verdict(Outcome::EndRun, Reason::TooFewMembers);
-            // Only a party that HAD a healer can have lost one. A deliberate
-            // healer-less comp keeps running exactly as it did before.
-            if (in.rosterHasHealer && !in.presentHasHealer)
-                return verdict(Outcome::EndRun, Reason::LostHealer);
+            bool const tooFew = in.presentAlive < kMinViableMembers;
+            // Grace: a loss that has not lasted absentGraceMs yet is a wait, not
+            // an ending. Measured from when the loss began (absentMs), never from
+            // when the wait began (waitedMs).
+            if (in.absentGraceMs == 0 || in.absentMs >= in.absentGraceMs)
+                return verdict(Outcome::EndRun,
+                               tooFew ? Reason::TooFewMembers : Reason::LostHealer);
         }
 
         // 2a. Regroup first: the cheap, human-like answer (tell the laggard to

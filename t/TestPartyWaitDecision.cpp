@@ -120,6 +120,200 @@ TEST(DcPartyWaitTest, DroppingToASingleMemberEndsTheRun)
     EXPECT_EQ(r.reason, Reason::TooFewMembers);
 }
 
+// --- the absent grace: a brief healer absence is a wait, not an ending ------
+// Issue #162: Dire Maul East guild runs stopped minutes in, before the first
+// boss, because the viability rung fired on the FIRST tick that saw the healer
+// out of the instance. The grace is measured from when the healer left, which
+// is not when the wait began.
+
+namespace
+{
+    using DcPartyWaitDecision::AbsenceTracker;
+    using DcPartyWaitDecision::HealerSample;
+    using DcPartyWaitDecision::LeftCause;
+
+    // The inputs the action builds for a lost healer: `waitedMs` is the wait's own
+    // age and `absentMs` the loss's.
+    Inputs HealerGone(std::uint32_t waitedMs, std::uint32_t absentMs)
+    {
+        Inputs in = Healthy();
+        in.absentGraceMs = 60000;
+        LeaveInstance(in, 1);
+        in.presentHasHealer = false;
+        in.waitedMs = waitedMs;
+        in.absentMs = absentMs;
+        return in;
+    }
+}
+
+TEST(DcPartyWaitTest, AHealerWhoLeavesAfterTheWaitPassedTheGraceStillGetsTheGrace)
+{
+    // The party has already waited 100 s (past the 60 s grace) when the healer
+    // leaves. Measured from the wait's start the loss would end the run on the
+    // spot; measured from the healer's departure it has only just begun.
+    Inputs in = HealerGone(100000, 2000);
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.absentMs = 59999;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.absentMs = 60000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::LostHealer);
+}
+
+TEST(DcPartyWaitTest, AHealerBackWithinTheGraceResumesTheRun)
+{
+    Inputs in = HealerGone(3000, 3000);
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    // Back inside before the grace ends: no loss, an ordinary wait.
+    in.presentAlive = 5;
+    in.presentHasHealer = true;
+    EXPECT_FALSE(DcPartyWaitDecision::IsViabilityLoss(in));
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+    EXPECT_EQ(Decide(in).reason, Reason::StillWaiting);
+}
+
+TEST(DcPartyWaitTest, TooFewMembersAlsoWaitsOutTheGraceFromWhenTheyLeft)
+{
+    Inputs in = Healthy();
+    in.absentGraceMs = 60000;
+    LeaveInstance(in, 4);          // only the tank is left, briefly
+    in.presentHasHealer = false;
+    in.waitedMs = 100000;
+    in.absentMs = 3000;
+    EXPECT_EQ(Decide(in).outcome, Outcome::Wait);
+
+    in.absentMs = 60000;
+    DcPartyWaitDecision::Result const r = Decide(in);
+    EXPECT_EQ(r.outcome, Outcome::EndRun);
+    EXPECT_EQ(r.reason, Reason::TooFewMembers);
+}
+
+TEST(DcPartyWaitTest, ZeroGraceKeepsTheImmediateStop)
+{
+    Inputs in = HealerGone(0, 0);
+    in.absentGraceMs = 0;
+    EXPECT_EQ(Decide(in).outcome, Outcome::EndRun);
+    EXPECT_EQ(Decide(in).reason, Reason::LostHealer);
+}
+
+// --- the absence clock -------------------------------------------------------
+
+TEST(DcPartyWaitTest, TheAbsenceClockStartsWhenTheHealerLeavesNotWhenTheWaitBegan)
+{
+    AbsenceTracker t;
+    DcPartyWaitDecision::ObserveAbsence(t, false, LeftCause::Unknown, 1000);  // all present
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 120000), 0u);
+
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 120000); // healer leaves
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 120000), 0u);
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 125000);
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 125000), 5000u);
+}
+
+TEST(DcPartyWaitTest, TheAbsenceClockResetsWhenTheHealerIsBack)
+{
+    AbsenceTracker t;
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 10000);
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 50000);
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 50000), 40000u);
+
+    DcPartyWaitDecision::ObserveAbsence(t, false, LeftCause::Unknown, 51000);  // back
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 51000), 0u);
+
+    // Leaves again: a fresh grace, not the old 40 s plus this one.
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 90000);
+    EXPECT_EQ(DcPartyWaitDecision::AbsentForMs(t, 100000), 10000u);
+}
+
+// --- the cause the stop line names ------------------------------------------
+
+TEST(DcPartyWaitTest, EachCauseTheCodeCanSeeNamesItselfInTheStopLine)
+{
+    struct Row { HealerSample sample; LeftCause cause; char const* text; };
+    HealerSample claim;    claim.claimedByFill = true;
+    HealerSample hearth;   hearth.castingHearth = true;
+    HealerSample teleport; teleport.teleporting = true;
+    HealerSample died;     died.deadOrGhost = true;
+    Row const rows[] = {
+        {claim,    LeftCause::Claimed,         "claimed away by a queue fill"},
+        {hearth,   LeftCause::Hearth,          "cast a hearthstone"},
+        {teleport, LeftCause::Teleport,        "was teleported out"},
+        {died,     LeftCause::DiedAndReleased, "died and released to a graveyard"},
+    };
+    for (Row const& row : rows)
+    {
+        EXPECT_EQ(DcPartyWaitDecision::ClassifyLeftCause(row.sample), row.cause);
+        std::string const line = DcPartyWaitDecision::LostHealerStopReason("Healer", row.cause);
+        EXPECT_EQ(line, std::string("Dungeon clear stopped: the party's healer is no longer in the "
+                                    "instance (Healer left the run: ") + row.text + ").");
+    }
+}
+
+TEST(DcPartyWaitTest, AClaimOutranksTheTeleportItCaused)
+{
+    HealerSample s;
+    s.claimedByFill = true;
+    s.teleporting = true;
+    s.deadOrGhost = true;
+    EXPECT_EQ(DcPartyWaitDecision::ClassifyLeftCause(s), LeftCause::Claimed);
+    HealerSample h;
+    h.castingHearth = true;
+    h.teleporting = true;
+    EXPECT_EQ(DcPartyWaitDecision::ClassifyLeftCause(h), LeftCause::Hearth);
+}
+
+TEST(DcPartyWaitTest, NothingKnownKeepsTheBareStopLine)
+{
+    EXPECT_EQ(DcPartyWaitDecision::ClassifyLeftCause(HealerSample{}), LeftCause::Unknown);
+    EXPECT_EQ(DcPartyWaitDecision::LostHealerStopReason("Healer", LeftCause::Unknown),
+              "Dungeon clear stopped: the party's healer is no longer in the "
+              "instance (Healer left the run).");
+}
+
+TEST(DcPartyWaitTest, ACauseSeenBeforeTheHealerLeftIsTheOneRecorded)
+{
+    // The healer is seen casting a hearthstone while still inside; the next tick
+    // it is gone and nothing shows any more. The loss keeps the cause.
+    AbsenceTracker t;
+    HealerSample hearth;
+    hearth.castingHearth = true;
+    DcPartyWaitDecision::ObserveAbsence(t, false, DcPartyWaitDecision::ClassifyLeftCause(hearth), 10000);
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 12000);
+    EXPECT_EQ(t.cause, LeftCause::Hearth);
+}
+
+TEST(DcPartyWaitTest, ADeathAndReleaseIsTheCauseOfTheLaterGraveyardResurrection)
+{
+    // Dead and released (a ghost is not a living member, so no loss yet), then
+    // resurrected at the graveyard outside: the loss begins with that death as its
+    // cause.
+    AbsenceTracker t;
+    HealerSample ghost;
+    ghost.deadOrGhost = true;
+    for (std::uint32_t ms = 10000; ms <= 70000; ms += 10000)
+        DcPartyWaitDecision::ObserveAbsence(t, false, DcPartyWaitDecision::ClassifyLeftCause(ghost), ms);
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown, 75000);
+    EXPECT_EQ(t.cause, LeftCause::DiedAndReleased);
+    EXPECT_EQ(DcPartyWaitDecision::LostHealerStopReason("Healer", t.cause),
+              "Dungeon clear stopped: the party's healer is no longer in the instance "
+              "(Healer left the run: died and released to a graveyard).");
+}
+
+TEST(DcPartyWaitTest, AStaleCauseDoesNotNameALaterUnrelatedAbsence)
+{
+    AbsenceTracker t;
+    DcPartyWaitDecision::ObserveAbsence(t, false, LeftCause::Teleport, 10000);
+    DcPartyWaitDecision::ObserveAbsence(t, false, LeftCause::Unknown,
+                                        10000 + DcPartyWaitDecision::kCauseFreshMs + 1);
+    DcPartyWaitDecision::ObserveAbsence(t, true, LeftCause::Unknown,
+                                        10000 + DcPartyWaitDecision::kCauseFreshMs + 2);
+    EXPECT_EQ(t.cause, LeftCause::Unknown);
+}
+
 TEST(DcPartyWaitTest, ViabilityIsJudgedBeforeTheClock)
 {
     // An unviable party stops NOW, not in three minutes. Every one of those

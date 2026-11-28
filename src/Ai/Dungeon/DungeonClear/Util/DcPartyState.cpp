@@ -7,6 +7,7 @@
 
 #include "DcRestFloorDecision.h"
 #include "DcTickMemo.h"
+#include "Util/DcPoolBots.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "DungeonClearUtil.h"   // DC_PULL_* log macros
@@ -48,6 +49,8 @@
 #include "Pet.h"
 #include "PathGenerator.h"
 #include "Player.h"
+#include "Spell.h"
+#include "SpellInfo.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
 #include "PlayerbotAI.h"
@@ -828,6 +831,33 @@ namespace
                                      std::uint32_t waitedMs);
 }
 
+namespace
+{
+    // One look at a healer: what is visibly taking it out, or about to. Reads only
+    // state the core exposes; DcPartyWaitDecision::ClassifyLeftCause orders it.
+    DcPartyWaitDecision::LeftCause ClassifyHealerLeft(Player* member)
+    {
+        DcPartyWaitDecision::HealerSample sample;
+        sample.claimedByFill = DcPoolBots::IsClaimedByFill(member->GetGUID());
+        sample.deadOrGhost = !member->IsAlive() || member->HasPlayerFlag(PLAYER_FLAGS_GHOST);
+        sample.teleporting = member->IsBeingTeleported();
+
+        Spell* cast = member->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        if (!cast)
+            cast = member->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+        if (cast && cast->GetSpellInfo())
+        {
+            constexpr std::uint32_t kHearthstoneSpell = 8690;
+            SpellInfo const* const info = cast->GetSpellInfo();
+            if (info->Id == kHearthstoneSpell)
+                sample.castingHearth = true;
+            else if (info->HasEffect(SPELL_EFFECT_TELEPORT_UNITS))
+                sample.teleporting = true;
+        }
+        return DcPartyWaitDecision::ClassifyLeftCause(sample);
+    }
+}
+
 DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
 {
     PartyPresence out;
@@ -875,6 +905,9 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
             // AI-REVIEW 2026-11-11 [Codex/in-process/independent-review] DC121-REV-003:
             // Released ghosts remain known dead; offline members stay unknown.
             ++out.rosterDead;
+            if (out.healerCause == DcPartyWaitDecision::LeftCause::Unknown &&
+                PlayerbotAI::IsHeal(member))
+                out.healerCause = ClassifyHealerLeft(member);
             continue;
         }
 
@@ -882,7 +915,11 @@ DcPartyState::PartyPresence DcPartyState::GetPartyPresence(Player* bot)
         out.soleLivingMember = out.rosterAlive == 1 ? member : nullptr;
         bool const heals = PlayerbotAI::IsHeal(member);
         if (heals)
+        {
             out.rosterHasHealer = true;
+            if (out.healerCause == DcPartyWaitDecision::LeftCause::Unknown)
+                out.healerCause = ClassifyHealerLeft(member);
+        }
 
         // The one test that matters, and the one the readiness gate now uses:
         // the same Map OBJECT, not merely the same map id. See DcSameInstance.h.
