@@ -32,8 +32,13 @@ def generate(root: Path) -> str:
                       "void DcStatusPublisher::UnmarkActiveTank(",
                       "std::vector<ObjectGuid> DcStatusPublisher::ActiveTanks("):
         parts.append(function(status, signature))
-    parts.append(function((util / "DcPartyState.cpp").read_text(encoding="utf-8"),
-                          "DcPartyState::PartyPresence DcPartyState::GetPartyPresence("))
+    party = (util / "DcPartyState.cpp").read_text(encoding="utf-8")
+    # The presence scan classifies a lost healer through a file-local helper; carry
+    # the production body so the replay sees the same classification the module does.
+    parts.extend(["namespace {\n",
+                  function(party, "    DcPartyWaitDecision::LeftCause ClassifyHealerLeft("),
+                  "}\n"])
+    parts.append(function(party, "DcPartyState::PartyPresence DcPartyState::GetPartyPresence("))
     parts.extend(["namespace DcRezRecovery {\n",
                   function((util / "DcRezRecovery.cpp").read_text(encoding="utf-8"), "    bool HoldsResurrectOffer("),
                   "}\n"])

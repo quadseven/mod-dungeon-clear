@@ -103,6 +103,10 @@ public:
     static void UnmarkActiveTank(ObjectGuid);
     static std::vector<ObjectGuid> ActiveTanks();
 };
+namespace DcPoolBots
+{
+    bool IsClaimedByFill(ObjectGuid) { return false; }
+} // namespace DcPoolBots
 namespace DcRun
 {
     DcRunState& Of(PlayerbotAI* ai) { return ai->run; }
